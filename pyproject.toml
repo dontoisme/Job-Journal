@@ -1,0 +1,62 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "job-journal"
+version = "0.1.0"
+description = "Interview your career, customize your resume"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "Don Hogan", email = "don.r.hogan@gmail.com" }
+]
+keywords = ["resume", "job-search", "career", "cli"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+dependencies = [
+    "typer[all]>=0.9.0",
+    "rich>=13.0.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+web = [
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0",
+    "jinja2>=3.1.0",
+    "python-multipart>=0.0.6",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+jj = "jj.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/donhogan/job-journal"
+Repository = "https://github.com/donhogan/job-journal"
+
+[tool.hatch.build.targets.wheel]
+packages = ["jj"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+ignore = ["E501"]
