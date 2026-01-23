@@ -1,0 +1,84 @@
+ats_patterns:
+  ashby:
+  - no-reply@ashbyhq.com
+  - noreply@ashbyhq.com
+  greenhouse:
+  - no-reply@greenhouse.io
+  - noreply@greenhouse.io
+  lever:
+  - no-reply@lever.co
+  - noreply@lever.co
+  icims:
+  - no-reply@icims.com
+  - noreply@icims.com
+  rippling:
+  - no-reply@ats.rippling.com
+  - noreply@ats.rippling.com
+  workday:
+  - no-reply@myworkday.com
+  - noreply@myworkday.com
+  - workday@myworkday.com
+  smartrecruiters:
+  - no-reply@smartrecruiters.com
+  - noreply@smartrecruiters.com
+  jobvite:
+  - no-reply@jobvite.com
+  - noreply@jobvite.com
+  breezy:
+  - no-reply@breezy.hr
+  - noreply@breezy.hr
+companies:
+  Vercel: vercel.com
+  Noom: noom.com
+  Amplitude: amplitude.com
+  OpenAI: openai.com
+  Anthropic: anthropic.com
+  Stripe: stripe.com
+  Ramp: ramp.com
+  Notion: makenotion.com
+  Figma: figma.com
+  Linear: linear.app
+  Slack: slack.com
+  Discord: discord.com
+  Spotify: spotify.com
+  Netflix: netflix.com
+  Airbnb: airbnb.com
+  Uber: uber.com
+  Lyft: lyft.com
+  DoorDash: doordash.com
+  Instacart: instacart.com
+  Robinhood: robinhood.com
+  Coinbase: coinbase.com
+  Bloomreach: bloomreach.com
+  Motive: gomotive.com
+  Function: gem.com
+  Hirevue: smartrecruiters.com
+  8am: affinipay.com
+  eBay: myworkday.com
+  Circle: gmail.com
+confirmation_keywords:
+- thank you for applying
+- application received
+- we received your application
+- application submitted
+- thanks for applying
+- your application to
+- application confirmation
+update_keywords:
+- interview
+- schedule
+- next steps
+- assessment
+- unfortunately
+- moved forward
+- not moving forward
+- phone screen
+- offer
+- take-home
+- coding challenge
+- technical interview
+- onsite
+- final round
+- decision
+- regret
+- update on your
