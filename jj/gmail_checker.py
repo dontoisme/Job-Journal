@@ -35,7 +35,7 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
 # Paths for Gmail credentials
 CREDENTIALS_PATH = JJ_HOME / "credentials.json"
-TOKEN_PATH = JJ_HOME / "token.json"
+TOKEN_PATH = JJ_HOME / "gmail_token.json"
 
 # Path to email domains config
 EMAIL_DOMAINS_PATH = Path(__file__).parent / "email_domains.yaml"
@@ -74,6 +74,49 @@ class UpdateResult:
     action_required: bool = False
 
 
+@dataclass
+class PairingResult:
+    """Result of pairing an email to an application."""
+    application_id: int
+    company: str
+    email: EmailMatch
+    pair_type: str  # 'confirmation' or 'resolution'
+    resolution_type: Optional[str] = None  # 'rejection', 'screening', 'interview', 'offer'
+    saved: bool = False
+
+
+# Resolution signal patterns for email classification
+RESOLUTION_SIGNALS = {
+    'rejection': [
+        "thank you for your interest",
+        "unfortunately", "not moving forward",
+        "other candidates", "position has been filled",
+        "wish you the best", "will not be pursuing",
+        "decided not to proceed", "gone with another candidate",
+        "regret to inform", "not a fit", "not the right fit",
+        "pursued other candidates", "best of luck",
+    ],
+    'screening': [
+        "would like to schedule", "interested in speaking",
+        "learn more about your experience", "phone call",
+        "initial conversation", "recruiter",
+        "quick chat", "15 minute", "30 minute",
+        "brief call", "phone screen",
+    ],
+    'interview': [
+        "interview", "meet with the team",
+        "technical assessment", "take-home",
+        "next round", "panel", "on-site",
+        "video interview", "meet our team",
+    ],
+    'offer': [
+        "offer", "compensation", "start date",
+        "background check", "we'd like to extend",
+        "pleased to offer", "congratulations",
+    ]
+}
+
+
 def load_email_domains() -> dict:
     """Load email domain mappings from YAML config."""
     if EMAIL_DOMAINS_PATH.exists():
@@ -106,6 +149,38 @@ def get_company_domain(company: str) -> Optional[str]:
     """Get known email domain for a company."""
     config = load_email_domains()
     return config.get("companies", {}).get(company)
+
+
+def infer_company_domain(company: str) -> Optional[str]:
+    """Infer likely email domain from company name.
+
+    Examples:
+        "PostHog" → "posthog.com"
+        "Babylist" → "babylist.com"
+        "Memorial Sloan Kettering" → "mskcc.org" (needs manual mapping)
+        "Acme Corp" → "acme.com"
+    """
+    # First check if we have it stored
+    known = get_company_domain(company)
+    if known:
+        return known
+
+    # Clean and normalize company name
+    clean = company.lower().strip()
+
+    # Remove common suffixes
+    for suffix in [", inc.", ", inc", " inc.", " inc", ", llc", " llc",
+                   ", corp.", " corp.", " corp", ", co.", " co.",
+                   " corporation", " company", " technologies", " software"]:
+        if clean.endswith(suffix):
+            clean = clean[:-len(suffix)]
+
+    # Remove special characters and spaces
+    clean = re.sub(r'[^a-z0-9]', '', clean)
+
+    if clean:
+        return f"{clean}.com"
+    return None
 
 
 class GmailClient:
@@ -253,7 +328,13 @@ class GmailClient:
         after_date: Optional[datetime],
         search_type: str
     ) -> list[str]:
-        """Build Gmail search queries for a company."""
+        """Build Gmail search queries for a company.
+
+        PRIORITY ORDER (most reliable first):
+        1. Sender domain (inferred or known) - catches personal recruiter emails
+        2. ATS platforms with company name
+        3. Subject line keywords (fallback)
+        """
         queries = []
         date_filter = ""
 
@@ -263,22 +344,17 @@ class GmailClient:
         # Clean company name for search
         clean_company = company.replace('"', "").strip()
 
-        if search_type == "confirmation":
-            # Search 1: Company name in subject with confirmation keywords
-            queries.append(
-                f'subject:("{clean_company}") '
-                f'(thank applying OR application received OR thanks applying){date_filter}'
-            )
+        # Get domain - try known first, then infer
+        domain = get_company_domain(company) or infer_company_domain(company)
 
-            # Search 2: From company domain if known
-            domain = get_company_domain(company)
+        if search_type == "confirmation":
+            # PRIORITY 1: From company domain (catches all company emails)
             if domain:
                 queries.append(
-                    f'from:(@{domain}) '
-                    f'(thank applying OR application received){date_filter}'
+                    f'from:(@{domain}){date_filter}'
                 )
 
-            # Search 3: ATS platforms with company in subject
+            # PRIORITY 2: ATS platforms with company in subject
             ats_from = " OR ".join([
                 "ashbyhq", "greenhouse", "lever", "icims", "rippling", "workday"
             ])
@@ -286,32 +362,37 @@ class GmailClient:
                 f'from:({ats_from}) subject:("{clean_company}"){date_filter}'
             )
 
-        elif search_type == "update":
-            # Keywords for updates - single words work better with Gmail OR
-            update_keywords = " OR ".join([
-                "interview", "schedule", "assessment",
-                "unfortunately", "regret", "decision",
-                "offer", "update", "follow", "status"
-            ])
-
-            # Search 1: Company in subject with update keywords
+            # PRIORITY 3: Company name in subject with confirmation keywords
             queries.append(
-                f'subject:("{clean_company}") ({update_keywords}){date_filter}'
+                f'subject:("{clean_company}") '
+                f'(thank applying OR application received OR thanks applying){date_filter}'
             )
 
-            # Search 2: From company domain (more reliable)
-            domain = get_company_domain(company)
+        elif search_type == "update":
+            # PRIORITY 1: From company domain (catches personal recruiter emails!)
+            # This is the key fix - search ALL emails from company domain
             if domain:
                 queries.append(
                     f'from:(@{domain}){date_filter}'
                 )
 
-            # Search 3: ATS with company name anywhere
+            # PRIORITY 2: ATS with company name anywhere
             ats_from = " OR ".join([
                 "ashbyhq", "greenhouse", "lever", "icims", "rippling"
             ])
             queries.append(
-                f'from:({ats_from}) "{clean_company}" ({update_keywords}){date_filter}'
+                f'from:({ats_from}) "{clean_company}"{date_filter}'
+            )
+
+            # PRIORITY 3: Company in subject with update keywords (fallback)
+            update_keywords = " OR ".join([
+                "interview", "schedule", "assessment",
+                "unfortunately", "regret", "decision",
+                "offer", "update", "follow", "status",
+                "application", "position", "role"
+            ])
+            queries.append(
+                f'subject:("{clean_company}") ({update_keywords}){date_filter}'
             )
 
         return queries
@@ -322,10 +403,16 @@ class GmailClient:
         snippet_lower = email.snippet.lower()
         combined = subject_lower + " " + snippet_lower
 
-        # Check for rejection signals
+        # Check for rejection signals (including soft rejection language)
         rejection_signals = [
             "unfortunately", "not moving forward", "other candidates",
-            "decided not to", "not be moving", "regret", "will not"
+            "decided not to", "not be moving", "regret", "will not",
+            # Soft rejection language
+            "thank you for your interest",  # Common soft rejection
+            "wish you the best", "best of luck in your",
+            "pursued other candidates", "gone with another",
+            "not a fit", "not the right fit",
+            "position has been filled", "role has been filled",
         ]
         if any(sig in combined for sig in rejection_signals):
             return "rejection"
@@ -333,7 +420,8 @@ class GmailClient:
         # Check for interview signals
         interview_signals = [
             "interview", "schedule", "calendar", "phone screen",
-            "video call", "meet with", "speak with"
+            "video call", "meet with", "speak with", "chat with",
+            "would like to discuss", "next round"
         ]
         if any(sig in combined for sig in interview_signals):
             return "interview"
@@ -341,7 +429,7 @@ class GmailClient:
         # Check for next steps / assessment
         next_steps_signals = [
             "next step", "assessment", "take-home", "coding challenge",
-            "complete", "action required"
+            "complete", "action required", "please submit", "please complete"
         ]
         if any(sig in combined for sig in next_steps_signals):
             return "next_steps"
@@ -353,6 +441,14 @@ class GmailClient:
         ]
         if any(sig in combined for sig in confirmation_signals):
             return "confirmation"
+
+        # Check for generic application update (catch-all for recruiter emails)
+        update_signals = [
+            "your application", "regarding your", "your recent application",
+            "following up", "wanted to reach out"
+        ]
+        if any(sig in combined for sig in update_signals):
+            return "update"
 
         return search_type  # Default to the search type
 
@@ -562,3 +658,308 @@ def search_company_emails(company: str, max_results: int = 10) -> list[EmailMatc
         results.append(email_match)
 
     return results
+
+
+# Email Pairing Functions
+
+def classify_resolution_type(email: EmailMatch) -> Optional[str]:
+    """Classify the resolution type of an email.
+
+    Returns one of: 'rejection', 'screening', 'interview', 'offer', or None
+    """
+    combined = (email.subject + " " + email.snippet).lower()
+
+    # Check each resolution type in order of specificity
+    # (offer is most specific, rejection is most common)
+    for resolution_type in ['offer', 'interview', 'screening', 'rejection']:
+        signals = RESOLUTION_SIGNALS.get(resolution_type, [])
+        if any(sig in combined for sig in signals):
+            return resolution_type
+
+    return None
+
+
+def classify_email_pair_type(
+    email: EmailMatch,
+    application: dict
+) -> tuple[str, Optional[str]]:
+    """Determine if email is confirmation or resolution for an application.
+
+    Args:
+        email: The email to classify
+        application: Application dict with pairing info
+
+    Returns:
+        Tuple of (pair_type, resolution_type) where:
+        - pair_type: 'confirmation', 'resolution', or 'unknown'
+        - resolution_type: For resolutions - 'rejection', 'screening', 'interview', 'offer'
+    """
+    from jj.db import get_confirmation_email, get_resolution_email
+
+    combined = (email.subject + " " + email.snippet).lower()
+    app_id = application.get('id')
+
+    # Check if this looks like a confirmation email
+    confirmation_signals = [
+        "thank you for applying", "application received",
+        "we received your", "thanks for applying",
+        "application submitted", "application has been received",
+        "thank you for your application"
+    ]
+    is_confirmation_like = any(sig in combined for sig in confirmation_signals)
+
+    # Check if application already has confirmation
+    existing_confirmation = get_confirmation_email(app_id) if app_id else None
+    existing_resolution = get_resolution_email(app_id) if app_id else None
+
+    # If application has no confirmation yet and this looks like one
+    if not existing_confirmation and is_confirmation_like:
+        return ('confirmation', None)
+
+    # If application has confirmation but no resolution, check for resolution
+    if existing_confirmation and not existing_resolution:
+        resolution_type = classify_resolution_type(email)
+        if resolution_type:
+            return ('resolution', resolution_type)
+
+    # Even if no confirmation, a resolution email can arrive (some companies skip confirmation)
+    resolution_type = classify_resolution_type(email)
+    if resolution_type:
+        return ('resolution', resolution_type)
+
+    # Default to confirmation if this is the first email and looks like initial contact
+    if not existing_confirmation:
+        return ('confirmation', None)
+
+    return ('unknown', None)
+
+
+def match_email_to_application(
+    email: EmailMatch,
+    applications: list[dict]
+) -> Optional[dict]:
+    """Match an email to the most likely application.
+
+    Args:
+        email: The email to match
+        applications: List of application dicts
+
+    Returns:
+        Best matching application or None
+    """
+    sender_lower = email.sender.lower()
+    subject_lower = email.subject.lower()
+
+    best_match = None
+    best_score = 0
+
+    for app in applications:
+        company = app.get('company', '').lower()
+        score = 0
+
+        # Check sender domain matches company
+        domain = infer_company_domain(app.get('company', ''))
+        if domain and domain.lower() in sender_lower:
+            score += 10
+
+        # Check company name in sender
+        if company in sender_lower:
+            score += 5
+
+        # Check company name in subject
+        if company in subject_lower:
+            score += 3
+
+        # Check for ATS match with company name
+        ats_patterns = ['greenhouse', 'lever', 'ashby', 'icims', 'workday']
+        if any(ats in sender_lower for ats in ats_patterns):
+            if company in subject_lower or company in email.snippet.lower():
+                score += 7
+
+        if score > best_score:
+            best_score = score
+            best_match = app
+
+    # Only return if we have a reasonable confidence
+    if best_score >= 3:
+        return best_match
+
+    return None
+
+
+def sync_application_emails(
+    applications: list[dict],
+    verbose: bool = False
+) -> dict:
+    """
+    Sync emails to applications using the pairing system.
+
+    For each application:
+    1. Search for confirmation email if missing
+    2. Search for resolution email if confirmed but unresolved
+    3. Update pairing status
+
+    Args:
+        applications: List of application dicts
+        verbose: Print progress if True
+
+    Returns:
+        Summary dict with counts of confirmations found, resolutions found, etc.
+    """
+    from datetime import timedelta
+    from jj.db import (
+        add_application_email,
+        get_confirmation_email,
+        get_resolution_email,
+        update_application_pairing_status,
+        email_already_recorded,
+    )
+
+    client = GmailClient()
+    client.authenticate()
+
+    summary = {
+        'applications_checked': 0,
+        'confirmations_found': 0,
+        'resolutions_found': 0,
+        'already_resolved': 0,
+        'errors': [],
+        'details': [],
+    }
+
+    for app in applications:
+        app_id = app.get('id')
+        company = app.get('company', '')
+        position = app.get('position', '')
+        applied_at = app.get('applied_at')
+
+        if not app_id:
+            continue
+
+        summary['applications_checked'] += 1
+
+        if verbose:
+            print(f"Syncing emails for {company} - {position}...")
+
+        # Parse applied_at if string
+        search_after = None
+        if isinstance(applied_at, str) and applied_at:
+            try:
+                search_after = datetime.fromisoformat(applied_at.replace("Z", "+00:00"))
+                # Search a day before to catch emails sent before application recorded
+                search_after = search_after - timedelta(days=1)
+            except ValueError:
+                search_after = datetime.now() - timedelta(days=30)
+        else:
+            search_after = datetime.now() - timedelta(days=30)
+
+        # Check current pairing state
+        existing_confirmation = get_confirmation_email(app_id)
+        existing_resolution = get_resolution_email(app_id)
+
+        if existing_resolution:
+            summary['already_resolved'] += 1
+            if verbose:
+                print(f"  Already resolved")
+            update_application_pairing_status(app_id)
+            continue
+
+        # Search for emails from this company
+        try:
+            emails = client.search_for_company(
+                company,
+                after_date=search_after,
+                search_type="update"  # Use update to catch all emails
+            )
+        except Exception as e:
+            summary['errors'].append(f"{company}: {str(e)}")
+            continue
+
+        for email in emails:
+            # Skip if already recorded
+            if email_already_recorded(email.message_id):
+                continue
+
+            # Classify this email
+            pair_type, resolution_type = classify_email_pair_type(email, app)
+
+            if pair_type == 'unknown':
+                continue
+
+            # Record the email
+            if pair_type == 'confirmation' and not existing_confirmation:
+                add_application_email(
+                    application_id=app_id,
+                    email_type='confirmation',
+                    received_at=email.date.isoformat(),
+                    email_id=email.message_id,
+                    sender=email.sender,
+                    subject=email.subject,
+                )
+                existing_confirmation = True  # Mark as found for this run
+                summary['confirmations_found'] += 1
+                summary['details'].append({
+                    'company': company,
+                    'type': 'confirmation',
+                    'subject': email.subject,
+                    'date': email.date.isoformat(),
+                })
+                if verbose:
+                    print(f"  Found confirmation: {email.subject}")
+
+            elif pair_type == 'resolution' and not existing_resolution:
+                add_application_email(
+                    application_id=app_id,
+                    email_type='resolution',
+                    resolution_type=resolution_type,
+                    received_at=email.date.isoformat(),
+                    email_id=email.message_id,
+                    sender=email.sender,
+                    subject=email.subject,
+                )
+                existing_resolution = True  # Mark as found for this run
+                summary['resolutions_found'] += 1
+                summary['details'].append({
+                    'company': company,
+                    'type': f'resolution ({resolution_type})',
+                    'subject': email.subject,
+                    'date': email.date.isoformat(),
+                })
+                if verbose:
+                    print(f"  Found resolution ({resolution_type}): {email.subject}")
+
+        # Update pairing status
+        update_application_pairing_status(app_id)
+
+    return summary
+
+
+def get_pairing_report(applications: list[dict]) -> str:
+    """Generate a human-readable report of application email pairing status."""
+    from jj.db import (
+        get_applications_with_pairing_status,
+        get_pairing_stats,
+    )
+
+    stats = get_pairing_stats()
+
+    lines = [
+        "## Application Email Pairing Report",
+        "",
+        f"Total Applications: {stats['total']}",
+        "",
+        "### Status Breakdown",
+        f"- Resolved (confirmation + resolution): {stats['resolved']}",
+        f"- Confirmed (waiting for resolution): {stats['confirmed']}",
+        f"- Ghosted (confirmed > 14 days, no resolution): {stats['ghosted']}",
+        f"- Pending (recently applied, no confirmation yet): {stats['pending']}",
+        f"- Unconfirmed (applied > 3 days, no confirmation): {stats['unconfirmed']}",
+        "",
+        "### Resolution Types",
+        f"- Rejections: {stats['by_resolution_type']['rejection']}",
+        f"- Screening calls: {stats['by_resolution_type']['screening']}",
+        f"- Interviews: {stats['by_resolution_type']['interview']}",
+        f"- Offers: {stats['by_resolution_type']['offer']}",
+    ]
+
+    return "\n".join(lines)

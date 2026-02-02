@@ -1483,3 +1483,78 @@ tr:hover {
         transform: translateX(0);
     }
 }
+
+/* TWC Work Search Activity Log Styles */
+.twc-week-nav {
+    background: var(--bg-card);
+}
+
+.twc-progress .progress-bar {
+    height: 8px;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.twc-day-section {
+    background: var(--bg-card);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.twc-day-header {
+    background: var(--bg-secondary);
+    border-bottom: 1px solid var(--border);
+}
+
+.twc-activity-card {
+    border-bottom: 1px solid var(--border);
+}
+
+.twc-activity-card:last-child {
+    border-bottom: none;
+}
+
+.twc-details {
+    font-size: 0.9rem;
+}
+
+.twc-edit-form {
+    background: var(--bg-secondary);
+    padding: 1rem;
+    border-radius: 6px;
+    margin-top: 1rem;
+}
+
+.twc-edit-form .form-select,
+.twc-edit-form .form-input {
+    width: 100%;
+    padding: 0.5rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 0.9rem;
+}
+
+.twc-edit-form .form-select:focus,
+.twc-edit-form .form-input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.twc-type-badge {
+    background: var(--bg-secondary);
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+}
+
+/* Form select for TWC */
+.form-select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23a0a0a0' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10l-5 5z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+    padding-right: 2rem;
+}

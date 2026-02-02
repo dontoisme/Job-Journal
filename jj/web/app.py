@@ -17,6 +17,11 @@ from jj.db import (
     get_skills, DB_PATH, get_pipeline_stats, get_stale_applications, get_connection,
     update_application, get_todays_focus, get_focus_counts, log_event,
     create_task, get_recent_tasks, get_task_stats,
+    # TWC functions
+    get_twc_week_boundaries, get_twc_activities_for_week, get_twc_week_summary,
+    update_twc_fields, backfill_activity_dates, get_twc_activity_types, get_twc_result_types,
+    # Email pairing functions
+    get_pairing_stats, get_applications_with_pairing_status, get_application_timeline,
 )
 from jj.geo import AREAS, get_all_companies, discover_companies_for_area, save_companies, run_enrichment_pipeline
 from jj.analytics import get_all_analytics, get_funnel_stats, get_weekly_summary
@@ -188,10 +193,13 @@ def get_application_counts():
 
 
 def get_email_stats():
-    """Get email confirmation and update stats."""
+    """Get email confirmation, update stats, and pairing stats."""
     import sqlite3
     if not DB_PATH.exists():
-        return {"confirmed": 0, "unconfirmed": 0, "with_updates": 0, "last_check": None}
+        return {
+            "confirmed": 0, "unconfirmed": 0, "with_updates": 0, "last_check": None,
+            "pairing": {"total": 0, "resolved": 0, "confirmed": 0, "ghosted": 0, "pending": 0, "unconfirmed": 0}
+        }
 
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -228,12 +236,16 @@ def get_email_stats():
 
     conn.close()
 
+    # Get pairing stats from the new system
+    pairing = get_pairing_stats()
+
     return {
         "confirmed": confirmed,
         "unconfirmed": unconfirmed,
         "with_updates": with_updates,
         "last_check": last_check,
         "recent_updates": recent_updates,
+        "pairing": pairing,
     }
 
 
@@ -439,22 +451,40 @@ async def dashboard(request: Request):
 
 
 @app.get("/applications", response_class=HTMLResponse)
-async def applications_page(request: Request, status: str = None):
+async def applications_page(request: Request, status: str = None, pairing: str = None):
     """Applications tracker page."""
-    # Try database first, fall back to CSV
-    apps = get_applications(status)
-    if not apps:
-        apps = get_applications_from_csv()
-        if status:
-            apps = [a for a in apps if a.get("status") == status]
+    # If filtering by pairing status, use the new pairing function
+    if pairing:
+        apps = get_applications_with_pairing_status(status_filter=pairing, include_resolved=True)
+    else:
+        # Try database first, fall back to CSV
+        apps = get_applications(status)
+        if not apps:
+            apps = get_applications_from_csv()
+            if status:
+                apps = [a for a in apps if a.get("status") == status]
+
+        # Add pairing status to each app
+        apps_with_pairing = get_applications_with_pairing_status(include_resolved=True)
+        pairing_map = {a['id']: a for a in apps_with_pairing}
+        for app in apps:
+            paired = pairing_map.get(app.get('id'), {})
+            app['computed_pairing_status'] = paired.get('computed_pairing_status', 'unknown')
+            app['computed_days_waiting'] = paired.get('computed_days_waiting', 0)
+            app['confirmation_date'] = paired.get('confirmation_date')
+            app['resolution_date'] = paired.get('resolution_date')
+            app['latest_resolution_type'] = paired.get('latest_resolution_type')
 
     counts = get_application_counts()
+    pairing_stats = get_pairing_stats()
 
     return templates.TemplateResponse("applications.html", {
         "request": request,
         "applications": apps,
         "counts": counts,
         "current_status": status,
+        "current_pairing": pairing,
+        "pairing_stats": pairing_stats,
     })
 
 
@@ -931,6 +961,196 @@ async def sse_events():
             "Connection": "keep-alive",
         }
     )
+
+
+# --------------------------------------------------------------------------
+# TWC (Texas Workforce Commission) routes
+# --------------------------------------------------------------------------
+
+@app.get("/twc", response_class=HTMLResponse)
+async def twc_page(request: Request, week: str = None):
+    """TWC Work Search Activity Log page."""
+    from datetime import datetime, timedelta
+
+    # Get week boundaries
+    sunday, saturday = get_twc_week_boundaries(week)
+
+    # Parse dates for navigation
+    week_start = datetime.strptime(sunday, "%Y-%m-%d")
+    prev_week = (week_start - timedelta(days=7)).strftime("%Y-%m-%d")
+    next_week = (week_start + timedelta(days=7)).strftime("%Y-%m-%d")
+
+    # Check if next week is in the future
+    today = datetime.now()
+    is_current_week = week_start <= today <= (week_start + timedelta(days=6))
+    is_future_week = week_start > today
+
+    # Get activities and summary
+    activities = get_twc_activities_for_week(week)
+    summary = get_twc_week_summary(week)
+
+    # Group activities by day for display
+    days_of_week = []
+    for i in range(7):
+        day_date = week_start + timedelta(days=i)
+        day_str = day_date.strftime("%Y-%m-%d")
+        day_activities = [a for a in activities if (a.get('effective_date') or a.get('activity_date', '')[:10]) == day_str]
+        days_of_week.append({
+            'date': day_str,
+            'day_name': day_date.strftime("%A"),
+            'display_date': day_date.strftime("%b %d"),
+            'activities': day_activities,
+        })
+
+    return templates.TemplateResponse("twc.html", {
+        "request": request,
+        "week_start": sunday,
+        "week_end": saturday,
+        "week_display": f"{week_start.strftime('%b %d')} - {datetime.strptime(saturday, '%Y-%m-%d').strftime('%b %d, %Y')}",
+        "prev_week": prev_week,
+        "next_week": next_week,
+        "is_current_week": is_current_week,
+        "is_future_week": is_future_week,
+        "days_of_week": days_of_week,
+        "summary": summary,
+        "activity_types": get_twc_activity_types(),
+        "result_types": get_twc_result_types(),
+    })
+
+
+@app.get("/twc/print", response_class=HTMLResponse)
+async def twc_print_page(request: Request, week: str = None):
+    """Printable TWC Work Search Activity Log."""
+    from datetime import datetime, timedelta
+
+    sunday, saturday = get_twc_week_boundaries(week)
+    week_start = datetime.strptime(sunday, "%Y-%m-%d")
+
+    activities = get_twc_activities_for_week(week)
+    summary = get_twc_week_summary(week)
+
+    # Group activities by day
+    days_of_week = []
+    for i in range(7):
+        day_date = week_start + timedelta(days=i)
+        day_str = day_date.strftime("%Y-%m-%d")
+        day_activities = [a for a in activities if (a.get('effective_date') or a.get('activity_date', '')[:10]) == day_str]
+        days_of_week.append({
+            'date': day_str,
+            'day_name': day_date.strftime("%A"),
+            'display_date': day_date.strftime("%b %d"),
+            'activities': day_activities,
+        })
+
+    return templates.TemplateResponse("twc_print.html", {
+        "request": request,
+        "week_start": sunday,
+        "week_end": saturday,
+        "week_display": f"{week_start.strftime('%b %d')} - {datetime.strptime(saturday, '%Y-%m-%d').strftime('%b %d, %Y')}",
+        "days_of_week": days_of_week,
+        "summary": summary,
+        "activities": activities,
+    })
+
+
+@app.get("/api/twc/week", response_class=HTMLResponse)
+async def api_twc_week_partial(request: Request, week: str = None):
+    """Get TWC activities for a week as HTMX partial."""
+    from datetime import datetime, timedelta
+
+    sunday, saturday = get_twc_week_boundaries(week)
+    week_start = datetime.strptime(sunday, "%Y-%m-%d")
+
+    activities = get_twc_activities_for_week(week)
+    summary = get_twc_week_summary(week)
+
+    # Group activities by day
+    days_of_week = []
+    for i in range(7):
+        day_date = week_start + timedelta(days=i)
+        day_str = day_date.strftime("%Y-%m-%d")
+        day_activities = [a for a in activities if (a.get('effective_date') or a.get('activity_date', '')[:10]) == day_str]
+        days_of_week.append({
+            'date': day_str,
+            'day_name': day_date.strftime("%A"),
+            'display_date': day_date.strftime("%b %d"),
+            'activities': day_activities,
+        })
+
+    return templates.TemplateResponse("partials/twc_week_view.html", {
+        "request": request,
+        "days_of_week": days_of_week,
+        "summary": summary,
+    })
+
+
+@app.post("/api/twc/{app_id}")
+async def api_update_twc_fields(
+    app_id: int,
+    twc_activity_type: str = Form(None),
+    twc_result: str = Form(None),
+    twc_result_other: str = Form(None),
+    hired_start_date: str = Form(None),
+    activity_date: str = Form(None),
+    employer_phone: str = Form(None),
+    employer_address: str = Form(None),
+    employer_city: str = Form(None),
+    employer_state: str = Form(None),
+    employer_zip: str = Form(None),
+    contact_name: str = Form(None),
+    contact_email: str = Form(None),
+    contact_fax: str = Form(None),
+):
+    """Update TWC-specific fields for an application."""
+    # Build kwargs from non-None values
+    updates = {}
+    if twc_activity_type is not None:
+        updates['twc_activity_type'] = twc_activity_type
+    if twc_result is not None:
+        updates['twc_result'] = twc_result
+    if twc_result_other is not None:
+        updates['twc_result_other'] = twc_result_other
+    if hired_start_date is not None:
+        updates['hired_start_date'] = hired_start_date
+    if activity_date is not None:
+        updates['activity_date'] = activity_date
+    if employer_phone is not None:
+        updates['employer_phone'] = employer_phone
+    if employer_address is not None:
+        updates['employer_address'] = employer_address
+    if employer_city is not None:
+        updates['employer_city'] = employer_city
+    if employer_state is not None:
+        updates['employer_state'] = employer_state
+    if employer_zip is not None:
+        updates['employer_zip'] = employer_zip
+    if contact_name is not None:
+        updates['contact_name'] = contact_name
+    if contact_email is not None:
+        updates['contact_email'] = contact_email
+    if contact_fax is not None:
+        updates['contact_fax'] = contact_fax
+
+    if not updates:
+        return JSONResponse({"error": "No fields to update"}, status_code=400)
+
+    success = update_twc_fields(app_id, **updates)
+    if success:
+        return {"success": True, "updated_fields": list(updates.keys())}
+    return JSONResponse({"error": "Failed to update"}, status_code=500)
+
+
+@app.post("/api/twc/backfill")
+async def api_twc_backfill():
+    """Backfill activity_date from applied_at for existing applications."""
+    count = backfill_activity_dates()
+    return {"success": True, "records_updated": count}
+
+
+@app.get("/api/twc/summary")
+async def api_twc_summary(week: str = None):
+    """Get TWC week summary as JSON."""
+    return get_twc_week_summary(week)
 
 
 # --------------------------------------------------------------------------

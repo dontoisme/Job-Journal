@@ -51,6 +51,12 @@ DEFAULT_PROFILE: dict[str, Any] = {
         "patterns": [],
         "avoids": [],
     },
+    "summaries": {
+        "growth": "",
+        "ai-agentic": "",
+        "health-tech": "",
+        "general": "",
+    },
 }
 
 # Default config template
@@ -70,6 +76,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "health-tech": ["health", "healthcare", "ehr", "hipaa", "clinical", "patient"],
         "consumer": ["b2c", "consumer", "dtc", "marketplace", "e-commerce"],
         "general": ["product manager", "roadmap", "strategy", "cross-functional"],
+    },
+    "google_docs": {
+        "template_id": "",
+        "pdf_output_dir": str(Path.home() / "Documents" / "Resumes"),
+        "auto_open": True,
+        "keep_google_doc": True,
     },
 }
 

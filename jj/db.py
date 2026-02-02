@@ -232,6 +232,20 @@ CREATE TABLE IF NOT EXISTS events (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Application email pairing (confirmation + resolution tracking)
+CREATE TABLE IF NOT EXISTS application_emails (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER NOT NULL,
+    email_type TEXT NOT NULL,          -- 'confirmation' | 'resolution'
+    resolution_type TEXT,              -- NULL for confirmation, or: 'rejection' | 'screening' | 'interview' | 'offer'
+    email_id TEXT,                     -- Gmail message ID
+    sender TEXT,                       -- From address
+    subject TEXT,                      -- Email subject
+    received_at TEXT NOT NULL,         -- When email was received
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (application_id) REFERENCES applications(id)
+);
+
 -- Indexes for common queries
 CREATE INDEX IF NOT EXISTS idx_entries_role ON entries(role_id);
 CREATE INDEX IF NOT EXISTS idx_entries_tags ON entries(tags);
@@ -248,6 +262,7 @@ CREATE INDEX IF NOT EXISTS idx_resume_entries_entry ON resume_entries(entry_id);
 CREATE INDEX IF NOT EXISTS idx_resume_sections_resume ON resume_sections(resume_id);
 CREATE INDEX IF NOT EXISTS idx_corpus_suggestions_status ON corpus_suggestions(status);
 CREATE INDEX IF NOT EXISTS idx_corpus_suggestions_resume ON corpus_suggestions(resume_id);
+CREATE INDEX IF NOT EXISTS idx_app_emails_app_type ON application_emails(application_id, email_type);
 """
 
 
@@ -287,6 +302,25 @@ def migrate_database() -> None:
         # Resume tracking columns
         ("resumes", "summary_text", "TEXT"),
         ("resumes", "drift_score", "INTEGER DEFAULT 0"),
+        # TWC (Texas Workforce Commission) tracking columns
+        ("applications", "twc_activity_type", "TEXT"),
+        ("applications", "twc_result", "TEXT"),
+        ("applications", "twc_result_other", "TEXT"),
+        ("applications", "hired_start_date", "TEXT"),
+        ("applications", "activity_date", "TEXT"),
+        ("applications", "employer_phone", "TEXT"),
+        ("applications", "employer_address", "TEXT"),
+        ("applications", "employer_city", "TEXT"),
+        ("applications", "employer_state", "TEXT"),
+        ("applications", "employer_zip", "TEXT"),
+        ("applications", "contact_name", "TEXT"),
+        ("applications", "contact_email", "TEXT"),
+        ("applications", "contact_fax", "TEXT"),
+        # Google Docs tracking for resumes
+        ("resumes", "google_doc_id", "TEXT"),
+        # Email pairing tracking for applications
+        ("applications", "pairing_status", "TEXT"),  # 'pending', 'confirmed', 'resolved', 'ghosted'
+        ("applications", "days_waiting", "INTEGER"),  # Days since confirmation without resolution
     ]
 
     with get_connection() as conn:
@@ -335,6 +369,22 @@ def migrate_database() -> None:
         CREATE INDEX IF NOT EXISTS idx_resume_sections_resume ON resume_sections(resume_id);
         CREATE INDEX IF NOT EXISTS idx_corpus_suggestions_status ON corpus_suggestions(status);
         CREATE INDEX IF NOT EXISTS idx_corpus_suggestions_resume ON corpus_suggestions(resume_id);
+        CREATE INDEX IF NOT EXISTS idx_applications_activity_date ON applications(activity_date);
+
+        -- Application email pairing table
+        CREATE TABLE IF NOT EXISTS application_emails (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            application_id INTEGER NOT NULL,
+            email_type TEXT NOT NULL,
+            resolution_type TEXT,
+            email_id TEXT,
+            sender TEXT,
+            subject TEXT,
+            received_at TEXT NOT NULL,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (application_id) REFERENCES applications(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_app_emails_app_type ON application_emails(application_id, email_type);
         """
         conn.executescript(new_tables_sql)
         conn.commit()
@@ -979,6 +1029,7 @@ def create_resume(
     rj_score: Optional[int] = None,
     drift_score: int = 0,
     is_valid: bool = True,
+    google_doc_id: Optional[str] = None,
 ) -> int:
     """Create a new resume record and return its ID."""
     with get_connection() as conn:
@@ -986,11 +1037,11 @@ def create_resume(
         cursor.execute(
             """
             INSERT INTO resumes (filename, filepath, variant, summary_text, target_company,
-                                target_role, jd_url, rj_score, drift_score, is_valid)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                target_role, jd_url, rj_score, drift_score, is_valid, google_doc_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (filename, filepath, variant, summary_text, target_company,
-             target_role, jd_url, rj_score, drift_score, is_valid)
+             target_role, jd_url, rj_score, drift_score, is_valid, google_doc_id)
         )
         conn.commit()
         return cursor.lastrowid
@@ -1512,3 +1563,592 @@ def get_focus_counts() -> dict[str, int]:
         )
 
         return counts
+
+
+# TWC (Texas Workforce Commission) operations
+
+def get_twc_week_boundaries(week_start: Optional[str] = None) -> tuple[str, str]:
+    """
+    Get the start (Sunday) and end (Saturday) dates for a TWC week.
+    If week_start is None, returns the current week.
+    Returns tuple of (sunday_date, saturday_date) in YYYY-MM-DD format.
+    """
+    from datetime import datetime, timedelta
+
+    if week_start:
+        start = datetime.strptime(week_start, "%Y-%m-%d")
+    else:
+        # Get current date and find the most recent Sunday
+        today = datetime.now()
+        # weekday() returns 0=Monday, so Sunday=6
+        days_since_sunday = (today.weekday() + 1) % 7
+        start = today - timedelta(days=days_since_sunday)
+
+    # Ensure start is a Sunday
+    days_since_sunday = (start.weekday() + 1) % 7
+    start = start - timedelta(days=days_since_sunday)
+
+    # Saturday is 6 days after Sunday
+    end = start + timedelta(days=6)
+
+    return (start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+
+
+def get_twc_activities_for_week(week_start: Optional[str] = None) -> list[dict[str, Any]]:
+    """
+    Get all work search activities for a specific TWC week (Sunday-Saturday).
+    Activities are applications with status != 'prospect' and != 'skipped'.
+    """
+    sunday, saturday = get_twc_week_boundaries(week_start)
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT *,
+                COALESCE(activity_date, DATE(applied_at), DATE(created_at)) as effective_date,
+                CASE status
+                    WHEN 'offer' THEN COALESCE(twc_result, 'hired')
+                    WHEN 'rejected' THEN COALESCE(twc_result, 'not_hiring')
+                    ELSE COALESCE(twc_result, 'application_filed')
+                END as derived_twc_result
+            FROM applications
+            WHERE status NOT IN ('prospect', 'skipped')
+              AND COALESCE(activity_date, DATE(applied_at), DATE(created_at)) BETWEEN ? AND ?
+            ORDER BY COALESCE(activity_date, DATE(applied_at), DATE(created_at)) ASC
+        """, (sunday, saturday))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_twc_week_summary(week_start: Optional[str] = None) -> dict[str, Any]:
+    """
+    Get summary statistics for a TWC week.
+    Returns activity counts, completeness status, etc.
+    """
+    sunday, saturday = get_twc_week_boundaries(week_start)
+    activities = get_twc_activities_for_week(week_start)
+
+    # Group by day
+    from collections import defaultdict
+    by_day = defaultdict(list)
+    for act in activities:
+        day = act.get('effective_date') or act.get('activity_date') or act.get('applied_at', '')[:10]
+        by_day[day].append(act)
+
+    # Count by activity type
+    by_type = defaultdict(int)
+    for act in activities:
+        act_type = act.get('twc_activity_type') or 'applied'
+        by_type[act_type] += 1
+
+    # TWC requires minimum 3 work search activities per week
+    required = 3
+    total = len(activities)
+
+    return {
+        'week_start': sunday,
+        'week_end': saturday,
+        'total_activities': total,
+        'required_activities': required,
+        'is_complete': total >= required,
+        'activities_by_day': dict(by_day),
+        'activities_by_type': dict(by_type),
+    }
+
+
+def update_twc_fields(app_id: int, **kwargs) -> bool:
+    """
+    Update TWC-specific fields for an application.
+    Valid fields: twc_activity_type, twc_result, twc_result_other, hired_start_date,
+                  activity_date, employer_phone, employer_address, employer_city,
+                  employer_state, employer_zip, contact_name, contact_email, contact_fax
+    """
+    valid_fields = {
+        'twc_activity_type', 'twc_result', 'twc_result_other', 'hired_start_date',
+        'activity_date', 'employer_phone', 'employer_address', 'employer_city',
+        'employer_state', 'employer_zip', 'contact_name', 'contact_email', 'contact_fax'
+    }
+
+    # Filter to only valid TWC fields
+    twc_updates = {k: v for k, v in kwargs.items() if k in valid_fields}
+
+    if not twc_updates:
+        return False
+
+    return update_application(app_id, **twc_updates)
+
+
+def backfill_activity_dates() -> int:
+    """
+    Backfill activity_date from applied_at for existing applications.
+    Returns count of records updated.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE applications
+            SET activity_date = DATE(applied_at)
+            WHERE activity_date IS NULL
+              AND applied_at IS NOT NULL
+              AND status NOT IN ('prospect', 'skipped')
+        """)
+        conn.commit()
+        return cursor.rowcount
+
+
+def get_twc_activity_types() -> list[dict[str, str]]:
+    """Return the list of valid TWC activity types with labels."""
+    return [
+        {'value': 'applied', 'label': 'Applied for job'},
+        {'value': 'resume', 'label': 'Submitted resume'},
+        {'value': 'interview', 'label': 'Interviewed'},
+        {'value': 'job_fair', 'label': 'Attended job fair'},
+        {'value': 'workforce_center', 'label': 'Used Workforce Center'},
+        {'value': 'online_search', 'label': 'Searched online'},
+    ]
+
+
+def get_twc_result_types() -> list[dict[str, str]]:
+    """Return the list of valid TWC result types with labels."""
+    return [
+        {'value': 'application_filed', 'label': 'Application filed'},
+        {'value': 'hired', 'label': 'Hired'},
+        {'value': 'not_hiring', 'label': 'Not hiring'},
+        {'value': 'other', 'label': 'Other'},
+    ]
+
+
+def derive_twc_result(status: str) -> str:
+    """Derive TWC result from application status."""
+    mapping = {
+        'applied': 'application_filed',
+        'screening': 'application_filed',
+        'interview': 'application_filed',
+        'offer': 'hired',
+        'rejected': 'not_hiring',
+    }
+    return mapping.get(status, 'application_filed')
+
+
+# Corpus data assembly operations
+
+def get_roles_ordered_by_date(limit: Optional[int] = None) -> list[dict[str, Any]]:
+    """Get roles ordered by start_date DESC (most recent first)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        query = """
+            SELECT * FROM roles
+            ORDER BY
+                CASE WHEN is_current = 1 THEN 0 ELSE 1 END,
+                start_date DESC,
+                id DESC
+        """
+        if limit:
+            query += f" LIMIT {limit}"
+        cursor.execute(query)
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_entries_for_role_ordered(role_id: int, limit: Optional[int] = None) -> list[dict[str, Any]]:
+    """Get entries for a role ordered by times_used DESC."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        query = """
+            SELECT * FROM entries
+            WHERE role_id = ?
+            ORDER BY times_used DESC, id ASC
+        """
+        if limit:
+            query += f" LIMIT {limit}"
+        cursor.execute(query, (role_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_skills_by_category() -> dict[str, list[str]]:
+    """Get skills grouped by category."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT name, category FROM skills
+            WHERE category IS NOT NULL AND category != ''
+            ORDER BY category, name
+        """)
+
+        skills_by_cat: dict[str, list[str]] = {}
+        for row in cursor.fetchall():
+            cat = row['category']
+            if cat not in skills_by_cat:
+                skills_by_cat[cat] = []
+            skills_by_cat[cat].append(row['name'])
+
+        return skills_by_cat
+
+
+# Application Email Pairing operations
+
+def add_application_email(
+    application_id: int,
+    email_type: str,  # 'confirmation' or 'resolution'
+    received_at: str,
+    email_id: Optional[str] = None,
+    sender: Optional[str] = None,
+    subject: Optional[str] = None,
+    resolution_type: Optional[str] = None,  # For resolution: 'rejection', 'screening', 'interview', 'offer'
+) -> int:
+    """Add an email to the application_emails table."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO application_emails
+            (application_id, email_type, resolution_type, email_id, sender, subject, received_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (application_id, email_type, resolution_type, email_id, sender, subject, received_at)
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_application_emails(app_id: int) -> list[dict[str, Any]]:
+    """Get all emails for an application."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM application_emails
+            WHERE application_id = ?
+            ORDER BY received_at ASC
+            """,
+            (app_id,)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_confirmation_email(app_id: int) -> Optional[dict[str, Any]]:
+    """Get the confirmation email for an application (first one if multiple)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM application_emails
+            WHERE application_id = ? AND email_type = 'confirmation'
+            ORDER BY received_at ASC
+            LIMIT 1
+            """,
+            (app_id,)
+        )
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+    return None
+
+
+def get_resolution_email(app_id: int) -> Optional[dict[str, Any]]:
+    """Get the resolution email for an application (most recent if multiple)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT * FROM application_emails
+            WHERE application_id = ? AND email_type = 'resolution'
+            ORDER BY received_at DESC
+            LIMIT 1
+            """,
+            (app_id,)
+        )
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+    return None
+
+
+def compute_pairing_status(app_id: int) -> tuple[str, int]:
+    """
+    Compute the pairing status and days waiting for an application.
+    Returns (status, days_waiting) where status is one of:
+    - 'pending': No confirmation email yet
+    - 'confirmed': Has confirmation but no resolution
+    - 'resolved': Has both confirmation and resolution
+    - 'ghosted': Has confirmation but no resolution for 14+ days
+    - 'unconfirmed': Applied 3+ days ago with no confirmation
+    """
+    from datetime import datetime
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get application info
+        cursor.execute(
+            "SELECT applied_at, created_at FROM applications WHERE id = ?",
+            (app_id,)
+        )
+        app_row = cursor.fetchone()
+        if not app_row:
+            return ('pending', 0)
+
+        applied_at = app_row['applied_at'] or app_row['created_at']
+
+        # Get confirmation email
+        confirmation = get_confirmation_email(app_id)
+
+        # Get resolution email
+        resolution = get_resolution_email(app_id)
+
+        # Calculate days
+        now = datetime.now()
+        days_since_applied = 0
+        days_since_confirmation = 0
+
+        if applied_at:
+            try:
+                applied_date = datetime.fromisoformat(applied_at.replace('Z', '+00:00'))
+                if applied_date.tzinfo:
+                    applied_date = applied_date.replace(tzinfo=None)
+                days_since_applied = (now - applied_date).days
+            except (ValueError, TypeError):
+                pass
+
+        if confirmation and confirmation.get('received_at'):
+            try:
+                conf_date = datetime.fromisoformat(confirmation['received_at'].replace('Z', '+00:00'))
+                if conf_date.tzinfo:
+                    conf_date = conf_date.replace(tzinfo=None)
+                days_since_confirmation = (now - conf_date).days
+            except (ValueError, TypeError):
+                pass
+
+        # Determine status
+        if resolution:
+            return ('resolved', 0)
+        elif confirmation:
+            if days_since_confirmation >= 14:
+                return ('ghosted', days_since_confirmation)
+            else:
+                return ('confirmed', days_since_confirmation)
+        elif days_since_applied >= 3:
+            return ('unconfirmed', days_since_applied)
+        else:
+            return ('pending', days_since_applied)
+
+
+def update_application_pairing_status(app_id: int) -> bool:
+    """Update the pairing_status and days_waiting for an application."""
+    status, days_waiting = compute_pairing_status(app_id)
+    return update_application(app_id, pairing_status=status, days_waiting=days_waiting)
+
+
+def get_applications_with_pairing_status(
+    status_filter: Optional[str] = None,
+    include_resolved: bool = True,
+) -> list[dict[str, Any]]:
+    """
+    Get applications with computed pairing status.
+
+    Args:
+        status_filter: Filter by pairing status ('pending', 'confirmed', 'resolved', 'ghosted')
+        include_resolved: If False, exclude resolved applications
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        query = """
+            SELECT a.*,
+                (SELECT COUNT(*) FROM application_emails ae
+                 WHERE ae.application_id = a.id AND ae.email_type = 'confirmation') as has_confirmation,
+                (SELECT COUNT(*) FROM application_emails ae
+                 WHERE ae.application_id = a.id AND ae.email_type = 'resolution') as has_resolution,
+                (SELECT ae.resolution_type FROM application_emails ae
+                 WHERE ae.application_id = a.id AND ae.email_type = 'resolution'
+                 ORDER BY ae.received_at DESC LIMIT 1) as latest_resolution_type,
+                (SELECT ae.received_at FROM application_emails ae
+                 WHERE ae.application_id = a.id AND ae.email_type = 'confirmation'
+                 ORDER BY ae.received_at ASC LIMIT 1) as confirmation_date,
+                (SELECT ae.received_at FROM application_emails ae
+                 WHERE ae.application_id = a.id AND ae.email_type = 'resolution'
+                 ORDER BY ae.received_at DESC LIMIT 1) as resolution_date
+            FROM applications a
+            WHERE a.status NOT IN ('prospect', 'skipped')
+            ORDER BY a.applied_at DESC, a.created_at DESC
+        """
+
+        cursor.execute(query)
+        results = []
+
+        for row in cursor.fetchall():
+            app = dict(row)
+
+            # Compute pairing status from query results
+            has_conf = app.get('has_confirmation', 0) > 0
+            has_res = app.get('has_resolution', 0) > 0
+
+            # Calculate days
+            from datetime import datetime
+            now = datetime.now()
+            days_waiting = 0
+
+            if has_res:
+                pairing_status = 'resolved'
+            elif has_conf:
+                conf_date_str = app.get('confirmation_date')
+                if conf_date_str:
+                    try:
+                        conf_date = datetime.fromisoformat(conf_date_str.replace('Z', '+00:00'))
+                        if conf_date.tzinfo:
+                            conf_date = conf_date.replace(tzinfo=None)
+                        days_waiting = (now - conf_date).days
+                    except (ValueError, TypeError):
+                        pass
+
+                if days_waiting >= 14:
+                    pairing_status = 'ghosted'
+                else:
+                    pairing_status = 'confirmed'
+            else:
+                applied_at = app.get('applied_at') or app.get('created_at')
+                if applied_at:
+                    try:
+                        applied_date = datetime.fromisoformat(applied_at.replace('Z', '+00:00'))
+                        if applied_date.tzinfo:
+                            applied_date = applied_date.replace(tzinfo=None)
+                        days_waiting = (now - applied_date).days
+                    except (ValueError, TypeError):
+                        pass
+
+                if days_waiting >= 3:
+                    pairing_status = 'unconfirmed'
+                else:
+                    pairing_status = 'pending'
+
+            app['computed_pairing_status'] = pairing_status
+            app['computed_days_waiting'] = days_waiting
+
+            # Apply filter
+            if status_filter and pairing_status != status_filter:
+                continue
+            if not include_resolved and pairing_status == 'resolved':
+                continue
+
+            results.append(app)
+
+        return results
+
+
+def get_ghosted_applications(days_threshold: int = 14) -> list[dict[str, Any]]:
+    """Get applications that are ghosted (confirmed but no resolution for N+ days)."""
+    return [
+        app for app in get_applications_with_pairing_status()
+        if app.get('computed_pairing_status') == 'ghosted'
+        and app.get('computed_days_waiting', 0) >= days_threshold
+    ]
+
+
+def get_unconfirmed_applications(days_threshold: int = 3) -> list[dict[str, Any]]:
+    """Get applications that haven't received confirmation email after N days."""
+    return [
+        app for app in get_applications_with_pairing_status()
+        if app.get('computed_pairing_status') == 'unconfirmed'
+        and app.get('computed_days_waiting', 0) >= days_threshold
+    ]
+
+
+def get_application_timeline(company: str) -> list[dict[str, Any]]:
+    """
+    Get full email timeline for applications from a company.
+    Returns chronologically ordered events (application, confirmation, resolution).
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get applications for this company
+        cursor.execute(
+            """
+            SELECT id, company, position, applied_at, created_at, status
+            FROM applications
+            WHERE LOWER(company) LIKE LOWER(?)
+            ORDER BY applied_at DESC, created_at DESC
+            """,
+            (f"%{company}%",)
+        )
+        applications = [dict(row) for row in cursor.fetchall()]
+
+        timeline = []
+
+        for app in applications:
+            # Add application event
+            applied_date = app.get('applied_at') or app.get('created_at')
+            if applied_date:
+                timeline.append({
+                    'date': applied_date[:10] if applied_date else None,
+                    'event_type': 'applied',
+                    'company': app['company'],
+                    'position': app['position'],
+                    'application_id': app['id'],
+                    'details': f"Applied to {app['position']} at {app['company']}",
+                })
+
+            # Get emails for this application
+            emails = get_application_emails(app['id'])
+            for email in emails:
+                event_type = email['email_type']
+                if event_type == 'resolution':
+                    event_type = email.get('resolution_type') or 'resolution'
+
+                timeline.append({
+                    'date': email.get('received_at', '')[:10] if email.get('received_at') else None,
+                    'event_type': event_type,
+                    'company': app['company'],
+                    'position': app['position'],
+                    'application_id': app['id'],
+                    'email_id': email.get('email_id'),
+                    'sender': email.get('sender'),
+                    'subject': email.get('subject'),
+                    'details': email.get('subject') or f"{event_type.title()} email",
+                })
+
+        # Sort by date
+        timeline.sort(key=lambda x: x.get('date') or '9999-99-99')
+
+        return timeline
+
+
+def email_already_recorded(email_id: str) -> bool:
+    """Check if an email has already been recorded in application_emails."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM application_emails WHERE email_id = ? LIMIT 1",
+            (email_id,)
+        )
+        return cursor.fetchone() is not None
+
+
+def get_pairing_stats() -> dict[str, Any]:
+    """Get statistics about email pairing status across all applications."""
+    apps = get_applications_with_pairing_status()
+
+    stats = {
+        'total': len(apps),
+        'pending': 0,
+        'confirmed': 0,
+        'resolved': 0,
+        'ghosted': 0,
+        'unconfirmed': 0,
+        'by_resolution_type': {
+            'rejection': 0,
+            'screening': 0,
+            'interview': 0,
+            'offer': 0,
+        }
+    }
+
+    for app in apps:
+        status = app.get('computed_pairing_status')
+        if status in stats:
+            stats[status] += 1
+
+        # Count resolution types
+        res_type = app.get('latest_resolution_type')
+        if res_type and res_type in stats['by_resolution_type']:
+            stats['by_resolution_type'][res_type] += 1
+
+    return stats

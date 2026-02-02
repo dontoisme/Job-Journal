@@ -1567,6 +1567,696 @@ def email_test(
         console.print()
 
 
+@email_app.command("pair")
+def email_pair(
+    app_id: Optional[int] = typer.Option(None, "--app-id", "-a", help="Sync specific application only"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed progress"),
+):
+    """Match emails to applications using the pairing system.
+
+    Every application should have a paired email lifecycle:
+    - Confirmation email (received when you apply)
+    - Resolution email (rejection, screening, interview, or offer)
+
+    Applications without resolution after 14 days are marked as "ghosted".
+
+    Examples:
+        jj email pair              # Sync all applications
+        jj email pair --app-id 42  # Sync specific application
+        jj email pair --verbose    # Show detailed progress
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    try:
+        from jj.gmail_checker import sync_application_emails
+        from jj.db import get_applications, get_application
+    except ImportError as e:
+        console.print("[red]Gmail dependencies not installed.[/red]")
+        console.print("Install with: [cyan]pip install google-api-python-client google-auth-oauthlib[/cyan]")
+        raise typer.Exit(1)
+
+    # Get applications to sync
+    if app_id:
+        app = get_application(app_id)
+        if not app:
+            console.print(f"[red]Application {app_id} not found.[/red]")
+            raise typer.Exit(1)
+        applications = [app]
+        console.print(f"[bold]Syncing emails for {app['company']} - {app.get('position', 'N/A')}...[/bold]\n")
+    else:
+        applications = [a for a in get_applications() if a.get('status') not in ('prospect', 'skipped')]
+        if not applications:
+            console.print("[yellow]No applications to sync.[/yellow]")
+            return
+        console.print(f"[bold]Syncing emails for {len(applications)} applications...[/bold]\n")
+
+    try:
+        summary = sync_application_emails(applications, verbose=verbose)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        console.print("\nRun [cyan]jj email setup[/cyan] first.")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+    # Show results
+    console.print("\n[bold]Sync Complete[/bold]")
+    console.print(f"  Applications checked: {summary['applications_checked']}")
+    console.print(f"  Confirmations found: [green]{summary['confirmations_found']}[/green]")
+    console.print(f"  Resolutions found: [cyan]{summary['resolutions_found']}[/cyan]")
+    console.print(f"  Already resolved: [dim]{summary['already_resolved']}[/dim]")
+
+    if summary['errors']:
+        console.print(f"\n[yellow]Errors ({len(summary['errors'])}):[/yellow]")
+        for error in summary['errors'][:5]:
+            console.print(f"  - {error}")
+
+    if summary['details'] and verbose:
+        console.print("\n[bold]Details:[/bold]")
+        for detail in summary['details']:
+            type_str = detail['type']
+            console.print(f"  {detail['company']}: {type_str} - {detail['subject'][:50]}")
+
+    console.print("\n[dim]Run 'jj app status' to see pairing status for all applications.[/dim]")
+
+
+@email_app.command("report")
+def email_report():
+    """Show email pairing status report.
+
+    Displays a summary of email pairing across all applications.
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    from jj.db import get_pairing_stats
+
+    stats = get_pairing_stats()
+
+    console.print(Panel.fit(
+        f"[bold]Application Email Pairing Report[/bold]\n\n"
+        f"Total Applications: {stats['total']}\n\n"
+        f"[bold]Status Breakdown[/bold]\n"
+        f"  [green]Resolved[/green] (confirmation + resolution): {stats['resolved']}\n"
+        f"  [cyan]Confirmed[/cyan] (waiting for resolution): {stats['confirmed']}\n"
+        f"  [red]Ghosted[/red] (confirmed > 14 days, no resolution): {stats['ghosted']}\n"
+        f"  [dim]Pending[/dim] (recently applied): {stats['pending']}\n"
+        f"  [yellow]Unconfirmed[/yellow] (applied > 3 days, no confirmation): {stats['unconfirmed']}\n\n"
+        f"[bold]Resolution Types[/bold]\n"
+        f"  Rejections: {stats['by_resolution_type']['rejection']}\n"
+        f"  Screening calls: {stats['by_resolution_type']['screening']}\n"
+        f"  Interviews: {stats['by_resolution_type']['interview']}\n"
+        f"  Offers: {stats['by_resolution_type']['offer']}",
+        title="Email Pairing Report",
+    ))
+
+
+# =============================================================================
+# Application Status Commands
+# =============================================================================
+
+app_cmd = typer.Typer(
+    name="app",
+    help="Application tracking and email pairing status.",
+    no_args_is_help=True,
+)
+app.add_typer(app_cmd, name="app")
+
+
+@app_cmd.command("status")
+def app_status(
+    ghosted: bool = typer.Option(False, "--ghosted", "-g", help="Show only ghosted applications"),
+    pending: bool = typer.Option(False, "--pending", "-p", help="Show only pending/confirmed applications"),
+    all_apps: bool = typer.Option(False, "--all", "-a", help="Show all applications including resolved"),
+):
+    """Show application status with email pairing info.
+
+    Displays applications with their confirmation and resolution status.
+
+    Examples:
+        jj app status              # Show applications needing attention
+        jj app status --ghosted    # Show ghosted applications (>14 days)
+        jj app status --pending    # Show awaiting resolution
+        jj app status --all        # Show all including resolved
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    from jj.db import get_applications_with_pairing_status, get_pairing_stats
+    from rich.table import Table
+
+    # Get applications
+    if ghosted:
+        applications = [
+            a for a in get_applications_with_pairing_status()
+            if a.get('computed_pairing_status') == 'ghosted'
+        ]
+        title = "Ghosted Applications (>14 days without resolution)"
+    elif pending:
+        applications = [
+            a for a in get_applications_with_pairing_status()
+            if a.get('computed_pairing_status') in ('pending', 'confirmed', 'unconfirmed')
+        ]
+        title = "Applications Awaiting Resolution"
+    elif all_apps:
+        applications = get_applications_with_pairing_status(include_resolved=True)
+        title = "All Applications"
+    else:
+        applications = get_applications_with_pairing_status(include_resolved=False)
+        title = "Applications (excluding resolved)"
+
+    if not applications:
+        console.print(f"[yellow]No applications found matching criteria.[/yellow]")
+        return
+
+    # Create table
+    table = Table(title=title)
+    table.add_column("Company", style="cyan")
+    table.add_column("Position", style="white")
+    table.add_column("Status", style="white")
+    table.add_column("Confirmation", style="white")
+    table.add_column("Resolution", style="white")
+    table.add_column("Days", justify="right")
+
+    status_colors = {
+        'resolved': 'green',
+        'confirmed': 'cyan',
+        'ghosted': 'red',
+        'pending': 'dim',
+        'unconfirmed': 'yellow',
+    }
+
+    for app in applications:
+        pairing_status = app.get('computed_pairing_status', 'unknown')
+        days_waiting = app.get('computed_days_waiting', 0)
+
+        color = status_colors.get(pairing_status, 'white')
+        status_display = f"[{color}]{pairing_status}[/{color}]"
+
+        # Confirmation column
+        conf_date = app.get('confirmation_date')
+        if conf_date:
+            conf_display = f"[green]✓[/green] {conf_date[:10]}"
+        else:
+            conf_display = "[dim]—[/dim]"
+
+        # Resolution column
+        res_date = app.get('resolution_date')
+        res_type = app.get('latest_resolution_type')
+        if res_date:
+            type_str = f" ({res_type})" if res_type else ""
+            res_display = f"[green]✓[/green] {res_date[:10]}{type_str}"
+        else:
+            if pairing_status == 'ghosted':
+                res_display = f"[red]pending {days_waiting}d[/red]"
+            elif pairing_status == 'confirmed':
+                res_display = f"[dim]pending {days_waiting}d[/dim]"
+            else:
+                res_display = "[dim]—[/dim]"
+
+        table.add_row(
+            app.get('company', 'N/A'),
+            (app.get('position') or 'N/A')[:30],
+            status_display,
+            conf_display,
+            res_display,
+            str(days_waiting) if days_waiting else "",
+        )
+
+    console.print(table)
+
+    # Show summary stats
+    stats = get_pairing_stats()
+    console.print(f"\n[dim]Total: {stats['total']} | Resolved: {stats['resolved']} | "
+                  f"Ghosted: {stats['ghosted']} | Pending: {stats['pending'] + stats['confirmed']}[/dim]")
+
+
+@app_cmd.command("timeline")
+def app_timeline(
+    company: str = typer.Argument(..., help="Company name to show timeline for"),
+):
+    """Show full email timeline for applications at a company.
+
+    Displays chronologically ordered events: application, confirmation, resolution.
+
+    Example:
+        jj app timeline "Bonterra"
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    from jj.db import get_application_timeline
+
+    timeline = get_application_timeline(company)
+
+    if not timeline:
+        console.print(f"[yellow]No applications found for '{company}'.[/yellow]")
+        return
+
+    console.print(f"\n[bold]Timeline for {company}[/bold]\n")
+
+    event_icons = {
+        'applied': '📝',
+        'confirmation': '✅',
+        'rejection': '❌',
+        'screening': '📞',
+        'interview': '🎤',
+        'offer': '🎉',
+        'resolution': '📧',
+    }
+
+    event_colors = {
+        'applied': 'white',
+        'confirmation': 'green',
+        'rejection': 'red',
+        'screening': 'cyan',
+        'interview': 'yellow',
+        'offer': 'green',
+        'resolution': 'white',
+    }
+
+    for event in timeline:
+        date = event.get('date', 'N/A')
+        event_type = event.get('event_type', 'unknown')
+        icon = event_icons.get(event_type, '•')
+        color = event_colors.get(event_type, 'white')
+        details = event.get('details', '')
+
+        console.print(f"  {date}  {icon} [{color}]{event_type.title()}[/{color}]")
+        if details:
+            console.print(f"           [dim]{details[:60]}[/dim]")
+
+    console.print()
+
+
+# =============================================================================
+# Google Docs Commands
+# =============================================================================
+
+gdocs_app = typer.Typer(
+    name="gdocs",
+    help="Google Docs integration for resume generation.",
+    no_args_is_help=True,
+)
+app.add_typer(gdocs_app, name="gdocs")
+
+
+@gdocs_app.command("setup")
+def gdocs_setup():
+    """Set up Google Docs API authentication.
+
+    Requires credentials.json from Google Cloud Console in ~/.job-journal/.
+    Will open a browser to authorize access on first run.
+
+    Scopes requested:
+    - documents: Read/write Google Docs
+    - drive.file: Create/manage files created by this app
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    try:
+        from jj.google_docs import GoogleDocsClient, CREDENTIALS_PATH, GDOCS_TOKEN_PATH
+    except ImportError as e:
+        console.print("[red]Google API dependencies not installed.[/red]")
+        console.print("Install with: [cyan]pip install google-api-python-client google-auth-oauthlib[/cyan]")
+        raise typer.Exit(1)
+
+    if not CREDENTIALS_PATH.exists():
+        console.print(f"[red]credentials.json not found at {CREDENTIALS_PATH}[/red]")
+        console.print("\nTo set up Google Docs integration:")
+        console.print("1. Go to https://console.cloud.google.com/apis/credentials")
+        console.print("2. Create OAuth 2.0 Client ID credentials")
+        console.print("3. Enable Google Docs API and Google Drive API")
+        console.print("4. Download as credentials.json")
+        console.print(f"5. Copy to {JJ_HOME}/")
+        raise typer.Exit(1)
+
+    console.print("[bold]Authenticating with Google Docs...[/bold]")
+    console.print("A browser window will open for authorization.\n")
+
+    try:
+        client = GoogleDocsClient()
+        client.authenticate()
+
+        # Test connection
+        about = client.drive_service.about().get(fields="user").execute()
+        user_email = about.get("user", {}).get("emailAddress", "unknown")
+
+        console.print(Panel.fit(
+            f"[green]Google Docs authentication successful![/green]\n\n"
+            f"Signed in as: {user_email}\n"
+            f"Token saved to: {GDOCS_TOKEN_PATH}\n\n"
+            "Next steps:\n"
+            "  [cyan]jj gdocs config --template-id YOUR_ID[/cyan]  - Set template\n"
+            "  [cyan]jj gdocs test[/cyan]                          - Test connection\n"
+            "  [cyan]jj gdocs generate \"Company\" \"Role\"[/cyan]     - Generate resume",
+            title="Google Docs Setup",
+        ))
+    except Exception as e:
+        console.print(f"[red]Authentication failed: {e}[/red]")
+        raise typer.Exit(1)
+
+
+@gdocs_app.command("config")
+def gdocs_config(
+    show: bool = typer.Option(False, "--show", "-s", help="Show current configuration"),
+    template_id: Optional[str] = typer.Option(None, "--template-id", "-t", help="Google Docs template ID"),
+    output_dir: Optional[str] = typer.Option(None, "--output-dir", "-o", help="PDF output directory"),
+    auto_open: Optional[bool] = typer.Option(None, "--auto-open/--no-auto-open", help="Auto-open PDF after generation"),
+    keep_doc: Optional[bool] = typer.Option(None, "--keep-doc/--delete-doc", help="Keep Google Doc after PDF export"),
+):
+    """View or set Google Docs configuration.
+
+    Examples:
+        jj gdocs config --show
+        jj gdocs config --template-id 1abc123...
+        jj gdocs config --output-dir ~/Documents/Resumes
+        jj gdocs config --auto-open --keep-doc
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    from jj.google_docs import get_gdocs_config, save_gdocs_config, GDOCS_TOKEN_PATH
+
+    if show or (template_id is None and output_dir is None and auto_open is None and keep_doc is None):
+        # Show current config
+        config = get_gdocs_config()
+        authenticated = GDOCS_TOKEN_PATH.exists()
+
+        template = config.get("template_id", "[dim]not set[/dim]")
+        if template and len(template) > 30:
+            template = template[:27] + "..."
+
+        console.print(Panel.fit(
+            f"[bold]Google Docs Settings[/bold]\n\n"
+            f"Template ID: {template}\n"
+            f"PDF Output Dir: {config.get('pdf_output_dir', '~/Documents/Resumes')}\n"
+            f"Auto-open PDF: {config.get('auto_open', True)}\n"
+            f"Keep Google Doc: {config.get('keep_google_doc', True)}\n\n"
+            f"[bold]Authentication[/bold]\n"
+            f"Configured: {'[green]Yes[/green]' if authenticated else '[red]No[/red]'}",
+            title="Google Docs Config",
+        ))
+
+        if not config.get("template_id"):
+            console.print("\n[dim]Set template with:[/dim]")
+            console.print("  jj gdocs config --template-id YOUR_TEMPLATE_DOC_ID")
+            console.print("\n[dim]Get template ID from the Google Docs URL:[/dim]")
+            console.print("  https://docs.google.com/document/d/[bold]THIS_IS_THE_ID[/bold]/edit")
+
+        return
+
+    # Update config
+    save_gdocs_config(
+        template_id=template_id,
+        pdf_output_dir=output_dir,
+        auto_open=auto_open,
+        keep_google_doc=keep_doc,
+    )
+
+    console.print("[green]Configuration updated![/green]")
+
+    # Show what was updated
+    updates = []
+    if template_id:
+        display_id = template_id[:30] + "..." if len(template_id) > 30 else template_id
+        updates.append(f"Template ID: {display_id}")
+    if output_dir:
+        updates.append(f"Output Dir: {output_dir}")
+    if auto_open is not None:
+        updates.append(f"Auto-open: {auto_open}")
+    if keep_doc is not None:
+        updates.append(f"Keep Doc: {keep_doc}")
+
+    for update in updates:
+        console.print(f"  {update}")
+
+
+@gdocs_app.command("generate")
+def gdocs_generate(
+    company: str = typer.Argument(..., help="Target company name"),
+    position: str = typer.Argument(..., help="Target position/role"),
+    template_id: Optional[str] = typer.Option(None, "--template", "-t", help="Override template ID"),
+    output_dir: Optional[str] = typer.Option(None, "--output", "-o", help="Override output directory"),
+    no_open: bool = typer.Option(False, "--no-open", help="Don't auto-open the PDF"),
+    delete_doc: bool = typer.Option(False, "--delete-doc", help="Delete Google Doc after PDF export"),
+    replacement: Optional[list[str]] = typer.Option(None, "--replace", "-r", help="Custom replacement: OLD=NEW"),
+    from_corpus: bool = typer.Option(False, "--from-corpus", "-c", help="Populate from corpus database"),
+    variant: str = typer.Option("general", "--variant", "-v", help="Summary variant (growth, ai-agentic, health-tech, general)"),
+    max_roles: int = typer.Option(4, "--max-roles", help="Maximum roles to include (1-6)"),
+    max_bullets: int = typer.Option(6, "--max-bullets", help="Maximum bullets per role (1-6)"),
+):
+    """Generate a resume from Google Docs template.
+
+    Copies the configured template, makes text replacements, and exports as PDF.
+
+    Standard mode (default):
+    - {{COMPANY}} -> company name
+    - {{POSITION}} -> position title
+    - {{DATE}} -> current date
+
+    Corpus mode (--from-corpus):
+    - Populates all placeholders from profile and corpus database
+    - Tracks usage in database for analytics
+    - See 'jj gdocs placeholders' for all available placeholders
+
+    Examples:
+        jj gdocs generate "Acme Corp" "Product Manager"
+        jj gdocs generate "Startup Inc" "Senior PM" --replace "{{TEAM}}=Growth"
+        jj gdocs generate "BigCo" "Director" --from-corpus --variant growth
+        jj gdocs generate "TechCo" "PM" --from-corpus --max-roles 3 --max-bullets 4
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    try:
+        from jj.google_docs import generate_resume_gdocs, generate_resume_from_corpus, get_gdocs_config
+    except ImportError as e:
+        console.print("[red]Google API dependencies not installed.[/red]")
+        console.print("Install with: [cyan]pip install google-api-python-client google-auth-oauthlib[/cyan]")
+        raise typer.Exit(1)
+
+    config = get_gdocs_config()
+    auto_open = not no_open and config.get("auto_open", True)
+    keep_doc = not delete_doc and config.get("keep_google_doc", True)
+    output_path = Path(output_dir).expanduser() if output_dir else None
+
+    if from_corpus:
+        # Corpus-based generation
+        console.print(f"[bold]Generating resume from corpus for {company} - {position}...[/bold]")
+        console.print(f"[dim]Variant: {variant} | Max roles: {max_roles} | Max bullets: {max_bullets}[/dim]\n")
+
+        result = generate_resume_from_corpus(
+            company=company,
+            position=position,
+            variant=variant,
+            max_roles=max_roles,
+            max_bullets_per_role=max_bullets,
+            template_id=template_id,
+            output_dir=output_path,
+            auto_open=auto_open,
+            keep_google_doc=keep_doc,
+        )
+
+        if result.success:
+            console.print(Panel.fit(
+                f"[green]Resume generated from corpus![/green]\n\n"
+                f"PDF: {result.pdf_path}\n"
+                f"Replacements made: {result.replacements_made}\n"
+                f"Resume ID: {result.resume_id}\n" +
+                (f"Google Doc: {result.doc_url}\n" if result.doc_url else "[dim]Google Doc deleted[/dim]\n"),
+                title="Resume Generated",
+            ))
+        else:
+            console.print(f"[red]Error: {result.error}[/red]")
+            raise typer.Exit(1)
+    else:
+        # Standard template generation
+        # Parse custom replacements
+        custom_replacements = {}
+        if replacement:
+            for r in replacement:
+                if "=" not in r:
+                    console.print(f"[red]Invalid replacement format: {r}[/red]")
+                    console.print("Use format: OLD=NEW (e.g., --replace '{{TEAM}}=Growth')")
+                    raise typer.Exit(1)
+                old, new = r.split("=", 1)
+                custom_replacements[old] = new
+
+        console.print(f"[bold]Generating resume for {company} - {position}...[/bold]\n")
+
+        result = generate_resume_gdocs(
+            company=company,
+            position=position,
+            template_id=template_id,
+            output_dir=output_path,
+            replacements=custom_replacements,
+            auto_open=auto_open,
+            keep_google_doc=keep_doc,
+        )
+
+        if result.success:
+            console.print(Panel.fit(
+                f"[green]Resume generated successfully![/green]\n\n"
+                f"PDF: {result.pdf_path}\n"
+                f"Replacements made: {result.replacements_made}\n" +
+                (f"Google Doc: {result.doc_url}\n" if result.doc_url else "[dim]Google Doc deleted[/dim]\n"),
+                title="Resume Generated",
+            ))
+        else:
+            console.print(f"[red]Error: {result.error}[/red]")
+            raise typer.Exit(1)
+
+
+@gdocs_app.command("test")
+def gdocs_test():
+    """Test Google Docs API connection.
+
+    Verifies authentication and lists recent documents to confirm access.
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    try:
+        from jj.google_docs import test_connection, get_gdocs_config, GDOCS_TOKEN_PATH
+    except ImportError as e:
+        console.print("[red]Google API dependencies not installed.[/red]")
+        console.print("Install with: [cyan]pip install google-api-python-client google-auth-oauthlib[/cyan]")
+        raise typer.Exit(1)
+
+    if not GDOCS_TOKEN_PATH.exists():
+        console.print("[red]Not authenticated. Run 'jj gdocs setup' first.[/red]")
+        raise typer.Exit(1)
+
+    console.print("[bold]Testing Google Docs connection...[/bold]\n")
+
+    success, message = test_connection()
+
+    if success:
+        config = get_gdocs_config()
+        template_id = config.get("template_id")
+
+        console.print(Panel.fit(
+            f"[green]Connection successful![/green]\n\n"
+            f"{message}\n\n"
+            f"[bold]Configuration:[/bold]\n"
+            f"Template ID: {template_id or '[yellow]Not configured[/yellow]'}\n"
+            f"Output Dir: {config.get('pdf_output_dir', '~/Documents/Resumes')}",
+            title="Google Docs Test",
+        ))
+
+        if not template_id:
+            console.print("\n[yellow]Configure a template to start generating resumes:[/yellow]")
+            console.print("  jj gdocs config --template-id YOUR_TEMPLATE_DOC_ID")
+    else:
+        console.print(f"[red]{message}[/red]")
+        raise typer.Exit(1)
+
+
+@gdocs_app.command("open")
+def gdocs_open(
+    doc_id: str = typer.Argument(..., help="Google Doc ID to open"),
+):
+    """Open a Google Doc in the browser.
+
+    Example:
+        jj gdocs open 1abc123def456...
+    """
+    from jj.google_docs import open_url
+
+    url = f"https://docs.google.com/document/d/{doc_id}/edit"
+    console.print(f"Opening: {url}")
+    open_url(url)
+
+
+@gdocs_app.command("placeholders")
+def gdocs_placeholders():
+    """Show all available template placeholders for corpus-based generation.
+
+    Use these placeholders when creating your Google Docs resume template.
+    Placeholders are replaced when using 'jj gdocs generate --from-corpus'.
+
+    Example template structure:
+        {{NAME}}
+        {{EMAIL}} | {{PHONE}} | {{LOCATION}}
+
+        SUMMARY
+        {{SUMMARY}}
+
+        EXPERIENCE
+        {{ROLE_1_TITLE}} at {{ROLE_1_COMPANY}}
+        {{ROLE_1_DATES}}
+        • {{ROLE_1_BULLET_1}}
+        • {{ROLE_1_BULLET_2}}
+        ...
+    """
+    from jj.google_docs import get_all_placeholders
+
+    placeholders = get_all_placeholders()
+
+    console.print(Panel.fit(
+        "[bold]Google Docs Template Placeholders[/bold]\n\n"
+        "Use these in your Google Docs template.\n"
+        "Generate with: [cyan]jj gdocs generate \"Company\" \"Role\" --from-corpus[/cyan]",
+        title="Template Placeholders",
+    ))
+
+    for category, items in placeholders.items():
+        console.print(f"\n[bold cyan]{category}[/bold cyan]")
+
+        if category == "Experience":
+            # Show abbreviated experience placeholders
+            console.print("  [dim]For each role (1-6):[/dim]")
+            console.print("    {{ROLE_N_TITLE}}     - Job title")
+            console.print("    {{ROLE_N_COMPANY}}   - Company name")
+            console.print("    {{ROLE_N_LOCATION}}  - Location")
+            console.print("    {{ROLE_N_DATES}}     - Date range (e.g., 'Jan 2022 - Present')")
+            console.print("    {{ROLE_N_BULLET_M}}  - Bullet M for role N (1-6 bullets)")
+            console.print()
+            console.print("  [dim]Examples:[/dim]")
+            console.print("    {{ROLE_1_TITLE}}     - Most recent role title")
+            console.print("    {{ROLE_1_BULLET_1}}  - First bullet of most recent role")
+            console.print("    {{ROLE_2_COMPANY}}   - Second role's company")
+        else:
+            for item in items:
+                # Add description for common placeholders
+                desc = {
+                    "{{NAME}}": "Full name from profile",
+                    "{{EMAIL}}": "Email from profile",
+                    "{{PHONE}}": "Phone from profile",
+                    "{{LOCATION}}": "Location from profile",
+                    "{{LINKEDIN}}": "LinkedIn URL from profile",
+                    "{{GITHUB}}": "GitHub URL from profile",
+                    "{{SUMMARY}}": "Professional summary (variant-based)",
+                    "{{COMPANY}}": "Target company name",
+                    "{{POSITION}}": "Target position title",
+                    "{{DATE}}": "Current date",
+                    "{{SKILLS_TECHNICAL}}": "Technical skills (comma-separated)",
+                    "{{SKILLS_DOMAIN}}": "Domain expertise (comma-separated)",
+                    "{{SKILLS_LEADERSHIP}}": "Leadership skills (comma-separated)",
+                    "{{SKILLS_TOOLS}}": "Tools & software (comma-separated)",
+                }.get(item, "")
+
+                if desc:
+                    console.print(f"  {item:24} - {desc}")
+                else:
+                    console.print(f"  {item}")
+
+    console.print("\n[dim]Unused placeholders are replaced with empty strings.[/dim]")
+    console.print("[dim]See docs for full template example.[/dim]")
+
+
 # --------------------------------------------------------------------------
 # Worker subcommands
 # --------------------------------------------------------------------------
