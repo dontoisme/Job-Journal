@@ -157,6 +157,7 @@ def infer_company_domain(company: str) -> Optional[str]:
     Examples:
         "PostHog" → "posthog.com"
         "Babylist" → "babylist.com"
+        "Outdoorsy/Roamly" → "outdoorsy.com" (takes first part)
         "Memorial Sloan Kettering" → "mskcc.org" (needs manual mapping)
         "Acme Corp" → "acme.com"
     """
@@ -167,6 +168,12 @@ def infer_company_domain(company: str) -> Optional[str]:
 
     # Clean and normalize company name
     clean = company.lower().strip()
+
+    # Split on common separators and use the first/primary name
+    # e.g., "Outdoorsy/Roamly" → "Outdoorsy", "Company (DBA Name)" → "Company"
+    for separator in ['/', '|', ' - ', ' (', ' — ']:
+        if separator in clean:
+            clean = clean.split(separator)[0].strip()
 
     # Remove common suffixes
     for suffix in [", inc.", ", inc", " inc.", " inc", ", llc", " llc",
@@ -181,6 +188,31 @@ def infer_company_domain(company: str) -> Optional[str]:
     if clean:
         return f"{clean}.com"
     return None
+
+
+def get_company_search_names(company: str) -> list[str]:
+    """Get list of company name variants for search.
+
+    For "Outdoorsy/Roamly", returns ["Outdoorsy/Roamly", "Outdoorsy", "Roamly"]
+    """
+    names = [company]
+
+    # Split on common separators
+    for separator in ['/', '|', ' - ', ' — ']:
+        if separator in company:
+            parts = [p.strip() for p in company.split(separator)]
+            names.extend(parts)
+
+    # Handle parenthetical names like "Company (DBA)"
+    if ' (' in company and ')' in company:
+        main = company.split(' (')[0].strip()
+        paren = company.split('(')[1].split(')')[0].strip()
+        if main not in names:
+            names.append(main)
+        if paren not in names:
+            names.append(paren)
+
+    return names
 
 
 class GmailClient:
@@ -332,7 +364,7 @@ class GmailClient:
 
         PRIORITY ORDER (most reliable first):
         1. Sender domain (inferred or known) - catches personal recruiter emails
-        2. ATS platforms with company name
+        2. ATS platforms with company name variants
         3. Subject line keywords (fallback)
         """
         queries = []
@@ -341,8 +373,10 @@ class GmailClient:
         if after_date:
             date_filter = f" after:{after_date.strftime('%Y/%m/%d')}"
 
-        # Clean company name for search
-        clean_company = company.replace('"', "").strip()
+        # Get all company name variants for search
+        # e.g., "Outdoorsy/Roamly" → ["Outdoorsy/Roamly", "Outdoorsy", "Roamly"]
+        company_names = get_company_search_names(company)
+        primary_name = company_names[0].replace('"', "").strip()
 
         # Get domain - try known first, then infer
         domain = get_company_domain(company) or infer_company_domain(company)
@@ -354,19 +388,24 @@ class GmailClient:
                     f'from:(@{domain}){date_filter}'
                 )
 
-            # PRIORITY 2: ATS platforms with company in subject
+            # PRIORITY 2: ATS platforms with company name variants in subject
             ats_from = " OR ".join([
-                "ashbyhq", "greenhouse", "lever", "icims", "rippling", "workday"
+                "ashbyhq", "greenhouse", "lever", "icims", "rippling", "workday", "workable", "workablemail"
             ])
-            queries.append(
-                f'from:({ats_from}) subject:("{clean_company}"){date_filter}'
-            )
+            # Search for each company name variant
+            for name in company_names:
+                clean_name = name.replace('"', "").strip()
+                queries.append(
+                    f'from:({ats_from}) subject:("{clean_name}"){date_filter}'
+                )
 
             # PRIORITY 3: Company name in subject with confirmation keywords
-            queries.append(
-                f'subject:("{clean_company}") '
-                f'(thank applying OR application received OR thanks applying){date_filter}'
-            )
+            for name in company_names:
+                clean_name = name.replace('"', "").strip()
+                queries.append(
+                    f'subject:("{clean_name}") '
+                    f'(thank applying OR application received OR thanks applying){date_filter}'
+                )
 
         elif search_type == "update":
             # PRIORITY 1: From company domain (catches personal recruiter emails!)
@@ -376,24 +415,28 @@ class GmailClient:
                     f'from:(@{domain}){date_filter}'
                 )
 
-            # PRIORITY 2: ATS with company name anywhere
+            # PRIORITY 2: ATS with company name variants anywhere
             ats_from = " OR ".join([
-                "ashbyhq", "greenhouse", "lever", "icims", "rippling"
+                "ashbyhq", "greenhouse", "lever", "icims", "rippling", "workable", "workablemail"
             ])
-            queries.append(
-                f'from:({ats_from}) "{clean_company}"{date_filter}'
-            )
+            for name in company_names:
+                clean_name = name.replace('"', "").strip()
+                queries.append(
+                    f'from:({ats_from}) "{clean_name}"{date_filter}'
+                )
 
-            # PRIORITY 3: Company in subject with update keywords (fallback)
+            # PRIORITY 3: Company name variants in subject with update keywords (fallback)
             update_keywords = " OR ".join([
                 "interview", "schedule", "assessment",
                 "unfortunately", "regret", "decision",
                 "offer", "update", "follow", "status",
                 "application", "position", "role"
             ])
-            queries.append(
-                f'subject:("{clean_company}") ({update_keywords}){date_filter}'
-            )
+            for name in company_names:
+                clean_name = name.replace('"', "").strip()
+                queries.append(
+                    f'subject:("{clean_name}") ({update_keywords}){date_filter}'
+                )
 
         return queries
 
@@ -540,7 +583,7 @@ def verify_confirmations(
                 sender_domain = match.group(1).lower()
                 # Don't save ATS domains as company domains
                 ats_domains = get_ats_domains()
-                if not any(ats in sender_domain for ats in ["ashby", "greenhouse", "lever", "icims", "rippling"]):
+                if not any(ats in sender_domain for ats in ["ashby", "greenhouse", "lever", "icims", "rippling", "workable"]):
                     # Check if we should save this domain
                     existing = get_company_domain(company)
                     if not existing:
@@ -771,7 +814,7 @@ def match_email_to_application(
             score += 3
 
         # Check for ATS match with company name
-        ats_patterns = ['greenhouse', 'lever', 'ashby', 'icims', 'workday']
+        ats_patterns = ['greenhouse', 'lever', 'ashby', 'icims', 'workday', 'workable']
         if any(ats in sender_lower for ats in ats_patterns):
             if company in subject_lower or company in email.snippet.lower():
                 score += 7
