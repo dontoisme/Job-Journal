@@ -265,8 +265,8 @@ def build_replacement_dict(
                 replacements[f"{role_prefix}BULLET_{bullet_num}}}}}"] = ""
 
     # Skills placeholders - named categories (legacy)
-    skill_categories = ["technical", "domain", "leadership", "tools"]
-    for cat in skill_categories:
+    legacy_categories = ["technical", "domain", "leadership", "tools"]
+    for cat in legacy_categories:
         placeholder = f"{{{{SKILLS_{cat.upper()}}}}}"
         skills_list = data.skills_by_category.get(cat, [])
         replacements[placeholder] = ", ".join(skills_list)
