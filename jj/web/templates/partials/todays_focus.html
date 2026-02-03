@@ -1,0 +1,134 @@
+<!-- Today's Focus Card - HTMX partial -->
+<div class="focus-sections">
+    {% if focus.recent_updates %}
+    <div class="focus-section">
+        <div class="focus-section-header">
+            <span class="focus-icon">📬</span>
+            <span class="focus-title">Recent Updates</span>
+            <span class="focus-count">{{ focus.recent_updates|length }}</span>
+        </div>
+        {% for item in focus.recent_updates[:3] %}
+        <a href="https://mail.google.com/mail/u/0/#inbox/{{ item.latest_update_email_id }}"
+           target="_blank"
+           class="focus-item focus-item-link"
+           data-app-id="{{ item.id }}"
+           title="{{ item.latest_update_subject }}">
+            <div class="focus-item-main">
+                <span class="badge {% if item.latest_update_type == 'interview' %}badge-success{% elif item.latest_update_type == 'rejection' %}badge-danger{% else %}badge-muted{% endif %}">
+                    {{ item.latest_update_type }}
+                </span>
+                <strong>{{ item.company }}</strong>
+                <span class="focus-item-role">{{ item.position }}</span>
+            </div>
+            <div class="focus-item-actions">
+                <span class="email-link-icon">📧</span>
+                <span class="focus-item-meta">{{ item.latest_update_at|relative_date }}</span>
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if focus.unconfirmed_emails %}
+    <div class="focus-section">
+        <div class="focus-section-header">
+            <span class="focus-icon">⏳</span>
+            <span class="focus-title">Awaiting Confirmation</span>
+            <span class="focus-count warning">{{ focus.unconfirmed_emails|length }}</span>
+        </div>
+        {% for item in focus.unconfirmed_emails[:3] %}
+        <div class="focus-item" data-app-id="{{ item.id }}">
+            <div class="focus-item-main">
+                <strong>{{ item.company }}</strong>
+                <span class="focus-item-role">{{ item.position }}</span>
+            </div>
+            <div class="focus-item-meta">
+                {{ item.days_ago|int }}d ago
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if focus.stale_applications %}
+    <div class="focus-section">
+        <div class="focus-section-header">
+            <span class="focus-icon">🔔</span>
+            <span class="focus-title">Needs Follow-up</span>
+            <span class="focus-count warning">{{ focus.stale_applications|length }}</span>
+        </div>
+        {% for item in focus.stale_applications[:3] %}
+        <div class="focus-item" data-app-id="{{ item.id }}">
+            <div class="focus-item-main">
+                <strong>{{ item.company }}</strong>
+                <span class="focus-item-role">{{ item.position }}</span>
+            </div>
+            <div class="focus-item-actions">
+                <select class="status-select"
+                        hx-post="/api/applications/{{ item.id }}/status"
+                        hx-trigger="change"
+                        hx-swap="none"
+                        name="status">
+                    <option value="applied" {% if item.status == 'applied' %}selected{% endif %}>Applied</option>
+                    <option value="screening" {% if item.status == 'screening' %}selected{% endif %}>Screening</option>
+                    <option value="interview" {% if item.status == 'interview' %}selected{% endif %}>Interview</option>
+                    <option value="rejected" {% if item.status == 'rejected' %}selected{% endif %}>Rejected</option>
+                    <option value="skipped">Archive</option>
+                </select>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if focus.high_fit_prospects %}
+    <div class="focus-section">
+        <div class="focus-section-header">
+            <span class="focus-icon">🎯</span>
+            <span class="focus-title">High-Fit Prospects</span>
+            <span class="focus-count accent">{{ focus.high_fit_prospects|length }}</span>
+        </div>
+        {% for item in focus.high_fit_prospects[:3] %}
+        <div class="focus-item" data-app-id="{{ item.id }}">
+            <div class="focus-item-main">
+                <strong>{{ item.company }}</strong>
+                <span class="focus-item-role">{{ item.position }}</span>
+            </div>
+            <div class="focus-item-score">
+                <span class="score {% if item.fit_score >= 80 %}score-strong{% elif item.fit_score >= 70 %}score-good{% else %}score-moderate{% endif %}">
+                    {{ item.fit_score }}%
+                </span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if focus.interview_prep %}
+    <div class="focus-section">
+        <div class="focus-section-header">
+            <span class="focus-icon">🎤</span>
+            <span class="focus-title">Interview Prep</span>
+            <span class="focus-count success">{{ focus.interview_prep|length }}</span>
+        </div>
+        {% for item in focus.interview_prep[:3] %}
+        <div class="focus-item" data-app-id="{{ item.id }}">
+            <div class="focus-item-main">
+                <strong>{{ item.company }}</strong>
+                <span class="focus-item-role">{{ item.position }}</span>
+            </div>
+            <div class="focus-item-meta">
+                {{ item.updated_at|relative_date }}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    {% if not focus.recent_updates and not focus.unconfirmed_emails and not focus.stale_applications and not focus.high_fit_prospects and not focus.interview_prep %}
+    <div class="empty-state">
+        <div class="empty-state-icon">✨</div>
+        <div class="empty-state-text">All caught up! No items need attention right now.</div>
+    </div>
+    {% endif %}
+</div>

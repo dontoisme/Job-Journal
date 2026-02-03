@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}{{ role.title }} at {{ role.company }} - Job Journal{% endblock %}
+{% block page_title %}{{ role.title }}{% endblock %}
+
+{% block page_actions %}
+<div style="display: flex; gap: 0.5rem; align-items: center;">
+    <span class="badge badge-muted">{{ role.company }}</span>
+    {% if role.is_current %}
+    <span class="badge badge-success">Current</span>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div class="card-header">
+        <span class="card-title">Role Details</span>
+    </div>
+    <div style="padding: 1rem;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+            <div>
+                <div style="color: var(--text-secondary); font-size: 0.8rem;">Company</div>
+                <div style="font-weight: 600;">{{ role.company }}</div>
+            </div>
+            <div>
+                <div style="color: var(--text-secondary); font-size: 0.8rem;">Location</div>
+                <div>{{ role.location or '-' }}</div>
+            </div>
+            <div>
+                <div style="color: var(--text-secondary); font-size: 0.8rem;">Duration</div>
+                <div>{{ role.start_date or '?' }} - {{ role.end_date or 'Present' }}</div>
+            </div>
+        </div>
+        {% if role.summary %}
+        <div style="margin-top: 1rem;">
+            <div style="color: var(--text-secondary); font-size: 0.8rem;">Summary</div>
+            <div style="margin-top: 0.25rem;">{{ role.summary }}</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <span class="card-title">Entries ({{ entries|length }})</span>
+    </div>
+    {% if entries %}
+    <div style="padding: 0.5rem;">
+        {% for entry in entries %}
+        <div style="padding: 1rem; border-bottom: 1px solid var(--border);">
+            <div style="margin-bottom: 0.5rem;">{{ entry.text }}</div>
+            <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+                {% if entry.category %}
+                <span class="badge badge-muted">{{ entry.category }}</span>
+                {% endif %}
+                {% for tag in entry.tags|parse_tags %}
+                <span class="badge badge-accent" style="font-size: 0.7rem;">{{ tag }}</span>
+                {% endfor %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-state-icon">📝</div>
+        <div class="empty-state-title">No entries yet</div>
+        <div class="empty-state-text">Add entries via the CLI or corpus sync</div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}Not Found - Job Journal{% endblock %}
+{% block page_title %}Not Found{% endblock %}
+
+{% block content %}
+<div class="card">
+    <div class="empty-state">
+        <div class="empty-state-icon">404</div>
+        <div class="empty-state-title">Page Not Found</div>
+        <div class="empty-state-text">{{ message or "The page you're looking for doesn't exist." }}</div>
+        <a href="/" class="btn btn-primary" style="margin-top: 1rem;">Back to Dashboard</a>
+    </div>
+</div>
+{% endblock %}

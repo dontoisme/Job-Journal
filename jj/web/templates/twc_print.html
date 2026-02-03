@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TWC Work Search Activity Log - {{ week_display }}</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 11pt;
+            line-height: 1.4;
+            padding: 0.5in;
+            max-width: 8.5in;
+            margin: 0 auto;
+        }
+        h1 {
+            font-size: 14pt;
+            text-align: center;
+            margin-bottom: 0.5rem;
+        }
+        .header-info {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 2px solid #000;
+        }
+        .header-info div {
+            font-size: 10pt;
+        }
+        .week-label {
+            font-weight: bold;
+            font-size: 12pt;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1rem;
+        }
+        th, td {
+            border: 1px solid #000;
+            padding: 4px 6px;
+            text-align: left;
+            vertical-align: top;
+            font-size: 9pt;
+        }
+        th {
+            background: #f0f0f0;
+            font-weight: bold;
+            font-size: 8pt;
+        }
+        .activity-row td {
+            min-height: 60px;
+        }
+        .summary-section {
+            margin-top: 1rem;
+            padding: 0.5rem;
+            border: 1px solid #000;
+        }
+        .summary-section h3 {
+            font-size: 11pt;
+            margin-bottom: 0.5rem;
+        }
+        .empty-row {
+            height: 50px;
+        }
+        .footer {
+            margin-top: 1rem;
+            font-size: 8pt;
+            color: #666;
+            text-align: center;
+        }
+        @media print {
+            body {
+                padding: 0;
+            }
+            .no-print {
+                display: none;
+            }
+        }
+        .print-btn {
+            position: fixed;
+            top: 1rem;
+            right: 1rem;
+            padding: 0.5rem 1rem;
+            background: #4f46e5;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12pt;
+        }
+        .print-btn:hover {
+            background: #4338ca;
+        }
+    </style>
+</head>
+<body>
+    <button class="print-btn no-print" onclick="window.print()">Print / Save PDF</button>
+
+    <h1>The Texas Workforce Commission Work Search Activity Log</h1>
+
+    <div class="header-info">
+        <div>
+            <strong>Name:</strong> ________________________________
+        </div>
+        <div>
+            <strong>Social Security #:</strong> ___-__-____
+        </div>
+        <div class="week-label">
+            <strong>Week of:</strong> {{ week_display }}
+        </div>
+        <div>
+            <strong>Required searches:</strong> 3
+        </div>
+    </div>
+
+    <table>
+        <thead>
+            <tr>
+                <th style="width: 12%;">Date of Activity</th>
+                <th style="width: 15%;">Work Search Activity</th>
+                <th style="width: 12%;">Type of Job</th>
+                <th style="width: 25%;">Employer Name, Address, City/State/Zip, Phone</th>
+                <th style="width: 18%;">Contact Information</th>
+                <th style="width: 18%;">Results</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for activity in activities %}
+            <tr class="activity-row">
+                <td>{{ activity.effective_date or activity.activity_date or (activity.applied_at[:10] if activity.applied_at else '') }}</td>
+                <td>
+                    {% set act_type = activity.twc_activity_type or 'applied' %}
+                    {% if act_type == 'applied' %}Applied for job
+                    {% elif act_type == 'resume' %}Submitted resume
+                    {% elif act_type == 'interview' %}Interviewed
+                    {% elif act_type == 'job_fair' %}Attended job fair
+                    {% elif act_type == 'workforce_center' %}Used Workforce Center
+                    {% elif act_type == 'online_search' %}Searched online
+                    {% else %}{{ act_type }}
+                    {% endif %}
+                </td>
+                <td>{{ activity.position or '-' }}</td>
+                <td>
+                    <strong>{{ activity.company }}</strong><br>
+                    {% if activity.employer_address %}{{ activity.employer_address }}<br>{% endif %}
+                    {% if activity.employer_city %}{{ activity.employer_city }}, {% endif %}
+                    {% if activity.employer_state %}{{ activity.employer_state }} {% endif %}
+                    {% if activity.employer_zip %}{{ activity.employer_zip }}{% endif %}
+                    {% if not activity.employer_city and not activity.employer_state and activity.location %}<br>{{ activity.location }}{% endif %}
+                    {% if activity.employer_phone %}<br>{{ activity.employer_phone }}{% endif %}
+                </td>
+                <td>
+                    {% if activity.contact_name %}<strong>Person:</strong> {{ activity.contact_name }}<br>{% endif %}
+                    {% if activity.contact_email %}<strong>Email:</strong> {{ activity.contact_email }}<br>{% endif %}
+                    {% if activity.contact_fax %}<strong>Fax:</strong> {{ activity.contact_fax }}{% endif %}
+                    {% if not activity.contact_name and not activity.contact_email %}-{% endif %}
+                </td>
+                <td>
+                    {% set result = activity.derived_twc_result or activity.twc_result or 'application_filed' %}
+                    {% if result == 'hired' %}
+                        <strong>Hired</strong>
+                        {% if activity.hired_start_date %}<br>Start: {{ activity.hired_start_date }}{% endif %}
+                    {% elif result == 'not_hiring' %}
+                        Not hiring
+                    {% elif result == 'application_filed' %}
+                        Application filed
+                    {% elif result == 'other' %}
+                        Other: {{ activity.twc_result_other or '-' }}
+                    {% else %}
+                        {{ result }}
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+
+            {% if activities|length < 5 %}
+                {% for _ in range(5 - activities|length) %}
+                <tr class="empty-row">
+                    <td>&nbsp;</td>
+                    <td>&nbsp;</td>
+                    <td>&nbsp;</td>
+                    <td>&nbsp;</td>
+                    <td>&nbsp;</td>
+                    <td>&nbsp;</td>
+                </tr>
+                {% endfor %}
+            {% endif %}
+        </tbody>
+    </table>
+
+    <div class="summary-section">
+        <h3>Week Summary</h3>
+        <p><strong>Total Activities:</strong> {{ summary.total_activities }} of {{ summary.required_activities }} required</p>
+        {% if summary.activities_by_type %}
+        <p><strong>By Type:</strong>
+            {% for type, count in summary.activities_by_type.items() %}
+                {{ type }}: {{ count }}{% if not loop.last %}, {% endif %}
+            {% endfor %}
+        </p>
+        {% endif %}
+    </div>
+
+    <div class="footer">
+        <p>Keep this form for your records. Submit a copy to TWC only if requested.</p>
+        <p>Generated from Job Journal - {{ week_display }}</p>
+    </div>
+</body>
+</html>

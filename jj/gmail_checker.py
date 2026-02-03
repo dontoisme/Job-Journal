@@ -856,6 +856,8 @@ def sync_application_emails(
         get_resolution_email,
         update_application_pairing_status,
         email_already_recorded,
+        transition_application_status,
+        RESOLUTION_TO_STATUS,
     )
 
     client = GmailClient()
@@ -951,6 +953,11 @@ def sync_application_emails(
                     print(f"  Found confirmation: {email.subject}")
 
             elif pair_type == 'resolution' and not existing_resolution:
+                # First positive response is always recruiter_screen, not interview
+                # (Companies often say "interview" for initial recruiter calls)
+                if resolution_type == 'interview':
+                    resolution_type = 'screening'
+
                 add_application_email(
                     application_id=app_id,
                     email_type='resolution',
@@ -970,6 +977,20 @@ def sync_application_emails(
                 })
                 if verbose:
                     print(f"  Found resolution ({resolution_type}): {email.subject}")
+
+                # Auto-sync resolution to application status
+                if resolution_type:
+                    new_status = RESOLUTION_TO_STATUS.get(resolution_type)
+                    if new_status:
+                        transition_application_status(
+                            app_id,
+                            new_status,
+                            reason=f"Email resolution: {resolution_type}",
+                            source='email',
+                            metadata={'email_id': email.message_id}
+                        )
+                        if verbose:
+                            print(f"  Updated status to '{new_status}'")
 
         # Update pairing status
         update_application_pairing_status(app_id)

@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+
+{% block title %}Companies - Job Journal{% endblock %}
+{% block page_title %}Companies{% endblock %}
+
+{% block page_actions %}
+<div style="display: flex; gap: 0.5rem;">
+    <span class="badge badge-muted">{{ companies|length }} companies</span>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Filter tabs -->
+<div class="filter-tabs">
+    <a href="/companies" class="filter-tab {% if not show_with_apps %}active{% endif %}">
+        All ({{ total_count }})
+    </a>
+    <a href="/companies?filter=with_apps" class="filter-tab {% if show_with_apps %}active{% endif %}">
+        With Applications ({{ with_apps_count }})
+    </a>
+</div>
+
+{% if companies %}
+<div class="card">
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Company</th>
+                    <th>Fit</th>
+                    <th>ATS</th>
+                    <th>Apps</th>
+                    <th>Active</th>
+                    <th>Careers</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for company in companies %}
+                <tr>
+                    <td>
+                        <strong>{{ company.name }}</strong>
+                        {% if company.fit_notes %}
+                        <div style="font-size: 0.75rem; color: var(--text-secondary);">{{ company.fit_notes }}</div>
+                        {% elif company.industry %}
+                        <div style="font-size: 0.75rem; color: var(--text-secondary);">{{ company.industry }}</div>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        {% if company.fit_score %}
+                            {% set score = company.fit_score %}
+                            <span class="badge {% if score >= 80 %}badge-success{% elif score >= 60 %}badge-warning{% elif score >= 40 %}badge-accent{% else %}badge-muted{% endif %}">
+                                {{ score }}%
+                            </span>
+                        {% else %}
+                        <span style="color: var(--text-secondary);">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if company.ats_type %}
+                        <span class="badge badge-muted">{{ company.ats_type }}</span>
+                        {% else %}
+                        <span style="color: var(--text-secondary);">-</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        {% if company.application_count and company.application_count > 0 %}
+                        <span class="badge {% if company.application_count > 2 %}badge-warning{% else %}badge-accent{% endif %}">
+                            {{ company.application_count }}
+                        </span>
+                        {% else %}
+                        <span style="color: var(--text-secondary);">0</span>
+                        {% endif %}
+                    </td>
+                    <td style="text-align: center;">
+                        {% if company.active_count and company.active_count > 0 %}
+                        <span class="badge badge-success">{{ company.active_count }}</span>
+                        {% else %}
+                        <span style="color: var(--text-secondary);">-</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if company.careers_url %}
+                        <a href="{{ company.careers_url }}" target="_blank" class="btn btn-sm btn-primary">
+                            Jobs
+                        </a>
+                        {% else %}
+                        <span style="color: var(--text-secondary);">-</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% else %}
+<div class="card">
+    <div class="empty-state">
+        <div class="empty-state-icon">🏢</div>
+        <div class="empty-state-title">No companies yet</div>
+        <div class="empty-state-text">
+            Companies are automatically created from your applications
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Stats summary -->
+<div style="margin-top: 2rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem;">
+    <div class="card" style="padding: 1rem; text-align: center;">
+        <div style="font-size: 2rem; font-weight: 600;">{{ total_count }}</div>
+        <div style="color: var(--text-secondary);">Total Companies</div>
+    </div>
+    <div class="card" style="padding: 1rem; text-align: center;">
+        <div style="font-size: 2rem; font-weight: 600;">{{ with_apps_count }}</div>
+        <div style="color: var(--text-secondary);">With Applications</div>
+    </div>
+    <div class="card" style="padding: 1rem; text-align: center;">
+        <div style="font-size: 2rem; font-weight: 600;">{{ multi_app_count }}</div>
+        <div style="color: var(--text-secondary);">Multiple Apps</div>
+    </div>
+</div>
+{% endblock %}

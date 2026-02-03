@@ -1,0 +1,500 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics - Job Journal{% endblock %}
+{% block page_title %}Analytics{% endblock %}
+
+{% block content %}
+<!-- Conversion Funnel -->
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div class="card-header">
+        <span class="card-title">Conversion Funnel</span>
+        {% if analytics.funnel.conversion_rates.overall %}
+        <span class="badge badge-accent">{{ analytics.funnel.conversion_rates.overall }}% overall</span>
+        {% endif %}
+    </div>
+
+    {% if analytics.funnel.stages %}
+    <div class="funnel-container">
+        {% for stage in analytics.funnel.stages %}
+        <div class="funnel-stage" style="--funnel-width: {{ (stage.count / analytics.funnel.stages[0].count * 100) if analytics.funnel.stages[0].count > 0 else 100 }}%;">
+            <div class="funnel-bar" style="background: {{ stage.color }};">
+                <span class="funnel-count">{{ stage.count }}</span>
+            </div>
+            <div class="funnel-label">{{ stage.name }}</div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="conversion-rates" style="display: flex; gap: 2rem; padding-top: 1rem; border-top: 1px solid var(--border); margin-top: 1rem;">
+        {% if analytics.funnel.conversion_rates.applied_to_screening %}
+        <div class="rate-item">
+            <div class="rate-value">{{ analytics.funnel.conversion_rates.applied_to_screening }}%</div>
+            <div class="rate-label">Applied → Screening</div>
+        </div>
+        {% endif %}
+        {% if analytics.funnel.conversion_rates.screening_to_interview %}
+        <div class="rate-item">
+            <div class="rate-value">{{ analytics.funnel.conversion_rates.screening_to_interview }}%</div>
+            <div class="rate-label">Screening → Interview</div>
+        </div>
+        {% endif %}
+        {% if analytics.funnel.conversion_rates.interview_to_offer %}
+        <div class="rate-item">
+            <div class="rate-value">{{ analytics.funnel.conversion_rates.interview_to_offer }}%</div>
+            <div class="rate-label">Interview → Offer</div>
+        </div>
+        {% endif %}
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-state-icon">📊</div>
+        <div class="empty-state-text">Apply to jobs to see your conversion funnel.</div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Stats Grid -->
+<div class="analytics-grid">
+    <!-- Time in Stage -->
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title">Time in Stage</span>
+        </div>
+        {% if analytics.time_in_stage %}
+        <div class="stage-times">
+            {% for status, data in analytics.time_in_stage.items() %}
+            <div class="stage-time-item">
+                <div class="stage-name">{{ status|capitalize }}</div>
+                <div class="stage-days">
+                    <span class="days-avg">{{ data.avg_days|round(1) }}d avg</span>
+                    <span class="days-range">({{ data.min_days|round(0)|int }}-{{ data.max_days|round(0)|int }}d)</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="empty-state small">No data yet</div>
+        {% endif %}
+    </div>
+
+    <!-- Fit Score Analysis -->
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title">Fit Score Performance</span>
+        </div>
+        {% if analytics.fit_score_analysis.ranges %}
+        <div class="score-ranges">
+            {% for range in analytics.fit_score_analysis.ranges %}
+            <div class="score-range-item">
+                <div class="range-label">{{ range.range }}</div>
+                <div class="range-bar-container">
+                    <div class="range-bar" style="width: {{ range.success_rate }}%; background: {% if range.success_rate >= 30 %}var(--success){% elif range.success_rate >= 15 %}var(--warning){% else %}var(--text-secondary){% endif %};"></div>
+                </div>
+                <div class="range-stats">
+                    <span class="range-total">{{ range.total }} apps</span>
+                    <span class="range-success">{{ range.success_rate }}%</span>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="recommendation" style="margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--border); font-size: 0.875rem; color: var(--text-secondary);">
+            💡 {{ analytics.fit_score_analysis.recommendation }}
+        </div>
+        {% else %}
+        <div class="empty-state small">No scored applications yet</div>
+        {% endif %}
+    </div>
+
+    <!-- Timing Insights -->
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title">Best Days to Apply</span>
+        </div>
+        {% if analytics.timing_insights.by_day %}
+        <div class="day-stats">
+            {% for day in analytics.timing_insights.by_day %}
+            <div class="day-item {% if day.day == analytics.timing_insights.best_day %}best-day{% endif %}">
+                <div class="day-name">{{ day.day[:3] }}</div>
+                <div class="day-bar" style="height: {{ (day.success_rate / 100 * 60) + 10 }}px;"></div>
+                <div class="day-rate">{{ day.success_rate }}%</div>
+            </div>
+            {% endfor %}
+        </div>
+        <div class="recommendation" style="margin-top: 1rem; padding-top: 0.75rem; border-top: 1px solid var(--border); font-size: 0.875rem; color: var(--text-secondary);">
+            💡 {{ analytics.timing_insights.recommendation }}
+        </div>
+        {% else %}
+        <div class="empty-state small">Apply to more jobs to see timing insights</div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Weekly Summary -->
+<div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">
+        <span class="card-title">Weekly Activity</span>
+    </div>
+    {% if analytics.weekly_summary %}
+    <div class="weekly-chart">
+        {% for week in analytics.weekly_summary|reverse %}
+        <div class="week-column">
+            <div class="week-bars">
+                <div class="week-bar applications" style="height: {{ (week.applications * 8)|int }}px;" title="{{ week.applications }} applications"></div>
+                {% if week.advances > 0 %}
+                <div class="week-bar advances" style="height: {{ (week.advances * 8)|int }}px;" title="{{ week.advances }} advances"></div>
+                {% endif %}
+            </div>
+            <div class="week-label">{{ week.week[-3:] }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    <div class="chart-legend" style="display: flex; gap: 1.5rem; padding-top: 0.75rem; border-top: 1px solid var(--border); margin-top: 0.75rem; font-size: 0.75rem;">
+        <span><span style="display: inline-block; width: 12px; height: 12px; background: var(--accent); margin-right: 0.25rem; border-radius: 2px;"></span> Applications</span>
+        <span><span style="display: inline-block; width: 12px; height: 12px; background: var(--success); margin-right: 0.25rem; border-radius: 2px;"></span> Advances</span>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-state-icon">📅</div>
+        <div class="empty-state-text">No activity in the past 4 weeks.</div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Rejection Analysis -->
+<div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">
+        <span class="card-title">Rejection Timing</span>
+        <span class="badge">{{ analytics.rejection_patterns.total }} total</span>
+    </div>
+    {% if analytics.rejection_patterns.timing.avg_days > 0 %}
+    <div class="rejection-stats" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem;">
+        <div class="rejection-stat">
+            <div class="stat-value">{{ analytics.rejection_patterns.timing.avg_days }}d</div>
+            <div class="stat-label">Avg Time</div>
+        </div>
+        <div class="rejection-stat">
+            <div class="stat-value">{{ analytics.rejection_patterns.timing.quick_rejections }}</div>
+            <div class="stat-label">Quick (&lt;3d)</div>
+        </div>
+        <div class="rejection-stat">
+            <div class="stat-value">{{ analytics.rejection_patterns.timing.standard_rejections }}</div>
+            <div class="stat-label">Standard (3-14d)</div>
+        </div>
+        <div class="rejection-stat">
+            <div class="stat-value">{{ analytics.rejection_patterns.timing.delayed_rejections }}</div>
+            <div class="stat-label">Delayed (&gt;14d)</div>
+        </div>
+    </div>
+    {% if analytics.rejection_patterns.timing.quick_rejections > analytics.rejection_patterns.timing.standard_rejections %}
+    <div class="insight" style="margin-top: 1rem; padding: 0.75rem; background: var(--bg-secondary); border-radius: 6px; font-size: 0.875rem;">
+        💡 <strong>Insight:</strong> Most rejections come within 3 days, suggesting automated screening. Focus on keyword optimization.
+    </div>
+    {% endif %}
+    {% else %}
+    <div class="empty-state small">No rejection data yet (which is good!)</div>
+    {% endif %}
+</div>
+
+<!-- Company Response Rates -->
+{% if analytics.response_rates %}
+<div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">
+        <span class="card-title">Company Response Rates</span>
+    </div>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Company</th>
+                <th>Applications</th>
+                <th>Response Rate</th>
+                <th>Progress Rate</th>
+                <th>Avg Response</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for company in analytics.response_rates %}
+            <tr>
+                <td><strong>{{ company.company }}</strong></td>
+                <td>{{ company.total }}</td>
+                <td>
+                    <span class="{% if company.response_rate >= 80 %}text-success{% elif company.response_rate >= 50 %}text-warning{% else %}text-muted{% endif %}">
+                        {{ company.response_rate }}%
+                    </span>
+                </td>
+                <td>
+                    <span class="{% if company.progress_rate >= 30 %}text-success{% elif company.progress_rate >= 15 %}text-warning{% else %}text-muted{% endif %}">
+                        {{ company.progress_rate }}%
+                    </span>
+                </td>
+                <td>{{ company.avg_response_days or '-' }}d</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<style>
+.analytics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 1.5rem;
+}
+
+.funnel-container {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.5rem;
+    min-height: 120px;
+    padding: 1rem 0;
+}
+
+.funnel-stage {
+    flex: 1;
+    text-align: center;
+}
+
+.funnel-bar {
+    height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    color: white;
+    font-weight: 600;
+    font-size: 1.25rem;
+    transition: transform 0.2s;
+}
+
+.funnel-bar:hover {
+    transform: scale(1.02);
+}
+
+.funnel-label {
+    margin-top: 0.5rem;
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.rate-item {
+    text-align: center;
+}
+
+.rate-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.rate-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.stage-times {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.stage-time-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+.stage-time-item:last-child {
+    border-bottom: none;
+}
+
+.stage-name {
+    font-weight: 500;
+}
+
+.days-avg {
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.days-range {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-left: 0.5rem;
+}
+
+.score-ranges {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.score-range-item {
+    display: grid;
+    grid-template-columns: 80px 1fr 100px;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.range-label {
+    font-weight: 500;
+    font-size: 0.875rem;
+}
+
+.range-bar-container {
+    height: 8px;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.range-bar {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s;
+}
+
+.range-stats {
+    display: flex;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+}
+
+.range-total {
+    color: var(--text-secondary);
+}
+
+.range-success {
+    font-weight: 600;
+}
+
+.day-stats {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    height: 100px;
+    padding: 0.5rem 0;
+}
+
+.day-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.day-item.best-day .day-bar {
+    background: var(--success);
+}
+
+.day-item.best-day .day-name {
+    font-weight: 600;
+    color: var(--success);
+}
+
+.day-name {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.day-bar {
+    width: 24px;
+    background: var(--accent);
+    border-radius: 4px 4px 0 0;
+    min-height: 4px;
+}
+
+.day-rate {
+    font-size: 0.7rem;
+    font-weight: 600;
+}
+
+.weekly-chart {
+    display: flex;
+    justify-content: space-around;
+    align-items: flex-end;
+    height: 100px;
+    padding: 0.5rem 0;
+}
+
+.week-column {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.week-bars {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.week-bar {
+    width: 40px;
+    border-radius: 2px;
+    min-height: 4px;
+}
+
+.week-bar.applications {
+    background: var(--accent);
+}
+
+.week-bar.advances {
+    background: var(--success);
+}
+
+.week-label {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+}
+
+.rejection-stat {
+    text-align: center;
+    padding: 0.75rem;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+}
+
+.rejection-stat .stat-value {
+    font-size: 1.5rem;
+    font-weight: 600;
+}
+
+.rejection-stat .stat-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.875rem;
+}
+
+.data-table th,
+.data-table td {
+    padding: 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.data-table th {
+    font-weight: 600;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+}
+
+.text-success { color: var(--success); }
+.text-warning { color: var(--warning); }
+.text-muted { color: var(--text-secondary); }
+
+.empty-state.small {
+    padding: 1rem;
+    font-size: 0.875rem;
+}
+</style>
+{% endblock %}

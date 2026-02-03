@@ -1,0 +1,96 @@
+<!-- TWC Week View Partial - for HTMX updates -->
+{% for day in days_of_week %}
+<div class="twc-day-section card" style="margin-bottom: 1rem;">
+    <div class="twc-day-header" style="padding: 0.75rem 1rem; background: var(--bg-secondary); border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <span style="font-weight: 600;">{{ day.day_name }}</span>
+            <span style="color: var(--text-secondary); margin-left: 0.5rem;">{{ day.display_date }}</span>
+        </div>
+        <span class="badge badge-muted">{{ day.activities|length }} {% if day.activities|length == 1 %}activity{% else %}activities{% endif %}</span>
+    </div>
+
+    {% if day.activities %}
+    <div class="twc-activities" style="padding: 0.5rem;">
+        {% for activity in day.activities %}
+        <div class="twc-activity-card" style="padding: 1rem; border-bottom: 1px solid var(--border-color);">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
+                <div>
+                    <div style="font-weight: 600; font-size: 1.05rem;">{{ activity.company }}</div>
+                    <div style="color: var(--text-secondary); font-size: 0.9rem;">{{ activity.position or 'Position not specified' }}</div>
+                </div>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    {% set result = activity.derived_twc_result or activity.twc_result or 'application_filed' %}
+                    <span class="badge {% if result == 'hired' %}badge-success{% elif result == 'not_hiring' %}badge-danger{% else %}badge-accent{% endif %}">
+                        {% if result == 'application_filed' %}Application filed
+                        {% elif result == 'hired' %}Hired
+                        {% elif result == 'not_hiring' %}Not hiring
+                        {% elif result == 'other' %}{{ activity.twc_result_other or 'Other' }}
+                        {% else %}{{ result }}
+                        {% endif %}
+                    </span>
+                </div>
+            </div>
+
+            <!-- Activity Details -->
+            <div class="twc-details" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 0.75rem; font-size: 0.9rem;">
+                <div>
+                    <span style="color: var(--text-secondary);">Activity Type:</span>
+                    <span style="margin-left: 0.25rem;">
+                        {% set act_type = activity.twc_activity_type or 'applied' %}
+                        {% if act_type == 'applied' %}Applied for job
+                        {% elif act_type == 'resume' %}Submitted resume
+                        {% elif act_type == 'interview' %}Interviewed
+                        {% elif act_type == 'job_fair' %}Attended job fair
+                        {% elif act_type == 'workforce_center' %}Used Workforce Center
+                        {% elif act_type == 'online_search' %}Searched online
+                        {% else %}{{ act_type }}
+                        {% endif %}
+                    </span>
+                </div>
+                <div>
+                    <span style="color: var(--text-secondary);">Location:</span>
+                    <span style="margin-left: 0.25rem;">
+                        {% if activity.employer_city and activity.employer_state %}
+                            {{ activity.employer_city }}, {{ activity.employer_state }}
+                        {% elif activity.location %}
+                            {{ activity.location }}
+                        {% else %}
+                            -
+                        {% endif %}
+                    </span>
+                </div>
+                {% if activity.employer_phone %}
+                <div>
+                    <span style="color: var(--text-secondary);">Phone:</span>
+                    <span style="margin-left: 0.25rem;">{{ activity.employer_phone }}</span>
+                </div>
+                {% endif %}
+                {% if activity.contact_name %}
+                <div>
+                    <span style="color: var(--text-secondary);">Contact:</span>
+                    <span style="margin-left: 0.25rem;">{{ activity.contact_name }}</span>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div style="padding: 1.5rem; text-align: center; color: var(--text-secondary);">
+        No activities recorded
+    </div>
+    {% endif %}
+</div>
+{% endfor %}
+
+<!-- Summary -->
+<div class="card" style="margin-top: 1rem; padding: 1rem;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <span>Week Total: <strong>{{ summary.total_activities }}</strong> activities</span>
+        {% if summary.is_complete %}
+        <span class="badge badge-success">Requirement met</span>
+        {% else %}
+        <span class="badge badge-warning">{{ summary.required_activities - summary.total_activities }} more needed</span>
+        {% endif %}
+    </div>
+</div>

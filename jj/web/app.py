@@ -177,10 +177,15 @@ def get_application_counts():
     apps = get_applications()
     counts = {
         "applied": 0,
-        "screening": 0,
+        "recruiter_screen": 0,
+        "screening": 0,  # Legacy, maps to recruiter_screen
+        "hiring_manager": 0,
         "interview": 0,
+        "technical": 0,
         "offer": 0,
+        "accepted": 0,
         "rejected": 0,
+        "withdrawn": 0,
         "total": len(apps),
     }
 
@@ -188,6 +193,9 @@ def get_application_counts():
         status = app.get("status", "applied")
         if status in counts:
             counts[status] += 1
+        # Map legacy 'screening' to recruiter_screen count
+        if status == 'screening':
+            counts['recruiter_screen'] += 1
 
     return counts
 
@@ -511,6 +519,51 @@ async def prospects_page(request: Request, show: str = "unapplied"):
     })
 
 
+@app.get("/companies", response_class=HTMLResponse)
+async def companies_page(request: Request, filter: str = None):
+    """Companies tracking page."""
+    from jj.db import get_all_companies, get_companies_with_applications
+
+    all_companies = get_all_companies()
+    companies_with_apps = get_companies_with_applications()
+
+    # Build a lookup for application counts
+    app_counts = {c['id']: c for c in companies_with_apps}
+
+    # Merge counts into all companies
+    for company in all_companies:
+        if company['id'] in app_counts:
+            company['application_count'] = app_counts[company['id']]['application_count']
+            company['active_count'] = app_counts[company['id']]['active_count']
+            company['latest_applied_at'] = app_counts[company['id']]['latest_applied_at']
+        else:
+            company['application_count'] = 0
+            company['active_count'] = 0
+            company['latest_applied_at'] = None
+
+    # Filter if requested
+    show_with_apps = filter == 'with_apps'
+    if show_with_apps:
+        companies = [c for c in all_companies if c['application_count'] > 0]
+    else:
+        companies = all_companies
+
+    # Sort by application count desc, then name
+    companies.sort(key=lambda c: (-c['application_count'], c['name'].lower()))
+
+    # Stats
+    multi_app = [c for c in all_companies if c['application_count'] > 1]
+
+    return templates.TemplateResponse("companies.html", {
+        "request": request,
+        "companies": companies,
+        "total_count": len(all_companies),
+        "with_apps_count": len(companies_with_apps),
+        "multi_app_count": len(multi_app),
+        "show_with_apps": show_with_apps,
+    })
+
+
 @app.get("/corpus", response_class=HTMLResponse)
 async def corpus_page(request: Request):
     """Corpus browser page."""
@@ -810,34 +863,34 @@ async def api_weekly():
 async def update_application_status(
     app_id: int,
     status: str = Form(...),
+    reason: str = Form(None),
 ):
     """Update application status via quick action."""
-    valid_statuses = ['prospect', 'applied', 'screening', 'interview', 'offer', 'rejected', 'skipped']
+    from jj.db import transition_application_status, ALL_STATUSES
+
+    valid_statuses = list(ALL_STATUSES) + ['skipped', 'screening']  # Include legacy
     if status not in valid_statuses:
         return JSONResponse(
             {"error": f"Invalid status. Must be one of: {valid_statuses}"},
             status_code=400
         )
 
-    # Get current state for logging
+    # Get current state
     app = get_application(app_id)
     if not app:
         return JSONResponse({"error": "Application not found"}, status_code=404)
 
     old_status = app.get('status')
 
-    # Update the status
-    success = update_application(app_id, status=status)
+    # Use transition function to update status and log event atomically
+    success = transition_application_status(
+        app_id,
+        status,
+        reason=reason or f"Manual update via dashboard",
+        source='web'
+    )
 
     if success:
-        # Log the event
-        log_event(
-            'application_status_change',
-            entity_type='application',
-            entity_id=app_id,
-            old_value={'status': old_status},
-            new_value={'status': status},
-        )
         return {"success": True, "old_status": old_status, "new_status": status}
     else:
         return JSONResponse({"error": "Failed to update"}, status_code=500)

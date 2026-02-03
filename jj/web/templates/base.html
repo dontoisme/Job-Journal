@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Job Journal{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="/static/js/htmx.min.js"></script>
+</head>
+<body>
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <h1>Job Journal</h1>
+        </div>
+        <ul class="nav-links">
+            <li><a href="/" class="{% if request.url.path == '/' %}active{% endif %}">
+                <span class="icon">📊</span> Dashboard
+            </a></li>
+            <li><a href="/applications" class="{% if '/applications' in request.url.path %}active{% endif %}">
+                <span class="icon">📝</span> Applications
+            </a></li>
+            <li><a href="/prospects" class="{% if '/prospects' in request.url.path %}active{% endif %}">
+                <span class="icon">🎯</span> Prospects
+            </a></li>
+            <li><a href="/companies" class="{% if '/companies' in request.url.path %}active{% endif %}">
+                <span class="icon">🏢</span> Companies
+            </a></li>
+            <li><a href="/corpus" class="{% if '/corpus' in request.url.path %}active{% endif %}">
+                <span class="icon">📚</span> Corpus
+            </a></li>
+            <li><a href="/analytics" class="{% if '/analytics' in request.url.path %}active{% endif %}">
+                <span class="icon">📈</span> Analytics
+            </a></li>
+            <li><a href="/twc" class="{% if '/twc' in request.url.path %}active{% endif %}">
+                <span class="icon">📋</span> TWC Log
+            </a></li>
+            <li><a href="/map" class="{% if '/map' in request.url.path %}active{% endif %}">
+                <span class="icon">🗺️</span> Map
+            </a></li>
+            <li><a href="/db" class="{% if '/db' in request.url.path %}active{% endif %}">
+                <span class="icon">🗄️</span> Database
+            </a></li>
+        </ul>
+        <div class="sidebar-footer">
+            <div class="terminal-hint">
+                <span class="icon">💻</span>
+                <span>AI workflows run in terminal</span>
+            </div>
+        </div>
+    </nav>
+
+    <main class="content">
+        <header class="page-header">
+            <h2>{% block page_title %}Dashboard{% endblock %}</h2>
+            {% block page_actions %}{% endblock %}
+        </header>
+
+        <div class="page-content">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,20 @@
+<div class="enrichment-result">
+    <h4>Enrichment Complete</h4>
+    <div class="result-stats">
+        <p><strong>{{ area.name }}</strong></p>
+        <p>Companies: <span class="badge badge-accent">{{ stats.total }}</span></p>
+        <p>Websites found: <span class="badge badge-info">{{ stats.websites_found }}</span>
+            {% if stats.already_had_website %}<span class="text-muted">({{ stats.already_had_website }} existing)</span>{% endif %}
+        </p>
+        <p>Careers pages: <span class="badge badge-success">{{ stats.careers_found }}</span>
+            {% if stats.already_had_careers %}<span class="text-muted">({{ stats.already_had_careers }} existing)</span>{% endif %}
+        </p>
+    </div>
+    {% if stats.websites_found > 0 or stats.careers_found > 0 %}
+    <button class="btn btn-sm btn-secondary btn-block" onclick="location.reload()">
+        Refresh Map
+    </button>
+    {% else %}
+    <p class="text-muted">No new enrichment data found.</p>
+    {% endif %}
+</div>

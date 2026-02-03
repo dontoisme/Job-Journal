@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% block title %}Corpus - Job Journal{% endblock %}
+{% block page_title %}Corpus{% endblock %}
+
+{% block page_actions %}
+<div style="display: flex; gap: 0.5rem;">
+    <span class="badge badge-muted">{{ stats.entries }} entries</span>
+    <span class="badge badge-muted">{{ stats.roles }} roles</span>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Corpus health -->
+<div class="health-bar" style="margin-bottom: 1.5rem;">
+    <div class="health-item">
+        <span class="health-label">Roles:</span>
+        <span class="health-value">{{ stats.roles }}</span>
+    </div>
+    <div class="health-item">
+        <span class="health-label">Entries:</span>
+        <span class="health-value">{{ stats.entries }}</span>
+    </div>
+    <div class="health-item">
+        <span class="health-label">Skills:</span>
+        <span class="health-value">{{ stats.skills }}</span>
+    </div>
+</div>
+
+{% if roles %}
+<!-- Roles list -->
+<div class="roles-list">
+    {% for role in roles %}
+    <div class="role-card">
+        <div class="role-header" onclick="this.parentElement.classList.toggle('expanded')">
+            <div>
+                <div class="role-title">{{ role.title }}</div>
+                <div class="role-company">{{ role.company }}{% if role.location %} · {{ role.location }}{% endif %}</div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 1rem;">
+                <span class="badge badge-muted">{{ role.entry_count }} entries</span>
+                <span class="role-meta">
+                    {% if role.start_date %}{{ role.start_date }}{% endif %}
+                    {% if role.end_date %} - {{ role.end_date }}{% elif role.is_current %} - Present{% endif %}
+                </span>
+                <span style="color: var(--text-muted);">▼</span>
+            </div>
+        </div>
+        <div class="role-entries" style="display: none;">
+            {% if role.entries %}
+                {% for entry in role.entries %}
+                <div class="entry-item">
+                    <div>{{ entry.text }}</div>
+                    {% if entry.tags %}
+                    <div class="entry-tags">
+                        {% for tag in entry.tags|parse_tags %}
+                            <span class="entry-tag">{{ tag }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            {% else %}
+                <div style="color: var(--text-muted); font-style: italic; padding: 0.5rem 0;">No entries yet</div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="card">
+    <div class="empty-state">
+        <div class="empty-state-icon">📚</div>
+        <div class="empty-state-title">No roles in corpus yet</div>
+        <div class="empty-state-text">
+            Use <code>/interview</code> in Claude Code to build your professional corpus
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Terminal hint -->
+<div style="margin-top: 2rem; padding: 1rem; background: var(--bg-secondary); border-radius: 8px; border: 1px dashed var(--border);">
+    <div style="display: flex; align-items: center; gap: 0.75rem;">
+        <span style="font-size: 1.5rem;">💻</span>
+        <div>
+            <div style="font-weight: 600;">Build your corpus in Claude Code</div>
+            <div style="font-size: 0.875rem; color: var(--text-secondary);">
+                <code>/interview</code> - Start or continue building your corpus<br>
+                <code>/interview [role]</code> - Deep dive on a specific role<br>
+                <code>jj corpus --edit</code> - Edit corpus.md directly
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.role-card.expanded .role-entries {
+    display: block !important;
+}
+.role-card.expanded .role-header span:last-child {
+    transform: rotate(180deg);
+}
+</style>
+{% endblock %}

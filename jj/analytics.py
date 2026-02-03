@@ -393,4 +393,313 @@ def get_all_analytics() -> dict[str, Any]:
         'rejection_patterns': get_rejection_patterns(),
         'timing_insights': get_timing_insights(),
         'weekly_summary': get_weekly_summary(4),
+        'stage_progression': get_stage_progression_stats(),
     }
+
+
+# Event-based analytics for application lifecycle tracking
+
+def get_stage_progression_stats() -> dict[str, Any]:
+    """
+    Count unique applications that reached each stage using the events table.
+
+    This provides accurate historical data about how many applications
+    made it to each stage, regardless of current status.
+    """
+    from jj.db import STATUS_ORDER
+
+    if not DB_PATH.exists():
+        return {}
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get unique applications that reached each status via events
+        cursor.execute("""
+            SELECT
+                json_extract(new_value, '$.status') as status,
+                COUNT(DISTINCT entity_id) as unique_apps
+            FROM events
+            WHERE event_type = 'status_change'
+              AND entity_type = 'application'
+              AND json_extract(new_value, '$.status') IS NOT NULL
+            GROUP BY json_extract(new_value, '$.status')
+        """)
+
+        reached = {}
+        for row in cursor.fetchall():
+            status = row['status']
+            if status and status not in ('skipped', 'prospect'):
+                reached[status] = row['unique_apps']
+
+        # Also check current status for apps without event history
+        cursor.execute("""
+            SELECT status, COUNT(DISTINCT id) as count
+            FROM applications
+            WHERE status NOT IN ('skipped', 'prospect')
+              AND id NOT IN (
+                  SELECT DISTINCT entity_id FROM events
+                  WHERE event_type = 'status_change' AND entity_type = 'application'
+              )
+            GROUP BY status
+        """)
+
+        for row in cursor.fetchall():
+            status = row['status']
+            if status:
+                reached[status] = reached.get(status, 0) + row['count']
+
+        # Order by lifecycle progression
+        ordered = []
+        for status in ['applied', 'recruiter_screen', 'screening', 'hiring_manager',
+                       'interview', 'technical', 'offer', 'accepted', 'rejected', 'withdrawn']:
+            if status in reached:
+                ordered.append({
+                    'status': status,
+                    'count': reached[status],
+                    'order': STATUS_ORDER.get(status, 99),
+                })
+
+        return {
+            'by_status': reached,
+            'ordered': sorted(ordered, key=lambda x: (x['order'] if x['order'] >= 0 else 100, x['status'])),
+            'total_tracked': sum(reached.values()),
+        }
+
+
+def get_event_conversion_funnel() -> dict[str, Any]:
+    """
+    Calculate conversion rates between stages using event history.
+
+    This is more accurate than snapshot-based funnel because it tracks
+    actual progressions, not just current states.
+    """
+    if not DB_PATH.exists():
+        return {}
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # For each application, find the highest status it reached
+        cursor.execute("""
+            WITH app_max_status AS (
+                SELECT
+                    entity_id,
+                    json_extract(new_value, '$.status') as status
+                FROM events
+                WHERE event_type = 'status_change'
+                  AND entity_type = 'application'
+                  AND json_extract(new_value, '$.status') NOT IN ('skipped', 'prospect', 'rejected', 'withdrawn')
+            ),
+            app_highest AS (
+                SELECT
+                    entity_id,
+                    MAX(CASE status
+                        WHEN 'applied' THEN 1
+                        WHEN 'recruiter_screen' THEN 2
+                        WHEN 'screening' THEN 2
+                        WHEN 'hiring_manager' THEN 3
+                        WHEN 'interview' THEN 4
+                        WHEN 'technical' THEN 4
+                        WHEN 'offer' THEN 5
+                        WHEN 'accepted' THEN 6
+                        ELSE 0
+                    END) as highest_stage
+                FROM app_max_status
+                GROUP BY entity_id
+            )
+            SELECT
+                highest_stage,
+                COUNT(*) as count
+            FROM app_highest
+            GROUP BY highest_stage
+            ORDER BY highest_stage
+        """)
+
+        stage_counts = {}
+        for row in cursor.fetchall():
+            stage = row['highest_stage']
+            stage_counts[stage] = row['count']
+
+        # Calculate cumulative counts (how many reached at least this stage)
+        stages = ['applied', 'recruiter_screen', 'hiring_manager', 'interview', 'offer', 'accepted']
+        stage_num = {1: 'applied', 2: 'recruiter_screen', 3: 'hiring_manager', 4: 'interview', 5: 'offer', 6: 'accepted'}
+
+        cumulative = {}
+        for i in range(1, 7):
+            cumulative[stage_num.get(i, 'unknown')] = sum(
+                stage_counts.get(j, 0) for j in range(i, 7)
+            )
+
+        # Calculate conversion rates
+        conversions = {}
+        prev_stage = None
+        for stage in stages:
+            if prev_stage and cumulative.get(prev_stage, 0) > 0:
+                rate = cumulative.get(stage, 0) / cumulative.get(prev_stage, 0) * 100
+                conversions[f'{prev_stage}_to_{stage}'] = round(rate, 1)
+            prev_stage = stage
+
+        return {
+            'reached_at_least': cumulative,
+            'conversion_rates': conversions,
+            'raw_stage_counts': stage_counts,
+        }
+
+
+def get_application_journey(app_id: int) -> list[dict[str, Any]]:
+    """
+    Get the full status change timeline for a single application.
+
+    Returns chronologically ordered events showing the application's
+    journey through the hiring process.
+    """
+    if not DB_PATH.exists():
+        return []
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get application info
+        cursor.execute("""
+            SELECT company, position, applied_at, created_at, status
+            FROM applications WHERE id = ?
+        """, (app_id,))
+        app = cursor.fetchone()
+
+        if not app:
+            return []
+
+        journey = []
+
+        # Add initial application event
+        applied_at = app['applied_at'] or app['created_at']
+        if applied_at:
+            journey.append({
+                'timestamp': applied_at,
+                'event': 'Application submitted',
+                'status': 'applied',
+                'source': 'application',
+            })
+
+        # Get status change events
+        cursor.execute("""
+            SELECT
+                created_at,
+                json_extract(old_value, '$.status') as old_status,
+                json_extract(new_value, '$.status') as new_status,
+                json_extract(metadata, '$.reason') as reason,
+                json_extract(metadata, '$.source') as source
+            FROM events
+            WHERE entity_type = 'application'
+              AND entity_id = ?
+              AND event_type = 'status_change'
+            ORDER BY created_at
+        """, (app_id,))
+
+        for row in cursor.fetchall():
+            new_status = row['new_status']
+            reason = row['reason'] or ''
+            source = row['source'] or 'unknown'
+
+            # Create human-readable event description
+            event_desc = f"Status changed to {new_status}"
+            if reason:
+                event_desc += f" ({reason})"
+
+            journey.append({
+                'timestamp': row['created_at'],
+                'event': event_desc,
+                'old_status': row['old_status'],
+                'status': new_status,
+                'source': source,
+                'reason': reason,
+            })
+
+        # Get email events from application_emails
+        cursor.execute("""
+            SELECT
+                received_at,
+                email_type,
+                resolution_type,
+                subject
+            FROM application_emails
+            WHERE application_id = ?
+            ORDER BY received_at
+        """, (app_id,))
+
+        for row in cursor.fetchall():
+            email_type = row['email_type']
+            res_type = row['resolution_type']
+
+            if email_type == 'confirmation':
+                event_desc = "Confirmation email received"
+            elif email_type == 'resolution':
+                event_desc = f"Resolution email: {res_type or 'update'}"
+            else:
+                event_desc = f"Email: {email_type}"
+
+            journey.append({
+                'timestamp': row['received_at'],
+                'event': event_desc,
+                'email_type': email_type,
+                'resolution_type': res_type,
+                'subject': row['subject'],
+                'source': 'email',
+            })
+
+        # Sort by timestamp
+        journey.sort(key=lambda x: x.get('timestamp') or '0000-00-00')
+
+        return journey
+
+
+def get_average_time_between_stages() -> dict[str, Any]:
+    """
+    Calculate average time between status transitions using event data.
+    """
+    if not DB_PATH.exists():
+        return {}
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get consecutive events for each application
+        cursor.execute("""
+            WITH ordered_events AS (
+                SELECT
+                    entity_id,
+                    created_at,
+                    json_extract(old_value, '$.status') as old_status,
+                    json_extract(new_value, '$.status') as new_status,
+                    LAG(created_at) OVER (PARTITION BY entity_id ORDER BY created_at) as prev_timestamp
+                FROM events
+                WHERE event_type = 'status_change'
+                  AND entity_type = 'application'
+            )
+            SELECT
+                old_status,
+                new_status,
+                AVG(julianday(created_at) - julianday(prev_timestamp)) as avg_days,
+                COUNT(*) as count
+            FROM ordered_events
+            WHERE prev_timestamp IS NOT NULL
+              AND old_status IS NOT NULL
+              AND new_status IS NOT NULL
+            GROUP BY old_status, new_status
+            HAVING count >= 2
+        """)
+
+        transitions = []
+        for row in cursor.fetchall():
+            transitions.append({
+                'from': row['old_status'],
+                'to': row['new_status'],
+                'avg_days': round(row['avg_days'], 1) if row['avg_days'] else 0,
+                'count': row['count'],
+            })
+
+        return {
+            'transitions': transitions,
+            'note': 'Based on applications with event history',
+        }

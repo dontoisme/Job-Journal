@@ -1,0 +1,344 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Job Journal{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<!-- Today's Focus Card (Primary Action Area) -->
+{% if focus_counts.total > 0 %}
+<div class="card focus-card" style="margin-bottom: 1.5rem; border-color: var(--accent);">
+    <div class="card-header">
+        <span class="card-title">📋 Today's Focus</span>
+        <span class="badge badge-accent">{{ focus_counts.total }} items</span>
+    </div>
+    <div id="focus-content"
+         hx-get="/api/focus/partial"
+         hx-trigger="load, every 60s"
+         hx-swap="innerHTML">
+        {% include "partials/todays_focus.html" %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Pipeline Visualization -->
+<div class="card pipeline-card" style="margin-bottom: 1.5rem;">
+    <div class="card-header">
+        <span class="card-title">Pipeline</span>
+        {% if pipeline.stale_count > 0 %}
+        <span class="badge badge-warning" style="font-size: 0.75rem;">{{ pipeline.stale_count }} need attention</span>
+        {% endif %}
+    </div>
+    <div class="pipeline-funnel">
+        <div class="pipeline-stage">
+            <div class="pipeline-count">{{ pipeline.prospect.count if pipeline.prospect else 0 }}</div>
+            <div class="pipeline-label">Prospect</div>
+        </div>
+        <div class="pipeline-arrow">&rarr;</div>
+        <div class="pipeline-stage">
+            <div class="pipeline-count">{{ pipeline.applied.count if pipeline.applied else 0 }}</div>
+            <div class="pipeline-label">Applied</div>
+            {% if pipeline.applied and pipeline.applied.avg_days %}
+            <div class="pipeline-days">{{ pipeline.applied.avg_days|int }}d avg</div>
+            {% endif %}
+        </div>
+        <div class="pipeline-arrow">&rarr;</div>
+        <div class="pipeline-stage">
+            <div class="pipeline-count">{{ pipeline.screening.count if pipeline.screening else 0 }}</div>
+            <div class="pipeline-label">Screening</div>
+            {% if pipeline.screening and pipeline.screening.avg_days %}
+            <div class="pipeline-days">{{ pipeline.screening.avg_days|int }}d avg</div>
+            {% endif %}
+        </div>
+        <div class="pipeline-arrow">&rarr;</div>
+        <div class="pipeline-stage">
+            <div class="pipeline-count">{{ pipeline.interview.count if pipeline.interview else 0 }}</div>
+            <div class="pipeline-label">Interview</div>
+            {% if pipeline.interview and pipeline.interview.avg_days %}
+            <div class="pipeline-days">{{ pipeline.interview.avg_days|int }}d avg</div>
+            {% endif %}
+        </div>
+        <div class="pipeline-arrow">&rarr;</div>
+        <div class="pipeline-stage pipeline-stage-success">
+            <div class="pipeline-count">{{ pipeline.offer.count if pipeline.offer else 0 }}</div>
+            <div class="pipeline-label">Offer</div>
+        </div>
+    </div>
+</div>
+
+<!-- Stats row -->
+<div class="stats-grid">
+    <div class="stat-card accent">
+        <div class="stat-value">{{ counts.applied }}</div>
+        <div class="stat-label">Applied</div>
+    </div>
+    <div class="stat-card">
+        <div class="stat-value">{{ counts.screening }}</div>
+        <div class="stat-label">Screening</div>
+    </div>
+    <div class="stat-card warning">
+        <div class="stat-value">{{ counts.interview }}</div>
+        <div class="stat-label">Interview</div>
+    </div>
+    <div class="stat-card success">
+        <div class="stat-value">{{ counts.offer }}</div>
+        <div class="stat-label">Offer</div>
+    </div>
+</div>
+
+<!-- Email Pairing Status -->
+{% set pairing = email_stats.pairing if email_stats.pairing else {'total': 0, 'resolved': 0, 'confirmed': 0, 'ghosted': 0, 'pending': 0, 'unconfirmed': 0, 'by_resolution_type': {'rejection': 0, 'interview': 0, 'screening': 0, 'offer': 0}} %}
+<div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">
+        <span class="card-title">📧 Email Pairing</span>
+        {% if pairing.ghosted > 0 %}
+        <span class="badge badge-danger">{{ pairing.ghosted }} ghosted</span>
+        {% else %}
+        <span class="badge badge-success">{{ pairing.resolved }} resolved</span>
+        {% endif %}
+    </div>
+
+    <!-- Pairing status visualization -->
+    <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.5rem; margin-bottom: 0.75rem;">
+        <a href="/applications?pairing=resolved" class="pairing-stat" style="text-decoration: none; color: inherit;">
+            <div class="pairing-count" style="color: var(--success);">{{ pairing.resolved }}</div>
+            <div class="pairing-label">Resolved</div>
+        </a>
+        <a href="/applications?pairing=confirmed" class="pairing-stat" style="text-decoration: none; color: inherit;">
+            <div class="pairing-count" style="color: var(--accent);">{{ pairing.confirmed }}</div>
+            <div class="pairing-label">Confirmed</div>
+        </a>
+        <a href="/applications?pairing=ghosted" class="pairing-stat" style="text-decoration: none; color: inherit;">
+            <div class="pairing-count" style="color: var(--danger);">{{ pairing.ghosted }}</div>
+            <div class="pairing-label">Ghosted</div>
+        </a>
+        <a href="/applications?pairing=pending" class="pairing-stat" style="text-decoration: none; color: inherit;">
+            <div class="pairing-count" style="color: var(--text-secondary);">{{ pairing.pending }}</div>
+            <div class="pairing-label">Pending</div>
+        </a>
+        <a href="/applications?pairing=unconfirmed" class="pairing-stat" style="text-decoration: none; color: inherit;">
+            <div class="pairing-count" style="color: var(--warning);">{{ pairing.unconfirmed }}</div>
+            <div class="pairing-label">No Confirm</div>
+        </a>
+    </div>
+
+    <!-- Resolution breakdown -->
+    <div style="border-top: 1px solid var(--border); padding-top: 0.75rem; margin-top: 0.5rem;">
+        <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Resolution Types</div>
+        <div style="display: flex; gap: 1rem; font-size: 0.875rem;">
+            <span><span class="badge badge-danger" style="font-size: 0.7rem;">❌</span> {{ pairing.by_resolution_type.rejection }} rejections</span>
+            <span><span class="badge badge-success" style="font-size: 0.7rem;">🎤</span> {{ pairing.by_resolution_type.interview }} interviews</span>
+            <span><span class="badge badge-accent" style="font-size: 0.7rem;">📞</span> {{ pairing.by_resolution_type.screening }} screening</span>
+        </div>
+    </div>
+
+    {% if email_stats.recent_updates %}
+    <div style="border-top: 1px solid var(--border); padding-top: 0.75rem; margin-top: 0.75rem;">
+        <div style="font-size: 0.75rem; color: var(--text-secondary); margin-bottom: 0.5rem;">Recent Updates</div>
+        {% for update in email_stats.recent_updates[:3] %}
+        <div style="display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0; font-size: 0.875rem;">
+            <span class="badge {% if update.latest_update_type == 'interview' %}badge-success{% elif update.latest_update_type == 'rejection' %}badge-danger{% else %}badge-muted{% endif %}" style="font-size: 0.7rem;">
+                {{ update.latest_update_type }}
+            </span>
+            <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                <strong>{{ update.company }}</strong>
+                {% if update.latest_update_subject %}- {{ update.latest_update_subject[:40] }}{% if update.latest_update_subject|length > 40 %}...{% endif %}{% endif %}
+            </span>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    <div style="padding: 0.5rem 0 0; font-size: 0.75rem; color: var(--text-secondary);">
+        Run <code>jj email pair</code> to sync · <code>jj app status --ghosted</code> for follow-ups
+    </div>
+</div>
+
+<style>
+.pairing-stat {
+    text-align: center;
+    padding: 0.5rem;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+    transition: transform 0.15s, background 0.15s;
+}
+.pairing-stat:hover {
+    transform: translateY(-2px);
+    background: var(--bg-tertiary);
+}
+.pairing-count {
+    font-size: 1.25rem;
+    font-weight: 700;
+}
+.pairing-label {
+    font-size: 0.7rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+}
+</style>
+
+<!-- Main grid -->
+<div class="dashboard-grid">
+    <!-- Top Prospects -->
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title">Top Prospects</span>
+            <a href="/prospects" class="btn btn-sm btn-secondary">View All</a>
+        </div>
+        {% if prospects %}
+            {% for prospect in prospects %}
+            <div class="list-item">
+                <div class="list-item-main">
+                    <div class="list-item-title">{{ prospect.company }}</div>
+                    <div class="list-item-subtitle">{{ prospect.role }}</div>
+                </div>
+                <div class="score {% if prospect.fit_score >= 80 %}score-strong{% elif prospect.fit_score >= 70 %}score-good{% elif prospect.fit_score >= 60 %}score-moderate{% else %}score-stretch{% endif %}">
+                    {{ prospect.fit_score }}%
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty-state">
+                <div class="empty-state-icon">🎯</div>
+                <div class="empty-state-text">No prospects yet. Use <code>/jobs</code> in terminal to find jobs.</div>
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Recent Activity -->
+    <div class="card">
+        <div class="card-header">
+            <span class="card-title">Recent Activity</span>
+            <a href="/applications" class="btn btn-sm btn-secondary">View All</a>
+        </div>
+        {% if activity %}
+            {% for item in activity %}
+            <div class="activity-item">
+                <div class="activity-icon">
+                    {% if item.status == 'applied' %}📝{% elif item.status == 'rejected' %}❌{% elif item.status == 'interview' %}🎤{% elif item.status == 'offer' %}🎉{% else %}📋{% endif %}
+                </div>
+                <div class="activity-content">
+                    <div class="activity-text">
+                        {% if item.status == 'applied' %}Applied to{% elif item.status == 'rejected' %}Rejected from{% elif item.status == 'interview' %}Interview at{% elif item.status == 'offer' %}Offer from{% else %}Updated{% endif %}
+                        <strong>{{ item.company }}</strong>
+                        {% if item.position %}- {{ item.position }}{% endif %}
+                    </div>
+                    <div class="activity-date">{{ item.date or 'Recent' }}</div>
+                </div>
+            </div>
+            {% endfor %}
+        {% else %}
+            <div class="empty-state">
+                <div class="empty-state-icon">📋</div>
+                <div class="empty-state-text">No activity yet. Use <code>/apply</code> in terminal to apply to jobs.</div>
+            </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Needs Attention -->
+{% if stale %}
+<div class="card attention-card" style="margin-top: 1.5rem; border-color: var(--warning);">
+    <div class="card-header">
+        <span class="card-title" style="color: var(--warning);">Needs Attention</span>
+        <span class="badge badge-warning">{{ stale|length }} stale</span>
+    </div>
+    {% for app in stale[:5] %}
+    <div class="attention-item">
+        <div class="attention-icon">⚠️</div>
+        <div class="attention-content">
+            <div class="attention-company"><strong>{{ app.company }}</strong></div>
+            <div class="attention-role">{{ app.position }}</div>
+        </div>
+        <div class="attention-meta">
+            <div class="attention-days">{{ app.days_since|int }} days</div>
+            <div class="attention-status">{{ app.status }}</div>
+        </div>
+    </div>
+    {% endfor %}
+    {% if stale|length > 5 %}
+    <div style="text-align: center; padding: 0.5rem; color: var(--text-secondary); font-size: 0.875rem;">
+        + {{ stale|length - 5 }} more
+    </div>
+    {% endif %}
+    <div style="padding: 0.75rem 1rem; border-top: 1px solid var(--border); font-size: 0.875rem; color: var(--text-secondary);">
+        Update via terminal: <code>/track update &lt;id&gt; &lt;status&gt;</code>
+    </div>
+</div>
+{% endif %}
+
+<!-- Corpus Health -->
+<div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">
+        <span class="card-title">Corpus Health</span>
+        <a href="/corpus" class="btn btn-sm btn-secondary">View Corpus</a>
+    </div>
+    <div class="health-bar">
+        <div class="health-item">
+            <span class="health-label">Roles:</span>
+            <span class="health-value">{{ stats.roles }}</span>
+        </div>
+        <div class="health-item">
+            <span class="health-label">Entries:</span>
+            <span class="health-value">{{ stats.entries }}</span>
+        </div>
+        <div class="health-item">
+            <span class="health-label">Skills:</span>
+            <span class="health-value">{{ stats.skills }}</span>
+        </div>
+        <div class="health-item">
+            <span class="health-label">Resumes:</span>
+            <span class="health-value">{{ stats.resumes }}</span>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Links -->
+<div style="margin-top: 2rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
+    <a href="/analytics" class="quick-link-card">
+        <span class="quick-link-icon">📊</span>
+        <div>
+            <div class="quick-link-title">View Analytics</div>
+            <div class="quick-link-desc">Conversion funnel, timing insights, success patterns</div>
+        </div>
+    </a>
+    <div class="quick-link-card" style="opacity: 0.7;">
+        <span class="quick-link-icon">💻</span>
+        <div>
+            <div class="quick-link-title">Claude Code Integration</div>
+            <div class="quick-link-desc">Use <code>/jobs</code>, <code>/apply</code>, <code>/interview</code> in terminal</div>
+        </div>
+    </div>
+</div>
+
+<style>
+.quick-link-card {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.2s, transform 0.2s;
+}
+
+.quick-link-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+}
+
+.quick-link-icon {
+    font-size: 1.5rem;
+}
+
+.quick-link-title {
+    font-weight: 600;
+}
+
+.quick-link-desc {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+</style>
+{% endblock %}

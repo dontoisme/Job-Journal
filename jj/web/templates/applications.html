@@ -1,0 +1,311 @@
+{% extends "base.html" %}
+
+{% block title %}Applications - Job Journal{% endblock %}
+{% block page_title %}Applications{% endblock %}
+
+{% block page_actions %}
+<div style="display: flex; gap: 0.5rem;">
+    <span class="badge badge-muted">{{ applications|length }} total</span>
+</div>
+{% endblock %}
+
+{% block content %}
+<!-- Status Filter tabs -->
+<div class="filter-tabs">
+    <a href="/applications" class="filter-tab {% if not current_status and not current_pairing %}active{% endif %}">
+        All ({{ counts.total }})
+    </a>
+    <a href="/applications?status=applied" class="filter-tab {% if current_status == 'applied' %}active{% endif %}">
+        Applied ({{ counts.applied }})
+    </a>
+    <a href="/applications?status=recruiter_screen" class="filter-tab {% if current_status == 'recruiter_screen' or current_status == 'screening' %}active{% endif %}">
+        Recruiter ({{ counts.recruiter_screen or counts.screening or 0 }})
+    </a>
+    <a href="/applications?status=hiring_manager" class="filter-tab {% if current_status == 'hiring_manager' %}active{% endif %}">
+        HM Screen ({{ counts.hiring_manager or 0 }})
+    </a>
+    <a href="/applications?status=interview" class="filter-tab {% if current_status == 'interview' %}active{% endif %}">
+        Interview ({{ counts.interview }})
+    </a>
+    <a href="/applications?status=offer" class="filter-tab {% if current_status == 'offer' %}active{% endif %}">
+        Offer ({{ counts.offer }})
+    </a>
+    <a href="/applications?status=rejected" class="filter-tab {% if current_status == 'rejected' %}active{% endif %}">
+        Rejected ({{ counts.rejected }})
+    </a>
+</div>
+
+<!-- Email Pairing Filter tabs -->
+{% if pairing_stats %}
+<div class="filter-tabs" style="margin-top: 0.5rem; border-bottom: none;">
+    <span style="font-size: 0.75rem; color: var(--text-secondary); padding: 0.5rem 0.75rem;">📧 Pairing:</span>
+    <a href="/applications?pairing=ghosted" class="filter-tab filter-tab-sm {% if current_pairing == 'ghosted' %}active{% endif %}" style="color: var(--danger);">
+        Ghosted ({{ pairing_stats.ghosted }})
+    </a>
+    <a href="/applications?pairing=confirmed" class="filter-tab filter-tab-sm {% if current_pairing == 'confirmed' %}active{% endif %}">
+        Confirmed ({{ pairing_stats.confirmed }})
+    </a>
+    <a href="/applications?pairing=unconfirmed" class="filter-tab filter-tab-sm {% if current_pairing == 'unconfirmed' %}active{% endif %}" style="color: var(--warning);">
+        No Confirm ({{ pairing_stats.unconfirmed }})
+    </a>
+    <a href="/applications?pairing=resolved" class="filter-tab filter-tab-sm {% if current_pairing == 'resolved' %}active{% endif %}" style="color: var(--success);">
+        Resolved ({{ pairing_stats.resolved }})
+    </a>
+</div>
+{% endif %}
+
+<!-- Applications table -->
+<div class="card">
+    {% if applications %}
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>Company</th>
+                    <th>Position</th>
+                    <th>Status</th>
+                    <th>Update</th>
+                    <th>Pairing</th>
+                    <th>Applied</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for app in applications %}
+                <tr id="app-row-{{ app.id }}">
+                    <td>
+                        <strong>{{ app.company }}</strong>
+                    </td>
+                    <td>{{ (app.position or app.role or '-')[:30] }}{% if (app.position or app.role or '')|length > 30 %}...{% endif %}</td>
+                    <td>
+                        {% set status = app.status or 'applied' %}
+                        <a href="https://mail.google.com/mail/u/0/#search/{{ app.company|urlencode }}" target="_blank" style="text-decoration: none;" title="Search Gmail">
+                            <span class="badge {% if status == 'offer' or status == 'accepted' %}badge-success{% elif status == 'interview' or status == 'technical' %}badge-warning{% elif status == 'hiring_manager' %}badge-warning{% elif status == 'recruiter_screen' or status == 'screening' %}badge-accent{% elif status == 'rejected' %}badge-danger{% elif status == 'applied' %}badge-muted{% else %}badge-muted{% endif %}">
+                                {{ status | replace('_', ' ') }}
+                            </span>
+                        </a>
+                    </td>
+                    <td>
+                        <!-- Status Update Dropdown -->
+                        <div class="status-update-wrapper">
+                            <select
+                                class="status-select"
+                                data-app-id="{{ app.id }}"
+                                data-current="{{ status }}"
+                                onchange="updateStatus(this)"
+                            >
+                                <option value="">— advance —</option>
+                                <optgroup label="Progress">
+                                    <option value="recruiter_screen" {% if status == 'recruiter_screen' %}disabled{% endif %}>→ Recruiter Screen</option>
+                                    <option value="hiring_manager" {% if status == 'hiring_manager' %}disabled{% endif %}>→ HM Screen</option>
+                                    <option value="interview" {% if status == 'interview' %}disabled{% endif %}>→ Interview Loop</option>
+                                    <option value="technical" {% if status == 'technical' %}disabled{% endif %}>→ Technical</option>
+                                    <option value="offer" {% if status == 'offer' %}disabled{% endif %}>→ Offer</option>
+                                    <option value="accepted" {% if status == 'accepted' %}disabled{% endif %}>→ Accepted</option>
+                                </optgroup>
+                                <optgroup label="Close">
+                                    <option value="rejected">✗ Rejected</option>
+                                    <option value="withdrawn">✗ Withdrawn</option>
+                                </optgroup>
+                                <optgroup label="Other">
+                                    <option value="applied">↺ Reset to Applied</option>
+                                </optgroup>
+                            </select>
+                        </div>
+                    </td>
+                    <td style="text-align: center;">
+                        {% set pairing_status = app.computed_pairing_status or 'unknown' %}
+                        {% set days = app.computed_days_waiting or 0 %}
+                        {% if pairing_status == 'resolved' %}
+                            <span class="badge badge-success" style="font-size: 0.7rem;" title="Both confirmation and resolution received">✓ resolved</span>
+                        {% elif pairing_status == 'ghosted' %}
+                            <span class="badge badge-danger" style="font-size: 0.7rem;" title="No response for {{ days }} days">👻 {{ days }}d</span>
+                        {% elif pairing_status == 'confirmed' %}
+                            <span class="badge badge-accent" style="font-size: 0.7rem;" title="Waiting for resolution ({{ days }} days)">⏳ {{ days }}d</span>
+                        {% elif pairing_status == 'unconfirmed' %}
+                            <span class="badge badge-warning" style="font-size: 0.7rem;" title="No confirmation email after {{ days }} days">⚠️ no confirm</span>
+                        {% elif pairing_status == 'pending' %}
+                            <span class="badge badge-muted" style="font-size: 0.7rem;" title="Recently applied">pending</span>
+                        {% else %}
+                            <span style="color: var(--text-secondary);">-</span>
+                        {% endif %}
+                    </td>
+                    <td style="color: var(--text-secondary); font-size: 0.875rem;">
+                        {{ (app.applied_at or app.date_applied or app.created_at or '-')[:10] }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <div class="empty-state-icon">📝</div>
+        <div class="empty-state-title">No applications yet</div>
+        <div class="empty-state-text">Use <code>/apply &lt;job_url&gt;</code> in Claude Code to start applying</div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Toast notification for status updates -->
+<div id="toast" class="toast"></div>
+
+<style>
+.filter-tab-sm {
+    font-size: 0.8rem;
+    padding: 0.35rem 0.6rem;
+}
+
+.status-update-wrapper {
+    position: relative;
+}
+
+.status-select {
+    font-size: 0.75rem;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    cursor: pointer;
+    min-width: 120px;
+}
+
+.status-select:hover {
+    border-color: var(--accent);
+}
+
+.status-select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.status-select option {
+    background: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.status-select optgroup {
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+
+.toast {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    padding: 12px 20px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    opacity: 0;
+    transform: translateY(20px);
+    transition: all 0.3s ease;
+    z-index: 1000;
+}
+
+.toast.show {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.toast.success {
+    border-color: var(--success);
+}
+
+.toast.error {
+    border-color: var(--danger);
+}
+
+/* Row highlight on update */
+tr.updated {
+    animation: highlight 1s ease;
+}
+
+@keyframes highlight {
+    0% { background-color: rgba(59, 130, 246, 0.2); }
+    100% { background-color: transparent; }
+}
+</style>
+
+<script>
+async function updateStatus(selectElement) {
+    const appId = selectElement.dataset.appId;
+    const newStatus = selectElement.value;
+    const currentStatus = selectElement.dataset.current;
+
+    if (!newStatus) return;
+
+    // Confirm destructive actions
+    if (newStatus === 'rejected' || newStatus === 'withdrawn') {
+        if (!confirm(`Mark this application as ${newStatus}?`)) {
+            selectElement.value = '';
+            return;
+        }
+    }
+
+    try {
+        const formData = new FormData();
+        formData.append('status', newStatus);
+        formData.append('reason', `Manual update: ${currentStatus} → ${newStatus}`);
+
+        const response = await fetch(`/api/applications/${appId}/status`, {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            showToast(`Updated: ${result.old_status} → ${result.new_status}`, 'success');
+
+            // Update the badge in the Status column
+            const row = document.getElementById(`app-row-${appId}`);
+            const badge = row.querySelector('td:nth-child(3) .badge');
+            badge.textContent = newStatus.replace('_', ' ');
+
+            // Update badge color
+            badge.className = 'badge';
+            if (newStatus === 'offer' || newStatus === 'accepted') {
+                badge.classList.add('badge-success');
+            } else if (newStatus === 'interview' || newStatus === 'technical' || newStatus === 'hiring_manager') {
+                badge.classList.add('badge-warning');
+            } else if (newStatus === 'recruiter_screen') {
+                badge.classList.add('badge-accent');
+            } else if (newStatus === 'rejected' || newStatus === 'withdrawn') {
+                badge.classList.add('badge-danger');
+            } else {
+                badge.classList.add('badge-muted');
+            }
+
+            // Update the select's current status
+            selectElement.dataset.current = newStatus;
+
+            // Highlight the row
+            row.classList.add('updated');
+            setTimeout(() => row.classList.remove('updated'), 1000);
+
+            // Reset dropdown
+            selectElement.value = '';
+        } else {
+            showToast(`Error: ${result.error}`, 'error');
+            selectElement.value = '';
+        }
+    } catch (error) {
+        showToast(`Error: ${error.message}`, 'error');
+        selectElement.value = '';
+    }
+}
+
+function showToast(message, type) {
+    const toast = document.getElementById('toast');
+    toast.textContent = message;
+    toast.className = `toast ${type} show`;
+
+    setTimeout(() => {
+        toast.classList.remove('show');
+    }, 3000);
+}
+</script>
+{% endblock %}

@@ -1,0 +1,646 @@
+{% extends "base.html" %}
+
+{% block title %}Map - Job Journal{% endblock %}
+{% block page_title %}Geo Discovery{% endblock %}
+
+{% block page_actions %}
+<div style="display: flex; gap: 1rem; align-items: center;">
+    <div class="map-legend" style="margin: 0; padding: 0.5rem;">
+        <div class="legend-item"><div class="legend-dot gray"></div>No data</div>
+        <div class="legend-item"><div class="legend-dot blue"></div>Has website</div>
+        <div class="legend-item"><div class="legend-dot green"></div>Has jobs</div>
+    </div>
+    <span class="badge badge-accent">{{ companies|length }} companies</span>
+    <span class="badge badge-muted">{{ areas|length }} areas</span>
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="map-container">
+    <!-- Left sidebar: Areas list -->
+    <div class="map-sidebar">
+        <div class="sidebar-section">
+            <h3>Search Areas</h3>
+            <div id="areas-list">
+                {% for area in areas %}
+                <div class="area-item" data-area-id="{{ area.id }}"
+                     data-lat="{{ area.latitude }}"
+                     data-lng="{{ area.longitude }}"
+                     data-radius="{{ area.radius }}"
+                     {% if area.points %}data-points='{{ area.points|tojson }}'{% endif %}>
+                    <div class="area-info">
+                        <span class="area-name">{{ area.name }}</span>
+                        {% if area.is_builtin %}
+                        <span class="badge badge-muted">built-in</span>
+                        {% elif area.points %}
+                        <span class="badge badge-success">corridor</span>
+                        {% endif %}
+                    </div>
+                    <div class="area-meta">
+                        {{ area.radius }}m radius
+                        {% if area.points %} &middot; {{ area.points|length }} stamps{% endif %}
+                        {% if area.company_count %} &middot; {{ area.company_count }} companies{% endif %}
+                    </div>
+                    <div class="area-actions">
+                        <button class="btn btn-sm btn-secondary"
+                                onclick="viewCompaniesInArea(this.closest('.area-item'))">
+                            View
+                        </button>
+                        <button class="btn btn-sm btn-primary discover-btn"
+                                hx-post="/api/geo/discover/{{ area.id }}"
+                                hx-target="#discovery-results"
+                                hx-disabled-elt="this">
+                            <span class="btn-text">Discover</span>
+                            <span class="btn-loading">Searching...</span>
+                        </button>
+                        <button class="btn btn-sm btn-accent enrich-btn"
+                                hx-post="/api/geo/enrich/{{ area.id }}"
+                                hx-target="#discovery-results"
+                                hx-indicator=".enriching-indicator"
+                                hx-disabled-elt="this">
+                            <span class="btn-text">Enrich</span>
+                            <span class="btn-loading">Enriching...</span>
+                        </button>
+                        {% if not area.is_builtin %}
+                        <button class="btn btn-sm btn-secondary"
+                                onclick="deleteArea({{ area.id }})">
+                            Delete
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <div class="sidebar-section">
+            <h3>Draw New Area</h3>
+            <p class="text-muted">Click map to place center, then click again to set radius</p>
+            <button id="draw-mode-btn" class="btn btn-secondary btn-block">
+                Start Drawing
+            </button>
+            <form id="new-area-form" style="display: none;">
+                <input type="text" id="area-name" placeholder="Area name" class="form-input" required>
+                <input type="hidden" id="area-lat">
+                <input type="hidden" id="area-lng">
+                <input type="hidden" id="area-radius">
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary btn-block">Save Area</button>
+                    <button type="button" id="cancel-draw" class="btn btn-secondary btn-block">Cancel</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="sidebar-section">
+            <h3>Stamp Mode</h3>
+            <p class="text-muted">Set radius once, then click to stamp circles along a corridor</p>
+            <div id="stamp-setup" style="display: block;">
+                <div class="stamp-radius-control">
+                    <label>Radius: <span id="stamp-radius-display">1000</span>m</label>
+                    <input type="range" id="stamp-radius-slider" min="500" max="3000" step="100" value="1000" class="form-slider">
+                </div>
+                <button id="stamp-mode-btn" class="btn btn-secondary btn-block">
+                    Start Stamping
+                </button>
+            </div>
+            <div id="stamp-controls" style="display: none;">
+                <div class="stamp-info">
+                    <span id="stamp-count">0</span> stamps placed
+                    <span class="badge badge-muted"><span id="stamp-radius-info">1000</span>m</span>
+                </div>
+                <input type="text" id="stamp-area-name" placeholder="Corridor name" class="form-input" required>
+                <div class="form-actions">
+                    <button id="save-stamps" class="btn btn-primary btn-block">Save Corridor</button>
+                    <button id="undo-stamp" class="btn btn-secondary btn-block">Undo Last</button>
+                    <button id="cancel-stamps" class="btn btn-secondary btn-block">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="companies-view" class="sidebar-section" style="display: none;">
+            <div class="companies-header">
+                <h3>Companies in Area</h3>
+                <button class="btn btn-sm btn-secondary" onclick="closeCompaniesView()">Close</button>
+            </div>
+            <div id="companies-list"></div>
+        </div>
+
+        <div id="discovery-results" class="sidebar-section"></div>
+
+        <div id="loading-indicator" class="htmx-indicator sidebar-section">
+            <span>Discovering companies...</span>
+        </div>
+
+        <div id="enriching-indicator" class="htmx-indicator sidebar-section">
+            <span>Enriching companies (websites + careers)...</span>
+        </div>
+
+<script>
+// Auto-scroll to results when HTMX updates them
+document.body.addEventListener('htmx:afterSwap', function(evt) {
+    if (evt.detail.target.id === 'discovery-results') {
+        evt.detail.target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+});
+</script>
+    </div>
+
+    <!-- Map area -->
+    <div id="map"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<!-- Leaflet CSS/JS -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+// Initialize map
+const map = L.map('map').setView([{{ default_center.lat }}, {{ default_center.lng }}], {{ default_zoom }});
+
+// Dark theme tiles (CartoDB Dark Matter)
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    subdomains: 'abcd',
+    maxZoom: 19
+}).addTo(map);
+
+// Store layers
+const areaCircles = {};
+const companyMarkers = L.layerGroup().addTo(map);
+
+// Custom marker icon factory for companies based on enrichment state
+function createCompanyIcon(company) {
+    let colorClass = 'marker-gray';  // No website
+    if (company.job_count && company.job_count > 0) {
+        colorClass = 'marker-green';  // Has PM jobs
+    } else if (company.website) {
+        colorClass = 'marker-blue';   // Has website
+    }
+    return L.divIcon({
+        className: 'company-marker',
+        html: `<div class="marker-dot ${colorClass}"></div>`,
+        iconSize: [12, 12],
+        iconAnchor: [6, 6]
+    });
+}
+
+// Store markers by company ID for selection
+const companyMarkerMap = {};
+let selectedCompanyId = null;
+
+// Load existing areas as circles
+{% for area in areas %}
+{% if area.points %}
+// Corridor with multiple points
+(function() {
+    const points = {{ area.points|tojson }};
+    const circles = [];
+    points.forEach((pt, i) => {
+        const circle = L.circle([pt.lat, pt.lng], {
+            radius: {{ area.radius }},
+            color: '#22c55e',
+            fillColor: '#22c55e',
+            fillOpacity: 0.15,
+            weight: 2
+        }).addTo(map);
+        if (i === 0) circle.bindPopup('{{ area.name }} ({{ area.points|length }} points)');
+        circles.push(circle);
+    });
+    areaCircles[{{ area.id }}] = circles[0];  // Store first for zoom
+    areaCircles['{{ area.id }}_all'] = circles;  // Store all for highlighting
+})();
+{% else %}
+// Single point area
+areaCircles[{{ area.id }}] = L.circle([{{ area.latitude }}, {{ area.longitude }}], {
+    radius: {{ area.radius }},
+    color: '{{ "#6366f1" if area.is_builtin else "#22c55e" }}',
+    fillColor: '{{ "#6366f1" if area.is_builtin else "#22c55e" }}',
+    fillOpacity: 0.15,
+    weight: 2
+}).addTo(map).bindPopup('{{ area.name }}');
+{% endif %}
+{% endfor %}
+
+// Load company markers with color-coding
+{% for company in companies %}
+{% if company.latitude and company.longitude %}
+(function() {
+    const companyData = {
+        id: {{ company.id }},
+        website: {{ company.website|tojson if company.website else 'null' }},
+        job_count: {{ company.job_count or 0 }}
+    };
+    const marker = L.marker([{{ company.latitude }}, {{ company.longitude }}], {
+        icon: createCompanyIcon(companyData)
+    })
+    .addTo(companyMarkers)
+    .bindPopup('<strong>{{ company.name|e }}</strong><br>{{ company.address|e }}{% if company.website %}<br><a href="{{ company.website }}" target="_blank">Website</a>{% endif %}{% if company.careers_url %}<br><a href="{{ company.careers_url }}" target="_blank">Careers</a>{% endif %}{% if company.job_count %}<br><span class="badge badge-success">{{ company.job_count }} jobs</span>{% endif %}');
+    companyMarkerMap[{{ company.id }}] = marker;
+})();
+{% endif %}
+{% endfor %}
+
+// Drawing mode
+let isDrawing = false;
+let tempCircle = null;
+let tempCenter = null;
+let tempMarker = null;
+
+document.getElementById('draw-mode-btn').addEventListener('click', function() {
+    isDrawing = true;
+    this.style.display = 'none';
+    map.getContainer().style.cursor = 'crosshair';
+});
+
+document.getElementById('cancel-draw').addEventListener('click', function() {
+    cancelDrawing();
+});
+
+function cancelDrawing() {
+    isDrawing = false;
+    if (tempCircle) {
+        map.removeLayer(tempCircle);
+        tempCircle = null;
+    }
+    if (tempMarker) {
+        map.removeLayer(tempMarker);
+        tempMarker = null;
+    }
+    tempCenter = null;
+    document.getElementById('draw-mode-btn').style.display = 'block';
+    document.getElementById('new-area-form').style.display = 'none';
+    document.getElementById('area-name').value = '';
+    map.getContainer().style.cursor = '';
+}
+
+map.on('click', function(e) {
+    if (!isDrawing) return;
+
+    if (!tempCenter) {
+        // First click: set center
+        tempCenter = e.latlng;
+        tempMarker = L.circleMarker(tempCenter, {
+            radius: 5,
+            color: '#f59e0b',
+            fillColor: '#f59e0b',
+            fillOpacity: 1
+        }).addTo(map);
+        tempCircle = L.circle(tempCenter, {
+            radius: 500,
+            color: '#f59e0b',
+            fillColor: '#f59e0b',
+            fillOpacity: 0.2
+        }).addTo(map);
+    } else {
+        // Second click: finalize
+        const radius = Math.round(tempCenter.distanceTo(e.latlng));
+        tempCircle.setRadius(radius);
+
+        document.getElementById('area-lat').value = tempCenter.lat;
+        document.getElementById('area-lng').value = tempCenter.lng;
+        document.getElementById('area-radius').value = radius;
+        document.getElementById('new-area-form').style.display = 'block';
+        isDrawing = false;
+        map.getContainer().style.cursor = '';
+    }
+});
+
+map.on('mousemove', function(e) {
+    if (isDrawing && tempCenter && tempCircle) {
+        const radius = Math.round(tempCenter.distanceTo(e.latlng));
+        tempCircle.setRadius(radius);
+    }
+});
+
+// Save new area
+document.getElementById('new-area-form').addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    const formData = new FormData();
+    formData.append('name', document.getElementById('area-name').value);
+    formData.append('latitude', document.getElementById('area-lat').value);
+    formData.append('longitude', document.getElementById('area-lng').value);
+    formData.append('radius', document.getElementById('area-radius').value);
+
+    const response = await fetch('/api/geo/areas', {
+        method: 'POST',
+        body: formData
+    });
+
+    if (response.ok) {
+        location.reload();  // Simple reload to show new area
+    }
+});
+
+// Delete area
+async function deleteArea(areaId) {
+    if (!confirm('Delete this area?')) return;
+
+    const response = await fetch(`/api/geo/areas/${areaId}`, {
+        method: 'DELETE'
+    });
+
+    if (response.ok) {
+        location.reload();
+    }
+}
+
+// Focus on area when clicked in sidebar
+document.querySelectorAll('.area-item').forEach(item => {
+    item.addEventListener('click', function(e) {
+        if (e.target.tagName === 'BUTTON') return;
+
+        const lat = parseFloat(this.dataset.lat);
+        const lng = parseFloat(this.dataset.lng);
+        const radius = parseInt(this.dataset.radius);
+
+        // Zoom to fit the circle
+        const bounds = L.latLng(lat, lng).toBounds(radius * 2);
+        map.fitBounds(bounds);
+
+        // Highlight circle
+        const areaId = this.dataset.areaId;
+        Object.values(areaCircles).forEach(c => c.setStyle({weight: 2}));
+        if (areaCircles[areaId]) {
+            areaCircles[areaId].setStyle({weight: 4});
+        }
+    });
+});
+
+// ========================================
+// STAMP MODE
+// ========================================
+
+let isStamping = false;
+let stampRadius = 1000;
+let stampCircles = [];  // Array of {circle, lat, lng}
+
+// Update radius display when slider changes
+document.getElementById('stamp-radius-slider').addEventListener('input', function() {
+    stampRadius = parseInt(this.value);
+    document.getElementById('stamp-radius-display').textContent = stampRadius;
+});
+
+// Start stamp mode
+document.getElementById('stamp-mode-btn').addEventListener('click', function() {
+    isStamping = true;
+    stampCircles = [];
+    document.getElementById('stamp-setup').style.display = 'none';
+    document.getElementById('stamp-controls').style.display = 'block';
+    document.getElementById('stamp-radius-info').textContent = stampRadius;
+    document.getElementById('stamp-count').textContent = '0';
+    map.getContainer().style.cursor = 'crosshair';
+
+    // Disable regular drawing mode if active
+    if (isDrawing) cancelDrawing();
+});
+
+// Handle map click in stamp mode
+map.on('click', function(e) {
+    if (!isStamping) return;
+
+    // Create a new stamp circle
+    const circle = L.circle(e.latlng, {
+        radius: stampRadius,
+        color: '#22c55e',
+        fillColor: '#22c55e',
+        fillOpacity: 0.2,
+        weight: 2
+    }).addTo(map);
+
+    stampCircles.push({
+        circle: circle,
+        lat: e.latlng.lat,
+        lng: e.latlng.lng
+    });
+
+    document.getElementById('stamp-count').textContent = stampCircles.length;
+});
+
+// Undo last stamp
+document.getElementById('undo-stamp').addEventListener('click', function() {
+    if (stampCircles.length > 0) {
+        const last = stampCircles.pop();
+        map.removeLayer(last.circle);
+        document.getElementById('stamp-count').textContent = stampCircles.length;
+    }
+});
+
+// Cancel stamp mode
+document.getElementById('cancel-stamps').addEventListener('click', function() {
+    cancelStampMode();
+});
+
+function cancelStampMode() {
+    isStamping = false;
+    // Remove all stamp circles
+    stampCircles.forEach(s => map.removeLayer(s.circle));
+    stampCircles = [];
+    document.getElementById('stamp-setup').style.display = 'block';
+    document.getElementById('stamp-controls').style.display = 'none';
+    document.getElementById('stamp-area-name').value = '';
+    map.getContainer().style.cursor = '';
+}
+
+// ========================================
+// VIEW COMPANIES IN AREA
+// ========================================
+
+// All companies data for filtering
+const allCompanies = [
+{% for company in companies %}
+{% if company.latitude and company.longitude %}
+    {
+        id: {{ company.id }},
+        name: "{{ company.name|e }}",
+        address: "{{ company.address|e }}",
+        website: "{{ company.website or '' }}",
+        careers_url: "{{ company.careers_url or '' }}",
+        job_count: {{ company.job_count or 0 }},
+        lat: {{ company.latitude }},
+        lng: {{ company.longitude }}
+    },
+{% endif %}
+{% endfor %}
+];
+
+function haversineDistance(lat1, lng1, lat2, lng2) {
+    const R = 6371000; // Earth's radius in meters
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLng/2) * Math.sin(dLng/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+}
+
+function viewCompaniesInArea(areaElement) {
+    const lat = parseFloat(areaElement.dataset.lat);
+    const lng = parseFloat(areaElement.dataset.lng);
+    const radius = parseInt(areaElement.dataset.radius);
+    const pointsJson = areaElement.dataset.points;
+    const points = pointsJson ? JSON.parse(pointsJson) : null;
+
+    let companiesInArea = [];
+
+    if (points && points.length > 0) {
+        // Corridor: check each point
+        allCompanies.forEach(company => {
+            for (const pt of points) {
+                const dist = haversineDistance(pt.lat, pt.lng, company.lat, company.lng);
+                if (dist <= radius) {
+                    companiesInArea.push(company);
+                    break;
+                }
+            }
+        });
+    } else {
+        // Single point area
+        allCompanies.forEach(company => {
+            const dist = haversineDistance(lat, lng, company.lat, company.lng);
+            if (dist <= radius) {
+                companiesInArea.push(company);
+            }
+        });
+    }
+
+    // Sort alphabetically
+    companiesInArea.sort((a, b) => a.name.localeCompare(b.name));
+
+    // Build HTML
+    const withJobs = companiesInArea.filter(c => c.job_count > 0).length;
+    const withWebsite = companiesInArea.filter(c => c.website).length;
+    let html = `<div class="companies-count">${companiesInArea.length} companies found</div>`;
+    if (withWebsite > 0 || withJobs > 0) {
+        html += `<div class="companies-stats">
+            ${withWebsite > 0 ? `<span class="badge badge-info">${withWebsite} with website</span>` : ''}
+            ${withJobs > 0 ? `<span class="badge badge-success">${withJobs} with jobs</span>` : ''}
+        </div>`;
+    }
+
+    if (companiesInArea.length === 0) {
+        html += '<p class="text-muted">No companies discovered in this area yet. Click "Discover" to search.</p>';
+    } else {
+        html += '<ul class="companies-list">';
+        companiesInArea.forEach(c => {
+            // Determine state class
+            let stateClass = '';
+            if (c.job_count > 0) stateClass = 'has-jobs';
+            else if (c.website) stateClass = 'has-website';
+
+            html += `<li class="company-item ${stateClass}" data-company-id="${c.id}" onclick="selectCompany(${c.id}, ${c.lat}, ${c.lng})">
+                <div class="company-name">
+                    ${c.name}
+                    ${c.job_count > 0 ? `<span class="job-count">${c.job_count} jobs</span>` : ''}
+                </div>
+                <div class="company-address">${c.address}</div>
+                <div class="company-links">
+                    ${c.website ? `<a href="${c.website}" target="_blank" class="company-link" onclick="event.stopPropagation()">Website</a>` : ''}
+                    ${c.careers_url ? `<a href="${c.careers_url}" target="_blank" class="company-link" onclick="event.stopPropagation()">Careers</a>` : ''}
+                </div>
+            </li>`;
+        });
+        html += '</ul>';
+    }
+
+    document.getElementById('companies-list').innerHTML = html;
+    document.getElementById('companies-view').style.display = 'block';
+    document.getElementById('companies-view').scrollIntoView({ behavior: 'smooth' });
+
+    // Zoom to area
+    if (points && points.length > 0) {
+        const bounds = L.latLngBounds(points.map(p => [p.lat, p.lng]));
+        map.fitBounds(bounds.pad(0.1));
+    } else {
+        map.setView([lat, lng], 14);
+    }
+}
+
+function closeCompaniesView() {
+    document.getElementById('companies-view').style.display = 'none';
+    // Clear selection when closing
+    if (selectedCompanyId && companyMarkerMap[selectedCompanyId]) {
+        const company = allCompanies.find(c => c.id === selectedCompanyId);
+        if (company) {
+            companyMarkerMap[selectedCompanyId].setIcon(createCompanyIcon(company));
+        }
+    }
+    selectedCompanyId = null;
+}
+
+function selectCompany(companyId, lat, lng) {
+    // Clear previous selection
+    if (selectedCompanyId && companyMarkerMap[selectedCompanyId]) {
+        const prevCompany = allCompanies.find(c => c.id === selectedCompanyId);
+        if (prevCompany) {
+            companyMarkerMap[selectedCompanyId].setIcon(createCompanyIcon(prevCompany));
+        }
+        // Remove selected class from list item
+        const prevItem = document.querySelector(`.company-item[data-company-id="${selectedCompanyId}"]`);
+        if (prevItem) prevItem.classList.remove('selected');
+    }
+
+    // Set new selection
+    selectedCompanyId = companyId;
+    if (companyMarkerMap[companyId]) {
+        // Create selected icon (white ring)
+        const company = allCompanies.find(c => c.id === companyId);
+        let colorClass = 'marker-gray';
+        if (company && company.job_count > 0) colorClass = 'marker-green';
+        else if (company && company.website) colorClass = 'marker-blue';
+
+        companyMarkerMap[companyId].setIcon(L.divIcon({
+            className: 'company-marker selected',
+            html: `<div class="marker-dot ${colorClass} selected"></div>`,
+            iconSize: [16, 16],
+            iconAnchor: [8, 8]
+        }));
+        companyMarkerMap[companyId].openPopup();
+    }
+
+    // Highlight in list
+    const item = document.querySelector(`.company-item[data-company-id="${companyId}"]`);
+    if (item) item.classList.add('selected');
+
+    // Pan to marker
+    map.setView([lat, lng], 16);
+}
+
+function focusCompany(lat, lng) {
+    map.setView([lat, lng], 16);
+}
+
+// Save corridor as single area with multiple points
+document.getElementById('save-stamps').addEventListener('click', async function() {
+    const name = document.getElementById('stamp-area-name').value.trim();
+    if (!name) {
+        alert('Please enter a corridor name');
+        return;
+    }
+    if (stampCircles.length === 0) {
+        alert('Please place at least one stamp');
+        return;
+    }
+
+    // Collect all points
+    const points = stampCircles.map(s => ({lat: s.lat, lng: s.lng}));
+
+    const formData = new FormData();
+    formData.append('name', name);
+    formData.append('radius', stampRadius);
+    formData.append('points', JSON.stringify(points));
+
+    const response = await fetch('/api/geo/corridors', {
+        method: 'POST',
+        body: formData
+    });
+
+    if (response.ok) {
+        location.reload();
+    }
+});
+</script>
+{% endblock %}

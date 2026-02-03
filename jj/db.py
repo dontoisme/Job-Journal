@@ -9,6 +9,44 @@ from typing import Any, Optional
 
 from jj.config import DB_PATH, JJ_HOME
 
+# Application lifecycle status constants
+ACTIVE_STATUSES = {
+    'prospect',           # Identified, not yet applied
+    'applied',            # Application submitted
+    'recruiter_screen',   # Initial recruiter contact/screen
+    'hiring_manager',     # HM screen or conversation
+    'interview',          # Full interview loop
+    'technical',          # Technical assessment
+    'offer',              # Offer extended
+}
+
+TERMINAL_STATUSES = {'accepted', 'rejected', 'withdrawn'}
+
+ALL_STATUSES = ACTIVE_STATUSES | TERMINAL_STATUSES
+
+# Status ordering for progression tracking
+STATUS_ORDER = {
+    'prospect': 0,
+    'applied': 1,
+    'recruiter_screen': 2,
+    'hiring_manager': 3,
+    'interview': 4,
+    'technical': 4,  # Same level as interview
+    'offer': 5,
+    'accepted': 6,
+    'rejected': -1,
+    'withdrawn': -1,
+    'skipped': -2,
+}
+
+# Map email resolution types to application statuses
+RESOLUTION_TO_STATUS = {
+    'rejection': 'rejected',
+    'screening': 'recruiter_screen',
+    'interview': 'interview',
+    'offer': 'offer',
+}
+
 SCHEMA = """
 -- Professional roles/positions
 CREATE TABLE IF NOT EXISTS roles (
@@ -205,6 +243,50 @@ CREATE TABLE IF NOT EXISTS geo_companies (
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Target companies for job hunting
+CREATE TABLE IF NOT EXISTS companies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    -- Core Identity
+    name TEXT NOT NULL,                    -- Canonical company name
+    name_normalized TEXT,                  -- LOWER(TRIM(name)) for matching
+    aliases TEXT,                          -- JSON array of alternate spellings
+
+    -- Job Board Tracking
+    careers_url TEXT,                      -- Primary careers/jobs page URL
+    ats_type TEXT,                         -- 'greenhouse', 'lever', 'ashby', 'workday', etc.
+
+    -- Search Activity
+    times_searched INTEGER DEFAULT 0,      -- Times we've searched this company
+    last_searched_at TEXT,
+
+    -- Contact Info (consolidated from applications)
+    employer_phone TEXT,
+    employer_address TEXT,
+    employer_city TEXT,
+    employer_state TEXT,
+    employer_zip TEXT,
+    contact_name TEXT,
+    contact_email TEXT,
+
+    -- Company Details
+    website TEXT,
+    industry TEXT,
+    company_size TEXT,                     -- 'startup', 'small', 'medium', 'large', 'enterprise'
+
+    -- Link to geo_companies (optional)
+    geo_company_id INTEGER REFERENCES geo_companies(id),
+
+    -- Hunting Status
+    is_target BOOLEAN DEFAULT 1,           -- Active target for hunting
+    target_priority INTEGER DEFAULT 0,     -- 1=high, 0=normal, -1=low
+    notes TEXT,
+
+    -- Timestamps
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Background task queue
 CREATE TABLE IF NOT EXISTS tasks (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -263,6 +345,10 @@ CREATE INDEX IF NOT EXISTS idx_resume_sections_resume ON resume_sections(resume_
 CREATE INDEX IF NOT EXISTS idx_corpus_suggestions_status ON corpus_suggestions(status);
 CREATE INDEX IF NOT EXISTS idx_corpus_suggestions_resume ON corpus_suggestions(resume_id);
 CREATE INDEX IF NOT EXISTS idx_app_emails_app_type ON application_emails(application_id, email_type);
+
+-- Companies indexes
+CREATE UNIQUE INDEX IF NOT EXISTS idx_companies_name_normalized ON companies(name_normalized);
+CREATE INDEX IF NOT EXISTS idx_companies_target ON companies(is_target, target_priority DESC);
 """
 
 
@@ -321,6 +407,14 @@ def migrate_database() -> None:
         # Email pairing tracking for applications
         ("applications", "pairing_status", "TEXT"),  # 'pending', 'confirmed', 'resolved', 'ghosted'
         ("applications", "days_waiting", "INTEGER"),  # Days since confirmation without resolution
+        # Company foreign key for applications
+        ("applications", "company_id", "INTEGER REFERENCES companies(id)"),
+        # Company contact columns (may have been missed in initial schema)
+        ("companies", "contact_name", "TEXT"),
+        ("companies", "contact_email", "TEXT"),
+        # Company fit scoring
+        ("companies", "fit_score", "INTEGER"),
+        ("companies", "fit_notes", "TEXT"),
     ]
 
     with get_connection() as conn:
@@ -385,9 +479,46 @@ def migrate_database() -> None:
             FOREIGN KEY (application_id) REFERENCES applications(id)
         );
         CREATE INDEX IF NOT EXISTS idx_app_emails_app_type ON application_emails(application_id, email_type);
+
+        -- Target companies for job hunting
+        CREATE TABLE IF NOT EXISTS companies (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            name_normalized TEXT,
+            aliases TEXT,
+            careers_url TEXT,
+            ats_type TEXT,
+            times_searched INTEGER DEFAULT 0,
+            last_searched_at TEXT,
+            employer_phone TEXT,
+            employer_address TEXT,
+            employer_city TEXT,
+            employer_state TEXT,
+            employer_zip TEXT,
+            contact_name TEXT,
+            contact_email TEXT,
+            website TEXT,
+            industry TEXT,
+            company_size TEXT,
+            geo_company_id INTEGER REFERENCES geo_companies(id),
+            is_target BOOLEAN DEFAULT 1,
+            target_priority INTEGER DEFAULT 0,
+            notes TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_companies_name_normalized ON companies(name_normalized);
+        CREATE INDEX IF NOT EXISTS idx_companies_target ON companies(is_target, target_priority DESC);
         """
         conn.executescript(new_tables_sql)
         conn.commit()
+
+        # Create index on company_id after column migration (may not exist yet)
+        try:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_applications_company_id ON applications(company_id)")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # Column doesn't exist yet
 
         # Migrate resume_entries table if it has old schema (no role_id column)
         cursor.execute("PRAGMA table_info(resume_entries)")
@@ -420,6 +551,53 @@ def migrate_database() -> None:
                 conn.commit()
             except sqlite3.OperationalError:
                 pass  # Table might already be correct
+
+
+def migrate_application_lifecycle() -> dict[str, int]:
+    """
+    Migrate application statuses to use the new lifecycle model.
+
+    1. Rename 'screening' → 'recruiter_screen'
+    2. Create initial status_change events for applications without history
+
+    Returns dict with counts: {renamed: N, events_created: N}
+    """
+    results = {'renamed': 0, 'events_created': 0}
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Step 1: Rename 'screening' to 'recruiter_screen'
+        cursor.execute("""
+            UPDATE applications
+            SET status = 'recruiter_screen'
+            WHERE status = 'screening'
+        """)
+        results['renamed'] = cursor.rowcount
+        conn.commit()
+
+        # Step 2: Create initial events for applications without event history
+        cursor.execute("""
+            INSERT INTO events (event_type, entity_type, entity_id, old_value, new_value, metadata, created_at)
+            SELECT
+                'status_change',
+                'application',
+                id,
+                json_object('status', NULL),
+                json_object('status', status),
+                json_object('source', 'migration', 'reason', 'Initial state from migration'),
+                COALESCE(applied_at, created_at)
+            FROM applications
+            WHERE id NOT IN (
+                SELECT DISTINCT entity_id
+                FROM events
+                WHERE event_type = 'status_change' AND entity_type = 'application'
+            )
+        """)
+        results['events_created'] = cursor.rowcount
+        conn.commit()
+
+    return results
 
 
 def get_stats() -> dict[str, int]:
@@ -675,6 +853,67 @@ def update_application(app_id: int, **kwargs) -> bool:
         )
         conn.commit()
         return cursor.rowcount > 0
+
+
+def transition_application_status(
+    app_id: int,
+    new_status: str,
+    reason: Optional[str] = None,
+    source: str = 'manual',
+    metadata: Optional[dict] = None,
+) -> bool:
+    """
+    Update application status and log event atomically.
+
+    This is the ONLY function that should change application status to ensure
+    all transitions are tracked in the events table.
+
+    Args:
+        app_id: Application ID to update
+        new_status: New status value (must be in ALL_STATUSES or 'skipped')
+        reason: Human-readable reason for the change (e.g., "Email resolution: rejection")
+        source: Source of the change ('manual', 'email', 'api')
+        metadata: Additional context (e.g., {email_id: ...})
+
+    Returns:
+        True if successful, False otherwise
+    """
+    # Validate new_status
+    valid_statuses = ALL_STATUSES | {'skipped', 'screening'}  # Include screening for backward compat
+    if new_status not in valid_statuses:
+        return False
+
+    # Get current status
+    app = get_application(app_id)
+    if not app:
+        return False
+
+    old_status = app.get('status')
+
+    # Don't log if status hasn't changed
+    if old_status == new_status:
+        return True
+
+    # Update the status
+    success = update_application(app_id, status=new_status)
+    if not success:
+        return False
+
+    # Log the event
+    log_event(
+        event_type='status_change',
+        entity_type='application',
+        entity_id=app_id,
+        old_value={'status': old_status},
+        new_value={'status': new_status},
+        metadata={
+            'reason': reason,
+            'source': source,
+            **(metadata or {}),
+        }
+    )
+
+    return True
 
 
 def get_pipeline_stats() -> dict[str, Any]:
@@ -2152,3 +2391,361 @@ def get_pairing_stats() -> dict[str, Any]:
             stats['by_resolution_type'][res_type] += 1
 
     return stats
+
+
+# =============================================================================
+# Company Functions
+# =============================================================================
+
+
+def get_or_create_company(name: str, **kwargs) -> int:
+    """
+    Get existing company by name or create new one.
+    Returns company ID.
+    """
+    normalized = name.lower().strip()
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Try to find existing
+        cursor.execute(
+            "SELECT id FROM companies WHERE name_normalized = ?",
+            (normalized,)
+        )
+        row = cursor.fetchone()
+
+        if row:
+            return row['id']
+
+        # Create new company
+        cursor.execute("""
+            INSERT INTO companies (name, name_normalized, careers_url, ats_type, website)
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            name,
+            normalized,
+            kwargs.get('careers_url'),
+            kwargs.get('ats_type'),
+            kwargs.get('website'),
+        ))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def find_company_by_name(name: str, fuzzy: bool = False) -> Optional[dict[str, Any]]:
+    """
+    Find company by name. Optionally use fuzzy matching.
+    """
+    normalized = name.lower().strip()
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Exact match first
+        cursor.execute(
+            "SELECT * FROM companies WHERE name_normalized = ?",
+            (normalized,)
+        )
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+
+        # Check aliases
+        cursor.execute("""
+            SELECT * FROM companies
+            WHERE aliases LIKE ?
+        """, (f'%"{normalized}"%',))
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+
+        # Fuzzy match if requested
+        if fuzzy:
+            cursor.execute("""
+                SELECT * FROM companies
+                WHERE name_normalized LIKE ?
+                ORDER BY LENGTH(name_normalized) ASC
+                LIMIT 1
+            """, (f'%{normalized}%',))
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+
+        return None
+
+
+def get_company(company_id: int) -> Optional[dict[str, Any]]:
+    """Get a company by ID."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM companies WHERE id = ?", (company_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def update_company(company_id: int, **kwargs) -> bool:
+    """Update a company record."""
+    if not kwargs:
+        return False
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Build SET clause
+        set_parts = [f"{k} = ?" for k in kwargs.keys()]
+        set_parts.append("updated_at = CURRENT_TIMESTAMP")
+        values = list(kwargs.values()) + [company_id]
+
+        cursor.execute(
+            f"UPDATE companies SET {', '.join(set_parts)} WHERE id = ?",
+            values
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def add_company_alias(company_id: int, alias: str) -> bool:
+    """Add an alternate name/spelling for a company."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("SELECT aliases FROM companies WHERE id = ?", (company_id,))
+        row = cursor.fetchone()
+        if not row:
+            return False
+
+        aliases = json.loads(row['aliases'] or '[]')
+        normalized_alias = alias.lower().strip()
+
+        if normalized_alias not in aliases:
+            aliases.append(normalized_alias)
+            cursor.execute(
+                "UPDATE companies SET aliases = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (json.dumps(aliases), company_id)
+            )
+            conn.commit()
+
+        return True
+
+
+def increment_search_count(company_id: int) -> None:
+    """Increment search count for a company."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE companies
+            SET times_searched = times_searched + 1,
+                last_searched_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (company_id,))
+        conn.commit()
+
+
+def update_company_fit(company_id: int, fit_score: int, fit_notes: str = None) -> bool:
+    """Update company fit score and notes."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE companies
+            SET fit_score = ?,
+                fit_notes = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (fit_score, fit_notes, company_id))
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def get_all_companies() -> list[dict[str, Any]]:
+    """Get all companies."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM companies ORDER BY name")
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_target_companies(priority: Optional[int] = None) -> list[dict[str, Any]]:
+    """Get companies marked as hunting targets with application counts."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        query = """
+            SELECT
+                c.*,
+                COUNT(a.id) as application_count,
+                SUM(CASE WHEN a.status NOT IN ('rejected', 'withdrawn', 'prospect') THEN 1 ELSE 0 END) as active_count,
+                MAX(a.applied_at) as latest_applied_at
+            FROM companies c
+            LEFT JOIN applications a ON a.company_id = c.id
+            WHERE c.is_target = 1
+        """
+
+        if priority is not None:
+            query += " AND c.target_priority = ?"
+            query += " GROUP BY c.id ORDER BY c.fit_score DESC NULLS LAST, c.target_priority DESC, c.name"
+            cursor.execute(query, (priority,))
+        else:
+            query += " GROUP BY c.id ORDER BY c.fit_score DESC NULLS LAST, c.target_priority DESC, c.name"
+            cursor.execute(query)
+
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_companies_with_applications() -> list[dict[str, Any]]:
+    """Get companies that have applications with counts."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                c.*,
+                COUNT(a.id) as application_count,
+                SUM(CASE WHEN a.status NOT IN ('rejected', 'withdrawn', 'prospect') THEN 1 ELSE 0 END) as active_count,
+                MAX(a.applied_at) as latest_applied_at
+            FROM companies c
+            INNER JOIN applications a ON a.company_id = c.id
+            GROUP BY c.id
+            HAVING application_count > 0
+            ORDER BY application_count DESC, c.name
+        """)
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def detect_ats_type(job_url: str) -> Optional[str]:
+    """Detect ATS type from job URL."""
+    if not job_url:
+        return None
+
+    url_lower = job_url.lower()
+    if 'greenhouse' in url_lower:
+        return 'greenhouse'
+    elif 'lever.co' in url_lower:
+        return 'lever'
+    elif 'ashby' in url_lower:
+        return 'ashby'
+    elif 'workday' in url_lower:
+        return 'workday'
+    elif 'icims' in url_lower:
+        return 'icims'
+    elif 'rippling' in url_lower:
+        return 'rippling'
+    elif 'jobvite' in url_lower:
+        return 'jobvite'
+    elif 'smartrecruiters' in url_lower:
+        return 'smartrecruiters'
+    return None
+
+
+def migrate_companies_from_applications() -> dict[str, int]:
+    """
+    Create companies from existing application company names.
+    Uses case-insensitive deduplication.
+    Returns counts of companies created and applications linked.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get unique companies with aggregated data
+        cursor.execute("""
+            SELECT
+                company,
+                LOWER(TRIM(company)) as normalized,
+                COUNT(*) as app_count,
+                MAX(employer_phone) as phone,
+                MAX(employer_address) as address,
+                MAX(employer_city) as city,
+                MAX(employer_state) as state,
+                MAX(employer_zip) as zip,
+                MAX(contact_name) as contact_name,
+                MAX(contact_email) as contact_email,
+                MAX(job_url) as job_url,
+                MAX(ats_type) as ats_type
+            FROM applications
+            WHERE company IS NOT NULL AND TRIM(company) != ''
+            GROUP BY LOWER(TRIM(company))
+        """)
+
+        companies_data = cursor.fetchall()
+
+        created = 0
+        for row in companies_data:
+            # Detect ATS type from job URL if not already set
+            ats = row['ats_type'] or detect_ats_type(row['job_url'])
+
+            cursor.execute("""
+                INSERT OR IGNORE INTO companies (
+                    name, name_normalized, careers_url, ats_type,
+                    employer_phone, employer_address, employer_city,
+                    employer_state, employer_zip, contact_name, contact_email
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                row['company'],
+                row['normalized'],
+                row['job_url'],  # Use job_url as initial careers_url
+                ats,
+                row['phone'],
+                row['address'],
+                row['city'],
+                row['state'],
+                row['zip'],
+                row['contact_name'],
+                row['contact_email'],
+            ))
+
+            if cursor.rowcount > 0:
+                created += 1
+
+        conn.commit()
+
+        # Link applications to companies
+        cursor.execute("""
+            UPDATE applications
+            SET company_id = (
+                SELECT c.id FROM companies c
+                WHERE c.name_normalized = LOWER(TRIM(applications.company))
+            )
+            WHERE company_id IS NULL
+        """)
+        linked = cursor.rowcount
+        conn.commit()
+
+        return {'companies_created': created, 'applications_linked': linked}
+
+
+def link_geo_companies() -> int:
+    """
+    Link companies to geo_companies where names match.
+    Returns count of companies linked.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            UPDATE companies
+            SET geo_company_id = (
+                SELECT gc.id FROM geo_companies gc
+                WHERE LOWER(TRIM(gc.name)) = companies.name_normalized
+                LIMIT 1
+            ),
+            website = COALESCE(companies.website, (
+                SELECT gc.website FROM geo_companies gc
+                WHERE LOWER(TRIM(gc.name)) = companies.name_normalized
+                LIMIT 1
+            )),
+            careers_url = COALESCE(companies.careers_url, (
+                SELECT gc.careers_url FROM geo_companies gc
+                WHERE LOWER(TRIM(gc.name)) = companies.name_normalized
+                LIMIT 1
+            ))
+            WHERE companies.geo_company_id IS NULL
+              AND EXISTS (
+                  SELECT 1 FROM geo_companies gc
+                  WHERE LOWER(TRIM(gc.name)) = companies.name_normalized
+              )
+        """)
+
+        linked = cursor.rowcount
+        conn.commit()
+
+        return linked

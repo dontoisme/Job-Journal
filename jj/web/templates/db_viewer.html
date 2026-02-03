@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+
+{% block title %}Database Viewer - Job Journal{% endblock %}
+{% block page_title %}Database Viewer{% endblock %}
+
+{% block page_actions %}
+<div style="display: flex; gap: 0.5rem; align-items: center;">
+    <span class="badge badge-muted">{{ tables|length }} tables</span>
+</div>
+{% endblock %}
+
+{% block content %}
+<div style="display: grid; grid-template-columns: 200px 1fr; gap: 1.5rem;">
+    <!-- Tables sidebar -->
+    <div class="card" style="height: fit-content;">
+        <div class="card-header">
+            <span class="card-title">Tables</span>
+        </div>
+        <div style="padding: 0.5rem 0;">
+            {% for table in tables %}
+            <a href="/db?table={{ table.name }}"
+               class="list-item"
+               style="display: flex; justify-content: space-between; padding: 0.5rem 1rem; text-decoration: none; color: inherit; {% if current_table == table.name %}background: var(--bg-tertiary); border-left: 3px solid var(--accent);{% endif %}">
+                <span>{{ table.name }}</span>
+                <span class="badge badge-muted" style="font-size: 0.7rem;">{{ table.count }}</span>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Table data -->
+    <div class="card">
+        {% if current_table %}
+        <div class="card-header">
+            <span class="card-title">{{ current_table }}</span>
+            <span class="badge badge-muted">{{ total_count }} rows</span>
+        </div>
+
+        {% if rows %}
+        <div class="table-container" style="max-height: 70vh; overflow: auto;">
+            <table style="font-size: 0.8rem;">
+                <thead>
+                    <tr>
+                        {% for col in columns %}
+                        <th style="white-space: nowrap; position: sticky; top: 0; background: var(--bg-secondary);">{{ col }}</th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for row in rows %}
+                    <tr>
+                        {% for col in columns %}
+                        <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ row[col] }}">
+                            {% set val = row[col] %}
+                            {% if val is none %}
+                                <span style="color: var(--text-secondary);">NULL</span>
+                            {% elif val == '' %}
+                                <span style="color: var(--text-secondary);">''</span>
+                            {% elif val == 0 %}
+                                <span>0</span>
+                            {% elif val == 1 and col.startswith('is_') or col.startswith('email_') %}
+                                <span style="color: var(--success);">true</span>
+                            {% elif val|string|length > 100 %}
+                                {{ val|string|truncate(100, True, '...') }}
+                            {% else %}
+                                {{ val }}
+                            {% endif %}
+                        </td>
+                        {% endfor %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Pagination -->
+        {% if total_count > limit %}
+        <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; border-top: 1px solid var(--border);">
+            <span style="font-size: 0.875rem; color: var(--text-secondary);">
+                Showing {{ offset + 1 }}-{{ [offset + limit, total_count]|min }} of {{ total_count }}
+            </span>
+            <div style="display: flex; gap: 0.5rem;">
+                {% if offset > 0 %}
+                <a href="/db?table={{ current_table }}&limit={{ limit }}&offset={{ [offset - limit, 0]|max }}" class="btn btn-sm btn-secondary">&larr; Prev</a>
+                {% endif %}
+                {% if offset + limit < total_count %}
+                <a href="/db?table={{ current_table }}&limit={{ limit }}&offset={{ offset + limit }}" class="btn btn-sm btn-secondary">Next &rarr;</a>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-state-icon">📭</div>
+            <div class="empty-state-text">No data in this table</div>
+        </div>
+        {% endif %}
+
+        {% else %}
+        <div class="empty-state">
+            <div class="empty-state-icon">🗄️</div>
+            <div class="empty-state-title">Select a table</div>
+            <div class="empty-state-text">Choose a table from the sidebar to view its contents</div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Quick stats -->
+<div class="card" style="margin-top: 1.5rem;">
+    <div class="card-header">
+        <span class="card-title">Database Overview</span>
+    </div>
+    <div class="health-bar">
+        {% for table in tables %}
+        <div class="health-item">
+            <span class="health-label">{{ table.name }}:</span>
+            <span class="health-value">{{ table.count }}</span>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

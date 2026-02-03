@@ -1,0 +1,15 @@
+<div class="discovery-result">
+    <h4>Discovery Complete</h4>
+    <div class="result-stats">
+        <p><strong>{{ area.name }}</strong></p>
+        <p>Found <span class="badge badge-accent">{{ found }}</span> companies</p>
+        <p>Added <span class="badge badge-success">{{ added }}</span> new to database</p>
+    </div>
+    {% if added > 0 %}
+    <button class="btn btn-sm btn-secondary btn-block" onclick="location.reload()">
+        Refresh Map
+    </button>
+    {% else %}
+    <p class="text-muted">No new companies found in this area.</p>
+    {% endif %}
+</div>
