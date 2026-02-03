@@ -302,6 +302,7 @@ def generate_resume_from_corpus(
     company: str,
     position: str,
     variant: str = "general",
+    custom_summary: Optional[str] = None,
     max_roles: int = 4,
     max_bullets_per_role: int = 6,
     template_id: Optional[str] = None,
@@ -322,6 +323,7 @@ def generate_resume_from_corpus(
         company: Target company name
         position: Target position title
         variant: Summary variant to use (e.g., "growth", "ai-agentic")
+        custom_summary: Custom summary text (overrides variant summary if provided)
         max_roles: Maximum number of roles to include
         max_bullets_per_role: Maximum bullets per role
         template_id: Google Docs template ID (uses config default if not provided)
@@ -367,6 +369,11 @@ def generate_resume_from_corpus(
 
     # Build replacement dictionary
     replacements = build_replacement_dict(data, company, position)
+
+    # Override summary if custom_summary provided
+    if custom_summary:
+        replacements["{{SUMMARY}}"] = custom_summary
+        replacements["{{summary}}"] = custom_summary
 
     # Get name from profile for document naming
     name_data = data.profile.get("name", {})
