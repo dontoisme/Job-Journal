@@ -200,10 +200,14 @@ def build_replacement_dict(
     """
     replacements: dict[str, str] = {}
 
-    # Target placeholders
+    # Target placeholders (support both UPPER and lower case)
     replacements["{{COMPANY}}"] = company
+    replacements["{{company}}"] = company
+    replacements["{{company_name}}"] = company
     replacements["{{POSITION}}"] = position
+    replacements["{{position}}"] = position
     replacements["{{DATE}}"] = datetime.now().strftime("%B %d, %Y")
+    replacements["{{date}}"] = datetime.now().strftime("%B %d, %Y")
 
     # Profile placeholders
     profile = data.profile
@@ -222,8 +226,9 @@ def build_replacement_dict(
     replacements["{{LINKEDIN}}"] = links.get("linkedin", "")
     replacements["{{GITHUB}}"] = links.get("github", "")
 
-    # Summary
+    # Summary (support both cases)
     replacements["{{SUMMARY}}"] = data.summary
+    replacements["{{summary}}"] = data.summary
 
     # Experience placeholders (numbered by recency, 1-indexed)
     max_roles = 6  # Support up to 6 roles in template
@@ -255,12 +260,40 @@ def build_replacement_dict(
             for bullet_num in range(1, max_bullets + 1):
                 replacements[f"{role_prefix}BULLET_{bullet_num}}}}}"] = ""
 
-    # Skills placeholders
+    # Skills placeholders - named categories (legacy)
     skill_categories = ["technical", "domain", "leadership", "tools"]
     for cat in skill_categories:
         placeholder = f"{{{{SKILLS_{cat.upper()}}}}}"
         skills_list = data.skills_by_category.get(cat, [])
         replacements[placeholder] = ", ".join(skills_list)
+
+    # Skills placeholders - numbered categories (flexible template support)
+    # Supports multiple formats: {{skills_category1}}, {{skill_category1}}, etc.
+    sorted_categories = list(data.skills_by_category.keys())
+    for i, cat in enumerate(sorted_categories[:5], start=1):
+        # Format category name nicely (replace hyphens/underscores with spaces, title case)
+        display_name = cat.replace("-", " ").replace("_", " ").title()
+        skills_list = data.skills_by_category.get(cat, [])
+        skills_str = ", ".join(skills_list)
+
+        # With underscore (skills_category1, skills_list1)
+        replacements[f"{{{{skills_category{i}}}}}"] = display_name
+        replacements[f"{{{{skills_list{i}}}}}"] = skills_str
+        # Without underscore (skill_category1, skill_list1)
+        replacements[f"{{{{skill_category{i}}}}}"] = display_name
+        replacements[f"{{{{skill_list{i}}}}}"] = skills_str
+        # Uppercase versions
+        replacements[f"{{{{SKILLS_CATEGORY{i}}}}}"] = display_name
+        replacements[f"{{{{SKILLS_LIST{i}}}}}"] = skills_str
+
+    # Fill empty slots if fewer than 5 categories
+    for i in range(len(sorted_categories) + 1, 6):
+        replacements[f"{{{{skills_category{i}}}}}"] = ""
+        replacements[f"{{{{skills_list{i}}}}}"] = ""
+        replacements[f"{{{{skill_category{i}}}}}"] = ""
+        replacements[f"{{{{skill_list{i}}}}}"] = ""
+        replacements[f"{{{{SKILLS_CATEGORY{i}}}}}"] = ""
+        replacements[f"{{{{SKILLS_LIST{i}}}}}"] = ""
 
     return replacements
 
