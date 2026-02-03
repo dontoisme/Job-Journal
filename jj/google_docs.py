@@ -368,12 +368,16 @@ def generate_resume_from_corpus(
     # Build replacement dictionary
     replacements = build_replacement_dict(data, company, position)
 
+    # Get name from profile for document naming
+    name_data = data.profile.get("name", {})
+    full_name = f"{name_data.get('first', '')} {name_data.get('last', '')}".strip() or "Resume"
+
     # Build document title
     timestamp = datetime.now().strftime("%Y%m%d")
-    doc_title = f"{company} - {position} - Resume - {timestamp}"
+    doc_title = f"{full_name} - {position} - {company} - {timestamp}"
 
     # Build filename for PDF
-    pdf_filename = f"{company} - {position} - Resume.pdf"
+    pdf_filename = f"{full_name} - {position} - {company} - Resume.pdf"
     pdf_path = output_dir / pdf_filename
 
     try:
