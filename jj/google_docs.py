@@ -409,12 +409,12 @@ def generate_resume_from_corpus(
             final_doc_id = None
             final_doc_url = None
 
-        # Track in database
+        # Track in database (use custom_summary if provided, else variant summary)
         resume_id = create_resume(
             filename=pdf_path.name,
             filepath=str(pdf_path),
             variant=variant,
-            summary_text=data.summary,
+            summary_text=custom_summary if custom_summary else data.summary,
             target_company=company,
             target_role=position,
             google_doc_id=doc_id if keep_google_doc else None,
