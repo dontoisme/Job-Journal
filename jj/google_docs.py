@@ -187,6 +187,7 @@ def build_replacement_dict(
     data: ResumeTemplateData,
     company: str,
     position: str,
+    skill_categories: Optional[list[str]] = None,
 ) -> dict[str, str]:
     """Build the replacement dictionary for template placeholders.
 
@@ -194,6 +195,9 @@ def build_replacement_dict(
         data: Assembled template data from corpus
         company: Target company name
         position: Target position/role
+        skill_categories: Optional ordered list of skill category keys to include.
+                         If provided, only these categories are used, in this order.
+                         Example: ["product-management", "technical", "leadership"]
 
     Returns:
         Dictionary mapping placeholder strings to replacement values
@@ -269,8 +273,14 @@ def build_replacement_dict(
 
     # Skills placeholders - numbered categories (flexible template support)
     # Supports multiple formats: {{skills_category1}}, {{skill_category1}}, etc.
-    sorted_categories = list(data.skills_by_category.keys())
-    for i, cat in enumerate(sorted_categories[:5], start=1):
+    # Use custom order if provided, otherwise use all categories in dict order
+    if skill_categories:
+        # Filter to only categories that exist in the data
+        ordered_categories = [c for c in skill_categories if c in data.skills_by_category]
+    else:
+        ordered_categories = list(data.skills_by_category.keys())
+
+    for i, cat in enumerate(ordered_categories[:5], start=1):
         # Format category name nicely (replace hyphens/underscores with spaces, title case)
         display_name = cat.replace("-", " ").replace("_", " ").title()
         skills_list = data.skills_by_category.get(cat, [])
@@ -287,7 +297,7 @@ def build_replacement_dict(
         replacements[f"{{{{SKILLS_LIST{i}}}}}"] = skills_str
 
     # Fill empty slots if fewer than 5 categories
-    for i in range(len(sorted_categories) + 1, 6):
+    for i in range(len(ordered_categories) + 1, 6):
         replacements[f"{{{{skills_category{i}}}}}"] = ""
         replacements[f"{{{{skills_list{i}}}}}"] = ""
         replacements[f"{{{{skill_category{i}}}}}"] = ""
@@ -303,6 +313,7 @@ def generate_resume_from_corpus(
     position: str,
     variant: str = "general",
     custom_summary: Optional[str] = None,
+    skill_categories: Optional[list[str]] = None,
     max_roles: int = 4,
     max_bullets_per_role: int = 6,
     template_id: Optional[str] = None,
@@ -324,6 +335,9 @@ def generate_resume_from_corpus(
         position: Target position title
         variant: Summary variant to use (e.g., "growth", "ai-agentic")
         custom_summary: Custom summary text (overrides variant summary if provided)
+        skill_categories: Ordered list of skill category keys to include (e.g.,
+                         ["product-management", "technical", "leadership"]).
+                         If None, uses all categories in default order.
         max_roles: Maximum number of roles to include
         max_bullets_per_role: Maximum bullets per role
         template_id: Google Docs template ID (uses config default if not provided)
@@ -368,7 +382,7 @@ def generate_resume_from_corpus(
         return ResumeGenerationResult(success=False, error=f"Error assembling corpus data: {e}")
 
     # Build replacement dictionary
-    replacements = build_replacement_dict(data, company, position)
+    replacements = build_replacement_dict(data, company, position, skill_categories)
 
     # Override summary if custom_summary provided
     if custom_summary:
