@@ -308,6 +308,67 @@ def build_replacement_dict(
     return replacements
 
 
+def _bold_skill_categories(client: "GoogleDocsClient", doc_id: str) -> int:
+    """Bold skill category names in a generated resume document.
+
+    Finds text like "Product Management:", "Technical:", etc. and applies bold formatting.
+    This is needed because Google Docs text replacement doesn't preserve placeholder formatting.
+
+    Args:
+        client: Authenticated GoogleDocsClient
+        doc_id: Document ID to modify
+
+    Returns:
+        Number of category names bolded
+    """
+    # Common skill category patterns to bold (everything up to and including ":")
+    # These match the display names generated from category keys
+    skill_patterns = [
+        "Product Management:",
+        "Technical:",
+        "Leadership:",
+        "Analytics & Tools:",
+        "Growth & Experimentation:",
+        "Ai & Orchestration:",
+        "Health Tech:",
+        # Add more patterns as needed
+    ]
+
+    doc = client.docs_service.documents().get(documentId=doc_id).execute()
+    requests = []
+
+    content = doc.get('body', {}).get('content', [])
+    for element in content:
+        if 'paragraph' in element:
+            para = element['paragraph']
+            for elem in para.get('elements', []):
+                text_run = elem.get('textRun', {})
+                text = text_run.get('content', '')
+                start = elem.get('startIndex')
+
+                for pattern in skill_patterns:
+                    if pattern in text:
+                        keyword_start = text.find(pattern)
+                        if keyword_start >= 0:
+                            abs_start = start + keyword_start
+                            abs_end = abs_start + len(pattern)
+                            requests.append({
+                                'updateTextStyle': {
+                                    'range': {'startIndex': abs_start, 'endIndex': abs_end},
+                                    'textStyle': {'bold': True},
+                                    'fields': 'bold'
+                                }
+                            })
+
+    if requests:
+        client.docs_service.documents().batchUpdate(
+            documentId=doc_id,
+            body={'requests': requests}
+        ).execute()
+
+    return len(requests)
+
+
 def generate_resume_from_corpus(
     company: str,
     position: str,
@@ -411,6 +472,9 @@ def generate_resume_from_corpus(
 
         # Make replacements
         replacements_made = client.replace_text(doc_id, replacements)
+
+        # Bold skill category names (formatting isn't preserved through replacement)
+        _bold_skill_categories(client, doc_id)
 
         # Export PDF
         client.export_pdf(doc_id, pdf_path)
