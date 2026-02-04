@@ -40,7 +40,6 @@ Thumbs.db
 
 # Private/user-specific
 /templates/
-/docs/
 .claude/
 claude/
 firebase-debug.log
