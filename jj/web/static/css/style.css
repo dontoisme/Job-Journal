@@ -1484,6 +1484,49 @@ tr:hover {
     }
 }
 
+/* TWC Claim Periods List View */
+.twc-periods-list {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.twc-period-card {
+    background: var(--bg-card);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.twc-period-header {
+    padding: 0.75rem 1rem;
+    background: rgba(99, 102, 241, 0.1);
+    border-bottom: 1px solid var(--accent);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.twc-week-subcard {
+    padding: 1rem;
+    background: var(--bg-secondary);
+    border-radius: 6px;
+}
+
+.twc-week-count {
+    font-size: 2rem;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.twc-week-count.complete {
+    color: var(--success);
+}
+
+.twc-week-count.incomplete {
+    color: var(--warning);
+}
+
 /* TWC Work Search Activity Log Styles */
 .twc-week-nav {
     background: var(--bg-card);

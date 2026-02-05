@@ -349,6 +349,17 @@ CREATE INDEX IF NOT EXISTS idx_app_emails_app_type ON application_emails(applica
 -- Companies indexes
 CREATE UNIQUE INDEX IF NOT EXISTS idx_companies_name_normalized ON companies(name_normalized);
 CREATE INDEX IF NOT EXISTS idx_companies_target ON companies(is_target, target_priority DESC);
+
+-- TWC payment request tracking
+CREATE TABLE IF NOT EXISTS twc_payment_requests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    week_start TEXT NOT NULL UNIQUE,    -- Sunday date (YYYY-MM-DD)
+    submitted BOOLEAN DEFAULT 0,
+    submitted_at TEXT,
+    activities_reported INTEGER,
+    notes TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -1966,6 +1977,209 @@ def derive_twc_result(status: str) -> str:
         'rejected': 'not_hiring',
     }
     return mapping.get(status, 'application_filed')
+
+
+def get_twc_claim_period(week_start: Optional[str] = None) -> dict[str, Any]:
+    """
+    Get a TWC biweekly claim period summary.
+    TWC claim periods are two consecutive Sun-Sat weeks.
+    Returns summaries for both weeks plus payment submission status.
+    """
+    from datetime import timedelta
+
+    # Get the first week's boundaries
+    sunday1, saturday1 = get_twc_week_boundaries(week_start)
+    start1 = datetime.strptime(sunday1, "%Y-%m-%d")
+
+    # Second week is the next Sun-Sat
+    start2 = start1 + timedelta(days=7)
+    sunday2 = start2.strftime("%Y-%m-%d")
+
+    # Get summaries for both weeks
+    summary1 = get_twc_week_summary(sunday1)
+    summary2 = get_twc_week_summary(sunday2)
+
+    # Get payment submission status for each week
+    payment1 = get_twc_payment_status(sunday1)
+    payment2 = get_twc_payment_status(sunday2)
+
+    return {
+        'week1': {
+            'start': sunday1,
+            'end': saturday1,
+            'display': f"{start1.strftime('%b %d')} - {datetime.strptime(saturday1, '%Y-%m-%d').strftime('%b %d, %Y')}",
+            'summary': summary1,
+            'payment': payment1,
+        },
+        'week2': {
+            'start': sunday2,
+            'end': (start2 + timedelta(days=6)).strftime("%Y-%m-%d"),
+            'display': f"{start2.strftime('%b %d')} - {(start2 + timedelta(days=6)).strftime('%b %d, %Y')}",
+            'summary': summary2,
+            'payment': payment2,
+        },
+        'total_activities': summary1['total_activities'] + summary2['total_activities'],
+        'period_display': f"{start1.strftime('%b %d')} - {(start2 + timedelta(days=6)).strftime('%b %d, %Y')}",
+    }
+
+
+def get_twc_payment_status(week_start: str) -> dict[str, Any]:
+    """Get payment submission status for a specific week."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM twc_payment_requests WHERE week_start = ?",
+            (week_start,)
+        )
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        return {'week_start': week_start, 'submitted': False, 'submitted_at': None, 'activities_reported': None}
+
+
+def mark_twc_payment_submitted(week_start: str, submitted: bool, activities_reported: int = None) -> bool:
+    """Mark a TWC week's payment request as submitted or not."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if submitted:
+            cursor.execute("""
+                INSERT INTO twc_payment_requests (week_start, submitted, submitted_at, activities_reported)
+                VALUES (?, 1, ?, ?)
+                ON CONFLICT(week_start) DO UPDATE SET
+                    submitted = 1,
+                    submitted_at = excluded.submitted_at,
+                    activities_reported = excluded.activities_reported
+            """, (week_start, datetime.now().isoformat(), activities_reported))
+        else:
+            cursor.execute("""
+                INSERT INTO twc_payment_requests (week_start, submitted)
+                VALUES (?, 0)
+                ON CONFLICT(week_start) DO UPDATE SET
+                    submitted = 0,
+                    submitted_at = NULL
+            """, (week_start,))
+        conn.commit()
+        return True
+
+
+def get_all_twc_claim_periods() -> list[dict[str, Any]]:
+    """
+    Get all TWC biweekly claim periods from earliest activity to current week.
+    Uses batch queries for efficiency (3 queries total, not N).
+    Returns list of period dicts, newest first.
+    """
+    from datetime import timedelta
+    from collections import defaultdict
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Query 1: Find earliest activity date
+        cursor.execute("""
+            SELECT MIN(COALESCE(activity_date, DATE(applied_at), DATE(created_at))) as earliest
+            FROM applications
+            WHERE status NOT IN ('prospect', 'skipped')
+        """)
+        row = cursor.fetchone()
+        earliest = row['earliest'] if row and row['earliest'] else None
+        if not earliest:
+            return []
+
+        # Query 2: Get all activity counts grouped by week Sunday
+        cursor.execute("""
+            SELECT
+                COALESCE(activity_date, DATE(applied_at), DATE(created_at)) as effective_date
+            FROM applications
+            WHERE status NOT IN ('prospect', 'skipped')
+              AND COALESCE(activity_date, DATE(applied_at), DATE(created_at)) IS NOT NULL
+            ORDER BY effective_date
+        """)
+        activities = cursor.fetchall()
+
+        # Query 3: Get all payment statuses
+        cursor.execute("SELECT * FROM twc_payment_requests")
+        payment_rows = cursor.fetchall()
+
+    # Build payment lookup
+    payment_lookup = {}
+    for p in payment_rows:
+        p = dict(p)
+        payment_lookup[p['week_start']] = p
+
+    # Bucket activities by their week Sunday
+    counts_by_sunday = defaultdict(int)
+    for act in activities:
+        d = datetime.strptime(act['effective_date'], "%Y-%m-%d")
+        days_since_sunday = (d.weekday() + 1) % 7
+        sunday = d - timedelta(days=days_since_sunday)
+        counts_by_sunday[sunday.strftime("%Y-%m-%d")] += 1
+
+    # Align to TWC's fixed biweekly claim period calendar.
+    # TWC uses a fixed epoch -- Jan 4, 2026 is a known period start (Sunday).
+    # All periods are 14-day multiples from this epoch.
+    TWC_EPOCH = datetime(2026, 1, 4)
+
+    earliest_dt = datetime.strptime(earliest, "%Y-%m-%d")
+    days_since_sunday = (earliest_dt.weekday() + 1) % 7
+    first_sunday = earliest_dt - timedelta(days=days_since_sunday)
+
+    today = datetime.now()
+    days_since_sunday = (today.weekday() + 1) % 7
+    current_sunday = today - timedelta(days=days_since_sunday)
+
+    # Find the TWC period that contains the earliest activity
+    days_from_epoch = (first_sunday - TWC_EPOCH).days
+    # Align to nearest period boundary (can be negative if before epoch)
+    period_offset = days_from_epoch % 14
+    period_start = first_sunday - timedelta(days=period_offset)
+
+    # Build periods (step by 14 days)
+    periods = []
+    while period_start <= current_sunday:
+        week1_start = period_start
+        week1_end = week1_start + timedelta(days=6)
+        week2_start = period_start + timedelta(days=7)
+        week2_end = week2_start + timedelta(days=6)
+
+        w1_str = week1_start.strftime("%Y-%m-%d")
+        w2_str = week2_start.strftime("%Y-%m-%d")
+
+        w1_count = counts_by_sunday.get(w1_str, 0)
+        w2_count = counts_by_sunday.get(w2_str, 0)
+
+        w1_payment = payment_lookup.get(w1_str, {
+            'week_start': w1_str, 'submitted': False, 'submitted_at': None, 'activities_reported': None
+        })
+        w2_payment = payment_lookup.get(w2_str, {
+            'week_start': w2_str, 'submitted': False, 'submitted_at': None, 'activities_reported': None
+        })
+
+        periods.append({
+            'week1': {
+                'start': w1_str,
+                'end': week1_end.strftime("%Y-%m-%d"),
+                'display': f"{week1_start.strftime('%b %d')} - {week1_end.strftime('%b %d, %Y')}",
+                'activity_count': w1_count,
+                'is_complete': w1_count >= 3,
+                'payment': w1_payment,
+            },
+            'week2': {
+                'start': w2_str,
+                'end': week2_end.strftime("%Y-%m-%d"),
+                'display': f"{week2_start.strftime('%b %d')} - {week2_end.strftime('%b %d, %Y')}",
+                'activity_count': w2_count,
+                'is_complete': w2_count >= 3,
+                'payment': w2_payment,
+            },
+            'total_activities': w1_count + w2_count,
+            'period_display': f"{week1_start.strftime('%b %d')} - {week2_end.strftime('%b %d, %Y')}",
+        })
+
+        period_start += timedelta(days=14)
+
+    # Return newest first
+    periods.reverse()
+    return periods
 
 
 # Corpus data assembly operations

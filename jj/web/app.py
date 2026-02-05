@@ -20,6 +20,7 @@ from jj.db import (
     # TWC functions
     get_twc_week_boundaries, get_twc_activities_for_week, get_twc_week_summary,
     update_twc_fields, backfill_activity_dates, get_twc_activity_types, get_twc_result_types,
+    get_twc_claim_period, mark_twc_payment_submitted, get_all_twc_claim_periods,
     # Email pairing functions
     get_pairing_stats, get_applications_with_pairing_status, get_application_timeline,
 )
@@ -49,7 +50,7 @@ def parse_tags(value):
         if isinstance(value, str):
             return json.loads(value)
         return value
-    except:
+    except (json.JSONDecodeError, TypeError, ValueError):
         return []
 
 templates.env.filters["parse_tags"] = parse_tags
@@ -1021,31 +1022,36 @@ async def sse_events():
 # --------------------------------------------------------------------------
 
 @app.get("/twc", response_class=HTMLResponse)
-async def twc_page(request: Request, week: str = None):
-    """TWC Work Search Activity Log page."""
+async def twc_page(request: Request):
+    """TWC Work Search Activity Log - all claim periods."""
+    claim_periods = get_all_twc_claim_periods()
+    return templates.TemplateResponse("twc.html", {
+        "request": request,
+        "claim_periods": claim_periods,
+    })
+
+
+@app.get("/twc/week/{week_start}", response_class=HTMLResponse)
+async def twc_week_detail(request: Request, week_start: str):
+    """TWC weekly detail view - activities by day with edit forms."""
     from datetime import datetime, timedelta
 
-    # Get week boundaries
-    sunday, saturday = get_twc_week_boundaries(week)
+    sunday, saturday = get_twc_week_boundaries(week_start)
+    week_start_dt = datetime.strptime(sunday, "%Y-%m-%d")
 
-    # Parse dates for navigation
-    week_start = datetime.strptime(sunday, "%Y-%m-%d")
-    prev_week = (week_start - timedelta(days=7)).strftime("%Y-%m-%d")
-    next_week = (week_start + timedelta(days=7)).strftime("%Y-%m-%d")
+    prev_week = (week_start_dt - timedelta(days=7)).strftime("%Y-%m-%d")
+    next_week = (week_start_dt + timedelta(days=7)).strftime("%Y-%m-%d")
 
-    # Check if next week is in the future
     today = datetime.now()
-    is_current_week = week_start <= today <= (week_start + timedelta(days=6))
-    is_future_week = week_start > today
+    is_current_week = week_start_dt <= today <= (week_start_dt + timedelta(days=6))
+    is_future_week = week_start_dt > today
 
-    # Get activities and summary
-    activities = get_twc_activities_for_week(week)
-    summary = get_twc_week_summary(week)
+    activities = get_twc_activities_for_week(sunday)
+    summary = get_twc_week_summary(sunday)
 
-    # Group activities by day for display
     days_of_week = []
     for i in range(7):
-        day_date = week_start + timedelta(days=i)
+        day_date = week_start_dt + timedelta(days=i)
         day_str = day_date.strftime("%Y-%m-%d")
         day_activities = [a for a in activities if (a.get('effective_date') or a.get('activity_date', '')[:10]) == day_str]
         days_of_week.append({
@@ -1055,11 +1061,11 @@ async def twc_page(request: Request, week: str = None):
             'activities': day_activities,
         })
 
-    return templates.TemplateResponse("twc.html", {
+    return templates.TemplateResponse("twc_detail.html", {
         "request": request,
         "week_start": sunday,
         "week_end": saturday,
-        "week_display": f"{week_start.strftime('%b %d')} - {datetime.strptime(saturday, '%Y-%m-%d').strftime('%b %d, %Y')}",
+        "week_display": f"{week_start_dt.strftime('%b %d')} - {datetime.strptime(saturday, '%Y-%m-%d').strftime('%b %d, %Y')}",
         "prev_week": prev_week,
         "next_week": next_week,
         "is_current_week": is_current_week,
@@ -1204,6 +1210,16 @@ async def api_twc_backfill():
 async def api_twc_summary(week: str = None):
     """Get TWC week summary as JSON."""
     return get_twc_week_summary(week)
+
+
+@app.post("/api/twc/payment/{week_start}")
+async def api_twc_payment(week_start: str, request: Request):
+    """Toggle TWC payment request submission status for a week."""
+    form = await request.form()
+    submitted = form.get("submitted") == "true"
+    summary = get_twc_week_summary(week_start)
+    mark_twc_payment_submitted(week_start, submitted, summary['total_activities'])
+    return {"ok": True, "submitted": submitted}
 
 
 # --------------------------------------------------------------------------
