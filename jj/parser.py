@@ -336,7 +336,7 @@ def generate_corpus_md() -> None:
                     import json
                     try:
                         tags = json.loads(tags)
-                    except:
+                    except (json.JSONDecodeError, TypeError):
                         tags = []
                 if tags:
                     lines.append(f"_Tags: {', '.join(tags)}_")

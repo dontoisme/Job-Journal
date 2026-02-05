@@ -21,8 +21,24 @@ from typing import Any, Optional
 import tempfile
 
 
-# Default template path
-DEFAULT_TEMPLATE = Path.home() / ".job-journal" / "templates" / "_Don Hogan - Principal Product Manager - Resume.docx"
+# Default template path - resolved from config or fallback to generic name
+def _get_default_template() -> Path:
+    """Resolve the default template path from config or convention."""
+    from jj.config import JJ_HOME, load_config, get_full_name
+    config = load_config()
+    template_rel = config.get("resume", {}).get("template", "")
+    if template_rel:
+        candidate = JJ_HOME / template_rel
+        if candidate.exists():
+            return candidate
+    # Fallback: first .docx in templates directory
+    templates_dir = JJ_HOME / "templates"
+    if templates_dir.exists():
+        docx_files = sorted(templates_dir.glob("*.docx"))
+        if docx_files:
+            return docx_files[0]
+    return JJ_HOME / "templates" / "resume-template.docx"
+
 OUTPUT_DIR = Path.home() / "Documents" / "Resumes"
 
 
@@ -107,7 +123,7 @@ def generate_resume(
     Returns:
         Path to generated resume
     """
-    template = template_path or DEFAULT_TEMPLATE
+    template = template_path or _get_default_template()
 
     if not template.exists():
         raise FileNotFoundError(f"Template not found: {template}")
@@ -116,7 +132,12 @@ def generate_resume(
     if output_name:
         output_path = OUTPUT_DIR / output_name
     else:
-        output_path = OUTPUT_DIR / f"Don Hogan - {position} - {company} - Resume.docx"
+        from jj.config import get_full_name, load_config
+        name = get_full_name() or "Resume"
+        config = load_config()
+        pattern = config.get("output", {}).get("naming_pattern", "{name} - {title} - {company} - Resume")
+        filename = pattern.format(name=name, title=position, company=company) + ".docx"
+        output_path = OUTPUT_DIR / filename
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -193,7 +214,7 @@ def select_entries_for_variant(
             if isinstance(tags, str):
                 try:
                     tags = json.loads(tags)
-                except:
+                except (json.JSONDecodeError, TypeError):
                     tags = []
 
             selected.append(SelectedEntry(

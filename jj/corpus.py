@@ -363,7 +363,7 @@ def search_corpus(
                 import json
                 try:
                     entry_tags = json.loads(entry_tags)
-                except:
+                except (json.JSONDecodeError, TypeError):
                     entry_tags = []
             if not any(tag in entry_tags for tag in tags):
                 continue

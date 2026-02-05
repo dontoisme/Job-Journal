@@ -37,9 +37,13 @@ Thumbs.db
 
 # Project specific
 *.db
+*.sqlite
 
 # Private/user-specific
 /templates/
 .claude/
 claude/
 firebase-debug.log
+
+# Generated docs (keep templates, exclude output)
+EXECUTIVE_SUMMARY.md

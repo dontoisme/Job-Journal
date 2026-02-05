@@ -188,8 +188,8 @@ def parse_filename_metadata(filename: str) -> dict[str, Optional[str]]:
     Extract metadata from resume filename.
 
     Expected patterns:
-    - "Don Hogan - Principal PM - Company - Resume.docx"
-    - "Don Hogan - Growth PM - 2025.pdf"
+    - "Jane Smith - Principal PM - Company - Resume.docx"
+    - "Jane Smith - Growth PM - 2025.pdf"
     - "Resume - CompanyName.pdf"
     """
     metadata = {

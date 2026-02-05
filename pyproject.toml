@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
-    { name = "Don Hogan", email = "don.r.hogan@gmail.com" }
+    { name = "Don Hogan" }
 ]
 keywords = ["resume", "job-search", "career", "cli"]
 classifiers = [
