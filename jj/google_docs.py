@@ -123,7 +123,7 @@ def format_date_range(start_date: Optional[str], end_date: Optional[str], is_cur
 
 def assemble_template_data(
     variant: str = "general",
-    max_roles: int = 4,
+    max_roles: int = 5,
     max_bullets_per_role: int = 6,
 ) -> ResumeTemplateData:
     """Assemble all data needed to populate a resume template from the corpus.
@@ -379,7 +379,7 @@ def generate_resume_from_corpus(
     variant: str = "general",
     custom_summary: Optional[str] = None,
     skill_categories: Optional[list[str]] = None,
-    max_roles: int = 4,
+    max_roles: int = 5,
     max_bullets_per_role: int = 6,
     template_id: Optional[str] = None,
     output_dir: Optional[Path] = None,
@@ -776,10 +776,13 @@ class GoogleDocsClient:
                 text += elem.get("textRun", {}).get("content", "")
 
             stripped = text.strip()
+            is_list_item = "bullet" in para
 
-            # Delete paragraphs that are just commas (from empty "Company, Location")
-            # or completely empty/whitespace-only
-            if stripped in ("", ","):
+            # Only delete artifacts from empty role slots, not intentional spacing:
+            # - Comma-only lines (from empty "{{COMPANY}}, {{LOCATION}}")
+            # - Empty bullet list items (from empty "{{BULLET_N}}")
+            # Intentional blank lines (non-list, no comma) are preserved.
+            if stripped == "," or (stripped == "" and is_list_item):
                 start = element["startIndex"]
                 end = element["endIndex"]
                 delete_ranges.append((start, end))
@@ -809,13 +812,29 @@ class GoogleDocsClient:
                 }
             })
 
-        if requests:
+        if not requests:
+            return 0
+
+        # Try batch delete; if it fails, fall back to one-at-a-time
+        try:
             self.docs_service.documents().batchUpdate(
                 documentId=doc_id,
                 body={"requests": requests},
             ).execute()
-
-        return len(requests)
+            return len(requests)
+        except Exception:
+            # Some ranges may span structural boundaries — delete individually
+            deleted = 0
+            for req in requests:
+                try:
+                    self.docs_service.documents().batchUpdate(
+                        documentId=doc_id,
+                        body={"requests": [req]},
+                    ).execute()
+                    deleted += 1
+                except Exception:
+                    pass  # Skip invalid ranges
+            return deleted
 
     def export_pdf(self, doc_id: str, output_path: Path) -> Path:
         """Export a document as PDF.
