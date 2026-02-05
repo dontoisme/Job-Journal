@@ -285,6 +285,72 @@ class GmailClient:
             metadataHeaders=["From", "Subject", "Date"]
         ).execute()
 
+    def get_message_body(self, message_id: str) -> tuple[dict, str]:
+        """Get message with full body text.
+
+        Returns:
+            Tuple of (headers dict, body text)
+        """
+        if not self.service:
+            self.authenticate()
+
+        message = self.service.users().messages().get(
+            userId="me",
+            id=message_id,
+            format="full"
+        ).execute()
+
+        # Extract headers
+        headers = {}
+        for header in message.get("payload", {}).get("headers", []):
+            headers[header["name"]] = header["value"]
+
+        # Extract body
+        payload = message.get("payload", {})
+        body = self._extract_body(payload)
+
+        return headers, body
+
+    def _extract_body(self, payload: dict) -> str:
+        """Extract text body from message payload."""
+        parts = payload.get("parts", [])
+
+        if parts:
+            # Multipart message - look for text/plain first
+            for part in parts:
+                mime_type = part.get("mimeType", "")
+                if mime_type == "text/plain":
+                    data = part.get("body", {}).get("data", "")
+                    if data:
+                        return base64.urlsafe_b64decode(data).decode("utf-8")
+                # Recursively check nested parts
+                if part.get("parts"):
+                    nested = self._extract_body(part)
+                    if nested:
+                        return nested
+            # Fallback to text/html if no plain text
+            for part in parts:
+                if part.get("mimeType") == "text/html":
+                    data = part.get("body", {}).get("data", "")
+                    if data:
+                        html = base64.urlsafe_b64decode(data).decode("utf-8")
+                        # Basic HTML to text conversion
+                        import re
+                        text = re.sub(r'<br\s*/?>', '\n', html)
+                        text = re.sub(r'<[^>]+>', '', text)
+                        text = re.sub(r'&nbsp;', ' ', text)
+                        text = re.sub(r'&amp;', '&', text)
+                        text = re.sub(r'&lt;', '<', text)
+                        text = re.sub(r'&gt;', '>', text)
+                        return text.strip()
+        else:
+            # Simple message
+            data = payload.get("body", {}).get("data", "")
+            if data:
+                return base64.urlsafe_b64decode(data).decode("utf-8")
+
+        return ""
+
     def _parse_message(self, msg: dict) -> EmailMatch:
         """Parse Gmail message into EmailMatch."""
         headers = {h["name"]: h["value"] for h in msg["payload"]["headers"]}
@@ -701,6 +767,41 @@ def search_company_emails(company: str, max_results: int = 10) -> list[EmailMatc
         results.append(email_match)
 
     return results
+
+
+@dataclass
+class EmailContent:
+    """Full email content including body."""
+    message_id: str
+    subject: str
+    sender: str
+    date: str
+    body: str
+    gmail_link: str
+
+
+def read_email(message_id: str) -> EmailContent:
+    """Read full email content by message ID.
+
+    Args:
+        message_id: Gmail message ID (from EmailMatch or URL)
+
+    Returns:
+        EmailContent with full body text
+    """
+    client = GmailClient()
+    client.authenticate()
+
+    headers, body = client.get_message_body(message_id)
+
+    return EmailContent(
+        message_id=message_id,
+        subject=headers.get("Subject", ""),
+        sender=headers.get("From", ""),
+        date=headers.get("Date", ""),
+        body=body,
+        gmail_link=f"https://mail.google.com/mail/u/0/#inbox/{message_id}"
+    )
 
 
 # Email Pairing Functions

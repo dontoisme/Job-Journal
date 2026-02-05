@@ -1567,6 +1567,62 @@ def email_test(
         console.print()
 
 
+@email_app.command("read")
+def email_read(
+    message_id: str = typer.Argument(..., help="Gmail message ID or full Gmail URL"),
+):
+    """Read the full body of an email.
+
+    Pass either the message ID or the full Gmail URL.
+
+    Examples:
+        jj email read 19c2ec3d55489ee9
+        jj email read "https://mail.google.com/mail/u/0/#inbox/19c2ec3d55489ee9"
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    try:
+        from jj.gmail_checker import read_email
+    except ImportError as e:
+        console.print("[red]Gmail dependencies not installed.[/red]")
+        console.print("Install with: [cyan]pip install google-api-python-client google-auth-oauthlib[/cyan]")
+        raise typer.Exit(1)
+
+    # Extract message ID from URL if needed
+    if "mail.google.com" in message_id:
+        # Extract ID from URL like https://mail.google.com/mail/u/0/#inbox/19c2ec3d55489ee9
+        import re
+        match = re.search(r'#(?:inbox|all|sent)/([a-f0-9]+)', message_id)
+        if match:
+            message_id = match.group(1)
+        else:
+            console.print("[red]Could not extract message ID from URL.[/red]")
+            raise typer.Exit(1)
+
+    try:
+        email = read_email(message_id)
+    except FileNotFoundError as e:
+        console.print(f"[red]{e}[/red]")
+        console.print("\nRun [cyan]jj email setup[/cyan] first.")
+        raise typer.Exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)
+
+    # Display email
+    console.print(f"[bold]From:[/bold] {email.sender}")
+    console.print(f"[bold]Date:[/bold] {email.date}")
+    console.print(f"[bold]Subject:[/bold] {email.subject}")
+    console.print(f"[bold]Link:[/bold] [link={email.gmail_link}]{email.gmail_link}[/link]")
+    console.print()
+    console.print("[bold]Body:[/bold]")
+    console.print("─" * 60)
+    console.print(email.body.strip())
+    console.print("─" * 60)
+
+
 @email_app.command("pair")
 def email_pair(
     app_id: Optional[int] = typer.Option(None, "--app-id", "-a", help="Sync specific application only"),

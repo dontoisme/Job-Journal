@@ -20,7 +20,30 @@ Or search your target companies:
 
 Review what's new. For interesting roles, add as prospects.
 
-### 2. Review Active Applications
+### 2. Check Email for Updates
+
+```bash
+python -m jj.cli email updates
+```
+
+This scans Gmail for application-related emails and categorizes them:
+- **REJECTION** — Application closed
+- **ACTION** — Form to complete, interview to schedule
+- **UPDATE** — Status change, check the email
+
+For each update, decide:
+- Update application status in database
+- Follow up if action required
+- Archive if just a confirmation
+
+Other email commands:
+```bash
+python -m jj.cli email sync      # Full sync (verify + updates)
+python -m jj.cli email verify    # Check for missing confirmations
+python -m jj.cli email report    # Show email pairing status
+```
+
+### 3. Review Active Applications
 
 ```
 /track
@@ -31,7 +54,7 @@ Check statuses:
 - Any interviews to prep for?
 - Any rejections to process?
 
-### 3. Update Application Statuses
+### 4. Update Application Statuses
 
 When you get emails:
 - "We'd like to schedule a call" → `recruiter_screen`
@@ -135,6 +158,7 @@ create_application_from_prospect(prospect_id, resume_id)
 
 | I want to... | Command |
 |--------------|---------|
+| Check for email updates | `python -m jj.cli email updates` |
 | Find new jobs | `/greenhouse` or `/hunt` |
 | See my prospects | `/jobs` |
 | Make a resume | `/resume-workflow [company] [role]` |
