@@ -78,7 +78,7 @@ class ResumeTemplateData:
 
 
 # Month abbreviations for date formatting
-MONTH_ABBREV = {
+MONTH_NAMES = {
     "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr",
     "05": "May", "06": "Jun", "07": "Jul", "08": "Aug",
     "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec",
@@ -102,7 +102,7 @@ def format_date_range(start_date: Optional[str], end_date: Optional[str], is_cur
         parts = date_str.split("-")
         if len(parts) >= 2:
             year = parts[0]
-            month = MONTH_ABBREV.get(parts[1], parts[1])
+            month = MONTH_NAMES.get(parts[1], parts[1])
             return f"{month} {year}"
         return date_str
 
@@ -263,6 +263,10 @@ def build_replacement_dict(
             replacements[f"{role_prefix}DATES}}}}"] = ""
             for bullet_num in range(1, max_bullets + 1):
                 replacements[f"{role_prefix}BULLET_{bullet_num}}}}}"] = ""
+
+    # Section headers (conditionally shown based on whether roles are populated)
+    # AI Consulting section only shown when Role 6 is populated
+    replacements["{{SECTION_CONSULTING}}"] = "AI Consulting" if len(data.roles) >= 6 else ""
 
     # Skills placeholders - named categories (legacy)
     legacy_categories = ["technical", "domain", "leadership", "tools"]
@@ -472,6 +476,9 @@ def generate_resume_from_corpus(
 
         # Make replacements
         replacements_made = client.replace_text(doc_id, replacements)
+
+        # Clean up empty sections from unused role slots
+        client.cleanup_empty_sections(doc_id)
 
         # Bold skill category names (formatting isn't preserved through replacement)
         _bold_skill_categories(client, doc_id)
@@ -734,6 +741,81 @@ class GoogleDocsClient:
             total_replacements += replace_result.get("occurrencesChanged", 0)
 
         return total_replacements
+
+    def cleanup_empty_sections(self, doc_id: str) -> int:
+        """Remove empty role artifacts left after placeholder replacement.
+
+        When roles 5-6 are unused, replacing their placeholders with empty
+        strings leaves behind commas, empty bullets, and blank lines.
+        This method reads the document and deletes those empty paragraphs.
+
+        Args:
+            doc_id: The document ID to clean up
+
+        Returns:
+            Number of paragraphs deleted
+        """
+        self._ensure_authenticated()
+
+        doc = self.docs_service.documents().get(documentId=doc_id).execute()
+        body = doc.get("body", {})
+        content = body.get("content", [])
+
+        # Find the body's end index (the trailing newline we can't delete)
+        body_end = content[-1]["endIndex"] if content else 0
+
+        # Collect paragraph ranges to delete (must delete in reverse order)
+        delete_ranges = []
+        for element in content:
+            if "paragraph" not in element:
+                continue
+
+            para = element["paragraph"]
+            text = ""
+            for elem in para.get("elements", []):
+                text += elem.get("textRun", {}).get("content", "")
+
+            stripped = text.strip()
+
+            # Delete paragraphs that are just commas (from empty "Company, Location")
+            # or completely empty/whitespace-only
+            if stripped in ("", ","):
+                start = element["startIndex"]
+                end = element["endIndex"]
+                delete_ranges.append((start, end))
+
+        if not delete_ranges:
+            return 0
+
+        # Delete in reverse order so indices don't shift
+        delete_ranges.sort(key=lambda r: r[0], reverse=True)
+
+        requests = []
+        for start, end in delete_ranges:
+            # Don't delete the very first element (index 0-1 is the doc body start)
+            if start < 2:
+                continue
+            # Can't delete the body's final newline — shrink range by 1
+            if end >= body_end:
+                end = body_end - 1
+                if end <= start:
+                    continue
+            requests.append({
+                "deleteContentRange": {
+                    "range": {
+                        "startIndex": start,
+                        "endIndex": end,
+                    }
+                }
+            })
+
+        if requests:
+            self.docs_service.documents().batchUpdate(
+                documentId=doc_id,
+                body={"requests": requests},
+            ).execute()
+
+        return len(requests)
 
     def export_pdf(self, doc_id: str, output_path: Path) -> Path:
         """Export a document as PDF.
