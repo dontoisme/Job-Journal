@@ -57,6 +57,17 @@ class ResumeGenerationResult:
 
 
 @dataclass
+class CoverLetterGenerationResult:
+    """Result of generating a cover letter via Google Docs."""
+    success: bool
+    doc_id: Optional[str] = None
+    doc_url: Optional[str] = None
+    pdf_path: Optional[Path] = None
+    error: Optional[str] = None
+    cover_letter_id: Optional[int] = None
+
+
+@dataclass
 class RoleData:
     """Data for a single role in a resume template."""
     role_id: int
@@ -188,6 +199,7 @@ def build_replacement_dict(
     company: str,
     position: str,
     skill_categories: Optional[list[str]] = None,
+    custom_skills: Optional[dict[str, list[str]]] = None,
 ) -> dict[str, str]:
     """Build the replacement dictionary for template placeholders.
 
@@ -198,6 +210,9 @@ def build_replacement_dict(
         skill_categories: Optional ordered list of skill category keys to include.
                          If provided, only these categories are used, in this order.
                          Example: ["product-management", "technical", "leadership"]
+        custom_skills: Optional dict mapping display names to skill lists.
+                      Bypasses DB skills entirely when provided.
+                      Example: {"AI & Orchestration": ["Agentic AI", "Multi-Agent Systems"]}
 
     Returns:
         Dictionary mapping placeholder strings to replacement values
@@ -277,31 +292,40 @@ def build_replacement_dict(
 
     # Skills placeholders - numbered categories (flexible template support)
     # Supports multiple formats: {{skills_category1}}, {{skill_category1}}, etc.
-    # Use custom order if provided, otherwise use all categories in dict order
-    if skill_categories:
-        # Filter to only categories that exist in the data
-        ordered_categories = [c for c in skill_categories if c in data.skills_by_category]
+    # Priority: custom_skills > skill_categories > default DB order
+    if custom_skills:
+        # Use fully custom skills (display name → skill list)
+        skill_items = list(custom_skills.items())
+        for i, (display_name, skills_list) in enumerate(skill_items[:5], start=1):
+            skills_str = ", ".join(skills_list)
+            replacements[f"{{{{skills_category{i}}}}}"] = display_name
+            replacements[f"{{{{skills_list{i}}}}}"] = skills_str
+            replacements[f"{{{{skill_category{i}}}}}"] = display_name
+            replacements[f"{{{{skill_list{i}}}}}"] = skills_str
+            replacements[f"{{{{SKILLS_CATEGORY{i}}}}}"] = display_name
+            replacements[f"{{{{SKILLS_LIST{i}}}}}"] = skills_str
+        filled = len(skill_items)
     else:
-        ordered_categories = list(data.skills_by_category.keys())
+        # Use DB skills with optional category ordering
+        if skill_categories:
+            ordered_categories = [c for c in skill_categories if c in data.skills_by_category]
+        else:
+            ordered_categories = list(data.skills_by_category.keys())
 
-    for i, cat in enumerate(ordered_categories[:5], start=1):
-        # Format category name nicely (replace hyphens/underscores with spaces, title case)
-        display_name = cat.replace("-", " ").replace("_", " ").title()
-        skills_list = data.skills_by_category.get(cat, [])
-        skills_str = ", ".join(skills_list)
+        for i, cat in enumerate(ordered_categories[:5], start=1):
+            display_name = cat.replace("-", " ").replace("_", " ").title()
+            skills_list = data.skills_by_category.get(cat, [])
+            skills_str = ", ".join(skills_list)
+            replacements[f"{{{{skills_category{i}}}}}"] = display_name
+            replacements[f"{{{{skills_list{i}}}}}"] = skills_str
+            replacements[f"{{{{skill_category{i}}}}}"] = display_name
+            replacements[f"{{{{skill_list{i}}}}}"] = skills_str
+            replacements[f"{{{{SKILLS_CATEGORY{i}}}}}"] = display_name
+            replacements[f"{{{{SKILLS_LIST{i}}}}}"] = skills_str
+        filled = len(ordered_categories)
 
-        # With underscore (skills_category1, skills_list1)
-        replacements[f"{{{{skills_category{i}}}}}"] = display_name
-        replacements[f"{{{{skills_list{i}}}}}"] = skills_str
-        # Without underscore (skill_category1, skill_list1)
-        replacements[f"{{{{skill_category{i}}}}}"] = display_name
-        replacements[f"{{{{skill_list{i}}}}}"] = skills_str
-        # Uppercase versions
-        replacements[f"{{{{SKILLS_CATEGORY{i}}}}}"] = display_name
-        replacements[f"{{{{SKILLS_LIST{i}}}}}"] = skills_str
-
-    # Fill empty slots if fewer than 5 categories
-    for i in range(len(ordered_categories) + 1, 6):
+    # Fill empty slots
+    for i in range(filled + 1, 6):
         replacements[f"{{{{skills_category{i}}}}}"] = ""
         replacements[f"{{{{skills_list{i}}}}}"] = ""
         replacements[f"{{{{skill_category{i}}}}}"] = ""
@@ -379,6 +403,8 @@ def generate_resume_from_corpus(
     variant: str = "general",
     custom_summary: Optional[str] = None,
     skill_categories: Optional[list[str]] = None,
+    custom_skills: Optional[dict[str, list[str]]] = None,
+    role_bullets: Optional[dict[str, list[str]]] = None,
     max_roles: int = 5,
     max_bullets_per_role: int = 6,
     template_id: Optional[str] = None,
@@ -403,6 +429,13 @@ def generate_resume_from_corpus(
         skill_categories: Ordered list of skill category keys to include (e.g.,
                          ["product-management", "technical", "leadership"]).
                          If None, uses all categories in default order.
+        custom_skills: Custom skills section. Dict mapping display names to skill
+                      lists, bypassing DB skills entirely. Example:
+                      {"AI & Orchestration": ["Agentic AI", "Multi-Agent Systems"]}
+        role_bullets: Custom bullet selection per role. Dict mapping company name
+                     to ordered list of bullet texts. Each bullet is matched against
+                     corpus entries by prefix. Overrides auto-selection for matched
+                     roles. Example: {"ZenBusiness, Inc.": ["Integrated AI...", ...]}
         max_roles: Maximum number of roles to include
         max_bullets_per_role: Maximum bullets per role
         template_id: Google Docs template ID (uses config default if not provided)
@@ -417,6 +450,7 @@ def generate_resume_from_corpus(
         create_resume,
         create_resume_entry,
         create_resume_section,
+        get_connection,
         increment_entry_usage,
         find_entry_by_text,
     )
@@ -446,8 +480,30 @@ def generate_resume_from_corpus(
     except Exception as e:
         return ResumeGenerationResult(success=False, error=f"Error assembling corpus data: {e}")
 
+    # Override bullets per role if custom selection provided
+    if role_bullets:
+        with get_connection() as conn:
+            for role in data.roles:
+                if role.company not in role_bullets:
+                    continue
+                custom_texts = role_bullets[role.company]
+                new_bullets = []
+                new_entry_ids = []
+                for bullet_text in custom_texts:
+                    # Match by prefix (first 60 chars) against entries for this role
+                    prefix = bullet_text[:60]
+                    row = conn.execute(
+                        "SELECT id, text FROM entries WHERE text LIKE ? AND role_id = ?",
+                        (prefix + "%", role.role_id),
+                    ).fetchone()
+                    if row:
+                        new_bullets.append(row["text"])
+                        new_entry_ids.append(row["id"])
+                role.bullets = new_bullets
+                role.entry_ids = new_entry_ids
+
     # Build replacement dictionary
-    replacements = build_replacement_dict(data, company, position, skill_categories)
+    replacements = build_replacement_dict(data, company, position, skill_categories, custom_skills)
 
     # Override summary if custom_summary provided
     if custom_summary:
@@ -551,6 +607,197 @@ def generate_resume_from_corpus(
         return ResumeGenerationResult(success=False, error=str(e))
     except Exception as e:
         return ResumeGenerationResult(success=False, error=f"API error: {e}")
+
+
+def generate_cover_letter(
+    company: str,
+    position: str,
+    paragraphs: list[str],
+    interest_id: Optional[int] = None,
+    output_dir: Optional[Path] = None,
+    auto_open: bool = True,
+    keep_google_doc: bool = True,
+) -> CoverLetterGenerationResult:
+    """Generate a cover letter as a Google Doc and export to PDF.
+
+    Unlike resume generation (template-based), cover letters are created as
+    fresh Google Docs with formatted content composed by the caller.
+
+    Args:
+        company: Target company name
+        position: Target position title
+        paragraphs: List of 3-4 paragraph strings for the letter body
+        interest_id: ID of the interest used as a hook (for tracking)
+        output_dir: Directory for PDF output (uses config default if not provided)
+        auto_open: Whether to open the PDF after generation
+        keep_google_doc: Whether to keep the Google Doc after export
+
+    Returns:
+        CoverLetterGenerationResult with details of the operation
+    """
+    from jj.db import create_cover_letter, increment_interest_usage
+
+    config = get_gdocs_config()
+
+    if output_dir is None:
+        output_dir_str = config.get("pdf_output_dir", "~/Documents/Resumes")
+        output_dir = Path(output_dir_str).expanduser()
+
+    # Load profile for header
+    profile = load_profile()
+    name_data = profile.get("name", {})
+    full_name = f"{name_data.get('first', '')} {name_data.get('last', '')}".strip()
+    contact = profile.get("contact", {})
+    email = contact.get("email", "")
+    phone = contact.get("phone", "")
+    location = contact.get("location", "")
+    links = profile.get("links", {})
+    linkedin = links.get("linkedin", "")
+
+    # Build the cover letter text
+    date_str = datetime.now().strftime("%B %d, %Y")
+
+    lines = [
+        full_name,
+        f"{email} | {phone} | {location}",
+        linkedin,
+        "",
+        date_str,
+        "",
+        "Dear Hiring Team,",
+        "",
+    ]
+
+    for i, para in enumerate(paragraphs):
+        lines.append(para)
+        if i < len(paragraphs) - 1:
+            lines.append("")
+
+    lines.extend(["", "Best,", full_name])
+
+    full_text = "\n".join(lines)
+
+    # Build filenames
+    pdf_filename = f"{full_name} - {position} - {company} - Cover Letter.pdf"
+    pdf_path = output_dir / pdf_filename
+    timestamp = datetime.now().strftime("%Y%m%d")
+    doc_title = f"{full_name} - {position} - {company} - Cover Letter - {timestamp}"
+
+    try:
+        client = GoogleDocsClient()
+        client.authenticate()
+
+        # Create fresh document and insert text
+        doc_id = client.create_document(doc_title)
+        doc_url = client.get_document_url(doc_id)
+        client.insert_text(doc_id, full_text)
+
+        # Apply formatting
+        # Calculate character ranges from the known text structure
+        name_end = len(full_name) + 1  # +1 for newline
+        contact_line = f"{email} | {phone} | {location}"
+        contact_end = name_end + len(contact_line) + 1
+        linkedin_end = contact_end + len(linkedin) + 1
+        # Total text length (index 1 is the start in Google Docs)
+        text_len = len(full_text)
+
+        formatting_requests = [
+            # Set entire document font (Garamond, 11pt)
+            {
+                "updateTextStyle": {
+                    "range": {"startIndex": 1, "endIndex": 1 + text_len},
+                    "textStyle": {
+                        "weightedFontFamily": {"fontFamily": "Garamond"},
+                        "fontSize": {"magnitude": 11, "unit": "PT"},
+                    },
+                    "fields": "weightedFontFamily,fontSize",
+                }
+            },
+            # Name: 14pt bold
+            {
+                "updateTextStyle": {
+                    "range": {"startIndex": 1, "endIndex": 1 + len(full_name)},
+                    "textStyle": {
+                        "bold": True,
+                        "fontSize": {"magnitude": 14, "unit": "PT"},
+                    },
+                    "fields": "bold,fontSize",
+                }
+            },
+            # Contact line: 10pt
+            {
+                "updateTextStyle": {
+                    "range": {"startIndex": 1 + name_end, "endIndex": 1 + contact_end - 1},
+                    "textStyle": {
+                        "fontSize": {"magnitude": 10, "unit": "PT"},
+                    },
+                    "fields": "fontSize",
+                }
+            },
+            # LinkedIn: 10pt
+            {
+                "updateTextStyle": {
+                    "range": {"startIndex": 1 + contact_end, "endIndex": 1 + linkedin_end - 1},
+                    "textStyle": {
+                        "fontSize": {"magnitude": 10, "unit": "PT"},
+                    },
+                    "fields": "fontSize",
+                }
+            },
+            # Line spacing for entire doc: 1.15
+            {
+                "updateParagraphStyle": {
+                    "range": {"startIndex": 1, "endIndex": 1 + text_len},
+                    "paragraphStyle": {
+                        "lineSpacing": 115,
+                        "spaceBelow": {"magnitude": 6, "unit": "PT"},
+                    },
+                    "fields": "lineSpacing,spaceBelow",
+                }
+            },
+        ]
+
+        client.apply_formatting(doc_id, formatting_requests)
+
+        # Export PDF
+        client.export_pdf(doc_id, pdf_path)
+
+        # Optionally delete the Google Doc
+        final_doc_id = doc_id
+        final_doc_url = doc_url
+        if not keep_google_doc:
+            client.delete_document(doc_id)
+            final_doc_id = None
+            final_doc_url = None
+
+        # Track in database
+        cl_id = create_cover_letter(
+            filename=pdf_path.name,
+            filepath=str(pdf_path),
+            target_company=company,
+            target_role=position,
+            interest_id=interest_id,
+            google_doc_id=doc_id if keep_google_doc else None,
+        )
+
+        # Track interest usage
+        if interest_id:
+            increment_interest_usage(interest_id)
+
+        # Optionally open the PDF
+        if auto_open and pdf_path.exists():
+            open_file(pdf_path)
+
+        return CoverLetterGenerationResult(
+            success=True,
+            doc_id=final_doc_id,
+            doc_url=final_doc_url,
+            pdf_path=pdf_path,
+            cover_letter_id=cl_id,
+        )
+
+    except Exception as e:
+        return CoverLetterGenerationResult(success=False, error=f"API error: {e}")
 
 
 def get_all_placeholders() -> dict[str, list[str]]:
@@ -701,6 +948,36 @@ class GoogleDocsClient:
         ).execute()
 
         return result["id"]
+
+    def create_document(self, title: str) -> str:
+        """Create a new blank Google Doc and return its ID."""
+        self._ensure_authenticated()
+        doc = self.docs_service.documents().create(
+            body={"title": title}
+        ).execute()
+        return doc["documentId"]
+
+    def insert_text(self, doc_id: str, text: str, index: int = 1) -> None:
+        """Insert text at a position in the document."""
+        self._ensure_authenticated()
+        self.docs_service.documents().batchUpdate(
+            documentId=doc_id,
+            body={"requests": [{
+                "insertText": {
+                    "location": {"index": index},
+                    "text": text,
+                }
+            }]},
+        ).execute()
+
+    def apply_formatting(self, doc_id: str, requests: list[dict]) -> None:
+        """Apply a batch of formatting requests to a document."""
+        self._ensure_authenticated()
+        if requests:
+            self.docs_service.documents().batchUpdate(
+                documentId=doc_id,
+                body={"requests": requests},
+            ).execute()
 
     def replace_text(self, doc_id: str, replacements: dict[str, str]) -> int:
         """Replace text placeholders in a document.

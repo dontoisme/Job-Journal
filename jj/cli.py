@@ -1912,6 +1912,93 @@ def app_timeline(
 
 
 # =============================================================================
+# Interests Commands
+# =============================================================================
+
+interests_app = typer.Typer(
+    name="interests",
+    help="Manage personal interests for cover letter hooks.",
+    no_args_is_help=True,
+)
+app.add_typer(interests_app, name="interests")
+
+
+@interests_app.command("list")
+def interests_list():
+    """List all personal interests and their cover letter hooks.
+
+    Examples:
+        jj interests list
+    """
+    from jj.db import get_interests
+    from rich.table import Table
+
+    interests = get_interests()
+    if not interests:
+        console.print("[dim]No interests yet. Add with:[/dim] jj interests add <topic>")
+        console.print("[dim]Or run:[/dim] /interview interests")
+        return
+
+    table = Table(title="Personal Interests")
+    table.add_column("ID", style="dim", width=4)
+    table.add_column("Topic", style="bold")
+    table.add_column("Tags", style="cyan")
+    table.add_column("Connection", max_width=50)
+    table.add_column("Used", justify="right", width=5)
+
+    for i in interests:
+        tags = i["tags"] if isinstance(i["tags"], str) else ""
+        # Parse JSON tags for display
+        try:
+            import json
+            tag_list = json.loads(tags) if tags else []
+            tags_display = ", ".join(tag_list)
+        except (json.JSONDecodeError, TypeError):
+            tags_display = tags
+
+        connection = i["connection"] or ""
+        if len(connection) > 50:
+            connection = connection[:47] + "..."
+
+        table.add_row(
+            str(i["id"]),
+            i["topic"],
+            tags_display,
+            connection,
+            str(i["times_used"]),
+        )
+
+    console.print(table)
+
+
+@interests_app.command("add")
+def interests_add(
+    topic: str = typer.Argument(..., help="Interest topic (e.g., 'rock climbing')"),
+    story: Optional[str] = typer.Option(None, "--story", "-s", help="2-3 sentence anecdote"),
+    tags: Optional[str] = typer.Option(None, "--tags", "-t", help="Comma-separated tags"),
+    connection: Optional[str] = typer.Option(None, "--connection", "-c", help="Professional bridge sentence"),
+):
+    """Add a personal interest for cover letter hooks.
+
+    Examples:
+        jj interests add "indie video games" -t "gaming,ai,interactive" -c "My love of emergent gameplay..."
+        jj interests add "rock climbing" --story "Started 5 years ago..." --tags "resilience,problem-solving"
+    """
+    from jj.db import create_interest
+
+    tag_list = [t.strip() for t in tags.split(",")] if tags else []
+    interest_id = create_interest(
+        topic=topic,
+        story=story,
+        tags=tag_list,
+        connection=connection,
+    )
+    console.print(f"[green]Interest #{interest_id} added:[/green] {topic}")
+    if tag_list:
+        console.print(f"  Tags: {', '.join(tag_list)}")
+
+
+# =============================================================================
 # Google Docs Commands
 # =============================================================================
 

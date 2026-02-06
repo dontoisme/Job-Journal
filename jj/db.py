@@ -360,6 +360,34 @@ CREATE TABLE IF NOT EXISTS twc_payment_requests (
     notes TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Personal interests for cover letter hooks
+CREATE TABLE IF NOT EXISTS interests (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic TEXT NOT NULL,
+    story TEXT,
+    tags TEXT,                          -- JSON array: ["gaming", "ai", "interactive"]
+    connection TEXT,                    -- Professional bridge sentence
+    times_used INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Generated cover letters
+CREATE TABLE IF NOT EXISTS cover_letters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    filename TEXT UNIQUE NOT NULL,
+    filepath TEXT,
+    target_company TEXT,
+    target_role TEXT,
+    interest_id INTEGER,
+    google_doc_id TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (interest_id) REFERENCES interests(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_interests_topic ON interests(topic);
+CREATE INDEX IF NOT EXISTS idx_cover_letters_company ON cover_letters(target_company);
 """
 
 
@@ -520,6 +548,34 @@ def migrate_database() -> None:
         );
         CREATE UNIQUE INDEX IF NOT EXISTS idx_companies_name_normalized ON companies(name_normalized);
         CREATE INDEX IF NOT EXISTS idx_companies_target ON companies(is_target, target_priority DESC);
+
+        -- Personal interests for cover letter hooks
+        CREATE TABLE IF NOT EXISTS interests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            topic TEXT NOT NULL,
+            story TEXT,
+            tags TEXT,
+            connection TEXT,
+            times_used INTEGER DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Generated cover letters
+        CREATE TABLE IF NOT EXISTS cover_letters (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT UNIQUE NOT NULL,
+            filepath TEXT,
+            target_company TEXT,
+            target_role TEXT,
+            interest_id INTEGER,
+            google_doc_id TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (interest_id) REFERENCES interests(id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_interests_topic ON interests(topic);
+        CREATE INDEX IF NOT EXISTS idx_cover_letters_company ON cover_letters(target_company);
         """
         conn.executescript(new_tables_sql)
         conn.commit()
@@ -1487,6 +1543,122 @@ def delete_resume_sections(resume_id: int) -> int:
         cursor.execute("DELETE FROM resume_sections WHERE resume_id = ?", (resume_id,))
         conn.commit()
         return cursor.rowcount
+
+
+# Interest operations (for cover letter hooks)
+
+def create_interest(
+    topic: str,
+    story: Optional[str] = None,
+    tags: Optional[list[str]] = None,
+    connection: Optional[str] = None,
+) -> int:
+    """Create an interest and return its ID."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO interests (topic, story, tags, connection)
+            VALUES (?, ?, ?, ?)
+            """,
+            (topic, story, json.dumps(tags or []), connection)
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_interests() -> list[dict[str, Any]]:
+    """Get all interests ordered by most used first."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM interests ORDER BY times_used DESC, topic")
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_interests_by_tags(tags: list[str]) -> list[dict[str, Any]]:
+    """Get interests matching any of the given tags (least used first for variety)."""
+    if not tags:
+        return []
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        conditions = " OR ".join(["tags LIKE ?" for _ in tags])
+        params = [f'%"{tag}"%' for tag in tags]
+        cursor.execute(
+            f"SELECT * FROM interests WHERE {conditions} ORDER BY times_used ASC, id",
+            params
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def update_interest(interest_id: int, **kwargs) -> bool:
+    """Update interest fields. Returns True if successful."""
+    if not kwargs:
+        return False
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if "tags" in kwargs and isinstance(kwargs["tags"], list):
+            kwargs["tags"] = json.dumps(kwargs["tags"])
+        set_clause = ", ".join(f"{k} = ?" for k in kwargs)
+        values = list(kwargs.values()) + [interest_id]
+        cursor.execute(
+            f"UPDATE interests SET {set_clause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            values,
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def increment_interest_usage(interest_id: int) -> bool:
+    """Increment times_used for an interest."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE interests SET times_used = times_used + 1, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (interest_id,),
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+# Cover letter operations
+
+def create_cover_letter(
+    filename: str,
+    filepath: Optional[str] = None,
+    target_company: Optional[str] = None,
+    target_role: Optional[str] = None,
+    interest_id: Optional[int] = None,
+    google_doc_id: Optional[str] = None,
+) -> int:
+    """Create a cover letter record and return its ID."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO cover_letters (filename, filepath, target_company, target_role, interest_id, google_doc_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (filename, filepath, target_company, target_role, interest_id, google_doc_id),
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_cover_letters(company: Optional[str] = None, limit: int = 50) -> list[dict[str, Any]]:
+    """Get cover letters, optionally filtered by company."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if company:
+            cursor.execute(
+                "SELECT * FROM cover_letters WHERE target_company = ? ORDER BY created_at DESC LIMIT ?",
+                (company, limit),
+            )
+        else:
+            cursor.execute(
+                "SELECT * FROM cover_letters ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+        return [dict(row) for row in cursor.fetchall()]
 
 
 # Corpus Suggestion operations
