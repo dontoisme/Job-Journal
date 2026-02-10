@@ -512,6 +512,18 @@ class GmailClient:
         snippet_lower = email.snippet.lower()
         combined = subject_lower + " " + snippet_lower
 
+        # Check for confirmation FIRST — ATS platforms (Lever, Greenhouse) often
+        # use "thank you for your interest" in confirmation emails alongside
+        # "we received your application", which would otherwise match rejection.
+        confirmation_signals = [
+            "thank you for applying", "application received",
+            "we received your", "thanks for applying", "application submitted",
+            "we received your application", "will review your application",
+            "delighted that you would consider",
+        ]
+        if any(sig in combined for sig in confirmation_signals):
+            return "confirmation"
+
         # Check for rejection signals (including soft rejection language)
         rejection_signals = [
             "unfortunately", "not moving forward", "other candidates",
@@ -542,14 +554,6 @@ class GmailClient:
         ]
         if any(sig in combined for sig in next_steps_signals):
             return "next_steps"
-
-        # Check for confirmation
-        confirmation_signals = [
-            "thank you for applying", "application received",
-            "we received your", "thanks for applying", "application submitted"
-        ]
-        if any(sig in combined for sig in confirmation_signals):
-            return "confirmation"
 
         # Check for generic application update (catch-all for recruiter emails)
         update_signals = [

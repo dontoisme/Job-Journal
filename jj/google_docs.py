@@ -124,6 +124,8 @@ def format_date_range(start_date: Optional[str], end_date: Optional[str], is_cur
         end = format_single(end_date)
 
     if start and end:
+        if start == end:
+            return start
         return f"{start} - {end}"
     elif start:
         return start
