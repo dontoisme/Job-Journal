@@ -45,5 +45,9 @@ Thumbs.db
 claude/
 firebase-debug.log
 
+# Pipeline output (ephemeral per-run data)
+jobs/*.json
+pipeline-log.md
+
 # Generated docs (keep templates, exclude output)
 EXECUTIVE_SUMMARY.md
