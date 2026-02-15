@@ -818,6 +818,7 @@ def serve(
     host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host to bind to"),
     reload: bool = typer.Option(False, "--reload", "-r", help="Enable auto-reload for development"),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="Open browser automatically"),
+    path: str = typer.Option("", "--path", help="Path to open in browser (e.g., /twc)"),
 ):
     """Start the Job Journal web dashboard."""
 
@@ -850,7 +851,7 @@ def serve(
         def open_browser_delayed():
             import time
             time.sleep(1)  # Wait for server to start
-            webbrowser.open(f"http://{host}:{port}")
+            webbrowser.open(f"http://{host}:{port}{path}")
 
         threading.Thread(target=open_browser_delayed, daemon=True).start()
 
