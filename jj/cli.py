@@ -2462,5 +2462,191 @@ def worker_run_task(
     run_task_now(task_type, payload=payload_dict)
 
 
+# =============================================================================
+# Investor Boards Sub-App
+# =============================================================================
+
+investor_app = typer.Typer(
+    name="investors",
+    help="Manage VC/investor portfolio job boards.",
+    no_args_is_help=True,
+)
+app.add_typer(investor_app, name="investors")
+
+
+@investor_app.command("seed")
+def investors_seed():
+    """Populate investor boards from curated seed data.
+
+    Upserts ~35 VC/PE/accelerator firms with verified board URLs.
+
+    Example:
+        jj investors seed
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    from jj.investor_boards_data import seed_investor_boards
+
+    results = seed_investor_boards()
+    console.print(
+        f"[green]Seeded investor boards:[/green] "
+        f"{results['created']} created, {results['skipped']} already existed"
+    )
+
+
+@investor_app.command("list")
+def investors_list(
+    all_boards: bool = typer.Option(False, "--all", "-a", help="Include inactive boards"),
+    talent: bool = typer.Option(False, "--talent", "-t", help="Show only boards with talent networks"),
+):
+    """List tracked investor/VC job boards.
+
+    Examples:
+        jj investors list              # Active boards
+        jj investors list --all        # Include inactive
+        jj investors list --talent     # Boards with talent networks
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    from jj.db import get_investor_boards
+    from rich.table import Table
+
+    boards = get_investor_boards(active_only=not all_boards)
+
+    if talent:
+        boards = [b for b in boards if b.get("has_talent_network")]
+
+    if not boards:
+        console.print("[yellow]No investor boards found. Run 'jj investors seed' first.[/yellow]")
+        return
+
+    table = Table(title="Investor Job Boards")
+    table.add_column("ID", style="dim", width=4)
+    table.add_column("Name", style="cyan")
+    table.add_column("Type", style="white", width=8)
+    table.add_column("Board URL", style="blue")
+    table.add_column("Jobs", justify="right", width=5)
+    table.add_column("Searched", style="dim")
+    if talent:
+        table.add_column("Talent Network", style="green")
+
+    for b in boards:
+        status = ""
+        if not b.get("is_active"):
+            status = " [dim](inactive)[/dim]"
+
+        last = b.get("last_searched_at", "never") or "never"
+        if last != "never":
+            last = last[:10]  # Just the date
+
+        row = [
+            str(b["id"]),
+            f"{b['name']}{status}",
+            b.get("board_type", "vc"),
+            b.get("board_url") or "[dim]—[/dim]",
+            str(b.get("active_job_count", 0)),
+            last,
+        ]
+        if talent:
+            row.append(b.get("talent_network_url") or "")
+
+        table.add_row(*row)
+
+    console.print(table)
+    console.print(f"\n[dim]{len(boards)} boards shown[/dim]")
+
+
+@investor_app.command("show")
+def investors_show(
+    board_id: int = typer.Argument(..., help="Board ID to show"),
+):
+    """Show details and recent jobs for an investor board.
+
+    Example:
+        jj investors show 1
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    from jj.db import get_investor_board, get_investor_board_jobs
+    from rich.table import Table
+
+    board = get_investor_board(board_id)
+    if not board:
+        console.print(f"[red]Board ID {board_id} not found.[/red]")
+        raise typer.Exit(1)
+
+    # Board details panel
+    details = (
+        f"[cyan]{board['name']}[/cyan]"
+        f" ({board.get('short_name', '')})\n"
+        f"Type: {board.get('board_type', 'vc')} / {board.get('investor_type', '—')}\n"
+        f"Board URL: {board.get('board_url') or '—'}\n"
+        f"Active: {'Yes' if board.get('is_active') else 'No'}\n"
+        f"Priority: {board.get('priority', 0)}\n"
+        f"Times Searched: {board.get('times_searched', 0)}\n"
+        f"Last Searched: {board.get('last_searched_at') or 'never'}\n"
+        f"Focus: {board.get('portfolio_focus') or '—'}\n"
+        f"Geo: {board.get('geo_focus') or '—'}"
+    )
+    if board.get("has_talent_network"):
+        details += f"\nTalent Network: {board.get('talent_network_url', '—')}"
+        if board.get("talent_network_notes"):
+            details += f"\n  {board['talent_network_notes']}"
+    if board.get("notes"):
+        details += f"\nNotes: {board['notes']}"
+
+    console.print(Panel(details, title=f"Board #{board_id}"))
+
+    # Recent jobs
+    jobs = get_investor_board_jobs(board_id)
+    if jobs:
+        table = Table(title=f"Active Jobs ({len(jobs)})")
+        table.add_column("Company", style="cyan")
+        table.add_column("Title", style="white")
+        table.add_column("Location", style="dim")
+        table.add_column("First Seen", style="dim")
+
+        for j in jobs[:20]:
+            table.add_row(
+                j.get("company_name") or "—",
+                j.get("title") or "—",
+                j.get("location") or "—",
+                (j.get("first_seen_at") or "")[:10],
+            )
+
+        console.print(table)
+        if len(jobs) > 20:
+            console.print(f"[dim]... and {len(jobs) - 20} more[/dim]")
+    else:
+        console.print("[dim]No jobs recorded yet. Run /vc-boards to scrape.[/dim]")
+
+
+@investor_app.command("add")
+def investors_add(
+    name: str = typer.Argument(..., help="Board/firm name"),
+    url: str = typer.Argument(..., help="Job board URL"),
+    board_type: str = typer.Option("vc", "--type", "-t", help="Board type: vc, growth_equity, pe, accelerator"),
+):
+    """Add a new investor board manually.
+
+    Example:
+        jj investors add "New Firm" "https://jobs.newfirm.com/jobs" --type vc
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    from jj.db import create_investor_board
+
+    board_id = create_investor_board(name, url, board_type=board_type)
+    console.print(f"[green]Created investor board #{board_id}:[/green] {name} → {url}")
+
+
 if __name__ == "__main__":
     app()

@@ -1,6 +1,7 @@
 """Database operations for Job Journal."""
 
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -576,6 +577,69 @@ def migrate_database() -> None:
 
         CREATE INDEX IF NOT EXISTS idx_interests_topic ON interests(topic);
         CREATE INDEX IF NOT EXISTS idx_cover_letters_company ON cover_letters(target_company);
+
+        -- Job listings for delta detection (swarm monitoring)
+        CREATE TABLE IF NOT EXISTS job_listings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id INTEGER NOT NULL REFERENCES companies(id),
+            url TEXT NOT NULL,
+            title TEXT,
+            location TEXT,
+            salary TEXT,
+            ats_type TEXT,
+            is_active BOOLEAN DEFAULT 1,
+            first_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            scored_at TEXT,
+            application_id INTEGER REFERENCES applications(id),
+            UNIQUE(company_id, url)
+        );
+        CREATE INDEX IF NOT EXISTS idx_job_listings_company ON job_listings(company_id, is_active);
+        CREATE INDEX IF NOT EXISTS idx_job_listings_url ON job_listings(url);
+        CREATE INDEX IF NOT EXISTS idx_job_listings_first_seen ON job_listings(first_seen_at);
+
+        -- Investor/VC job boards (aggregators listing jobs across portfolio companies)
+        CREATE TABLE IF NOT EXISTS investor_boards (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            name_normalized TEXT,
+            short_name TEXT,
+            board_url TEXT,
+            ats_type TEXT,
+            board_type TEXT DEFAULT 'vc',
+            investor_type TEXT,
+            has_talent_network BOOLEAN DEFAULT 0,
+            talent_network_url TEXT,
+            talent_network_notes TEXT,
+            portfolio_focus TEXT,
+            geo_focus TEXT,
+            times_searched INTEGER DEFAULT 0,
+            last_searched_at TEXT,
+            job_count INTEGER DEFAULT 0,
+            is_active BOOLEAN DEFAULT 1,
+            priority INTEGER DEFAULT 0,
+            notes TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_investor_boards_name ON investor_boards(name_normalized);
+        CREATE INDEX IF NOT EXISTS idx_investor_boards_active ON investor_boards(is_active, priority DESC);
+
+        CREATE TABLE IF NOT EXISTS investor_board_jobs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            investor_board_id INTEGER NOT NULL REFERENCES investor_boards(id),
+            company_id INTEGER REFERENCES companies(id),
+            url TEXT NOT NULL,
+            title TEXT,
+            company_name TEXT,
+            location TEXT,
+            salary TEXT,
+            is_active BOOLEAN DEFAULT 1,
+            first_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(investor_board_id, url)
+        );
+        CREATE INDEX IF NOT EXISTS idx_investor_board_jobs_board ON investor_board_jobs(investor_board_id, is_active);
         """
         conn.executescript(new_tables_sql)
         conn.commit()
@@ -847,6 +911,66 @@ def get_skills() -> list[dict[str, Any]]:
 
 
 # Application operations
+
+def _normalize_title(title: str) -> str:
+    """Normalize a job title for dedup comparison."""
+    t = title.lower().strip()
+    # Normalize PM variants
+    for long, short in [
+        ("product manager", "pm"),
+        ("product management", "pm"),
+        ("senior ", "sr "),
+    ]:
+        t = t.replace(long, short)
+    # Strip punctuation and extra spaces
+    t = re.sub(r"[,\-–—()/]", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+
+def find_duplicate_application(
+    company: str,
+    position: str,
+    job_url: str = None,
+) -> Optional[dict[str, Any]]:
+    """Check if an application already exists for this company+role.
+
+    Checks:
+    1. Exact URL match
+    2. Normalized company + title match (handles PM vs Product Manager, etc.)
+
+    Returns the existing application dict or None.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # 1. Exact URL match
+        if job_url:
+            cursor.execute(
+                "SELECT * FROM applications WHERE job_url = ?", (job_url,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+
+        # 2. Normalized title match within same company
+        norm_title = _normalize_title(position)
+        cursor.execute(
+            "SELECT * FROM applications WHERE LOWER(TRIM(company)) = ?",
+            (company.lower().strip(),)
+        )
+        for row in cursor.fetchall():
+            existing_norm = _normalize_title(row["position"])
+            # Check if titles are substantially similar (one contains the other,
+            # or they share the first 20 chars after normalization)
+            if (norm_title == existing_norm
+                    or norm_title in existing_norm
+                    or existing_norm in norm_title
+                    or norm_title[:20] == existing_norm[:20]):
+                return dict(row)
+
+        return None
+
 
 def create_application(
     company: str,
@@ -3023,6 +3147,215 @@ def detect_ats_type(job_url: str) -> Optional[str]:
     return None
 
 
+def score_title_fit(title: str, location: str = None) -> dict[str, Any]:
+    """Quick title + location pre-filter before expensive JD scoring.
+
+    Returns dict with total score (0-100), breakdown, and pass/fail.
+    Threshold: 50+ proceeds to full JD scoring.
+    """
+    title_lower = (title or "").lower()
+    loc_lower = (location or "").lower()
+
+    # --- Seniority (0-40) ---
+    seniority = 0
+    seniority_label = "unknown"
+    if any(k in title_lower for k in ["head of", "vp ", "vice president", "chief product"]):
+        seniority, seniority_label = 40, "executive"
+    elif any(k in title_lower for k in ["director", "sr director", "senior director"]):
+        seniority, seniority_label = 40, "director"
+    elif any(k in title_lower for k in ["principal", "staff"]):
+        seniority, seniority_label = 40, "principal/staff"
+    elif any(k in title_lower for k in ["senior ", "sr ", "lead "]):
+        seniority, seniority_label = 30, "senior"
+    elif any(k in title_lower for k in ["product manager", "product lead"]):
+        seniority, seniority_label = 15, "mid-level"
+    elif any(k in title_lower for k in [" ii", " iii", " iv"]):
+        seniority, seniority_label = 15, "mid-level"
+
+    # --- Role type (0-30) ---
+    role_type = 0
+    role_label = "other"
+    if any(k in title_lower for k in ["product manager", "product management", "product lead",
+                                       "head of product", "director of product", "vp product",
+                                       "chief product", "product director"]):
+        role_type, role_label = 30, "product management"
+    elif any(k in title_lower for k in [" pm,", " pm ", " pm-", "sr pm", "staff pm",
+                                         "principal pm"]):
+        role_type, role_label = 30, "product management"
+    elif "growth" in title_lower and "product" in title_lower:
+        role_type, role_label = 30, "growth PM"
+    elif "growth" in title_lower:
+        role_type, role_label = 25, "growth"
+    elif any(k in title_lower for k in ["strategy & operations", "strategy and operations",
+                                         "strategic program"]):
+        role_type, role_label = 15, "strategy/ops"
+    elif "program manager" in title_lower:
+        role_type, role_label = 10, "program management"
+    elif "product marketing" in title_lower:
+        role_type, role_label = 5, "product marketing"
+    elif "data analyst" in title_lower or "data scientist" in title_lower:
+        role_type, role_label = 5, "data/analytics"
+    elif "gtm" in title_lower:
+        role_type, role_label = 10, "GTM"
+
+    # --- Location (0-30) ---
+    # Check international FIRST (hard fail — these never pass regardless of score)
+    loc_score = 0
+    loc_label = "unknown"
+    is_international = False
+    if location and any(k in loc_lower for k in [
+        "london", "canada", "india", "ireland", "barcelona", "jordan", "uk,",
+        "vancouver", "montreal", "gurgaon", "dublin", "auckland", "new zealand",
+        "amman", "bangalore", "toronto", "germany", "france", "singapore",
+        "australia", "brazil", "japan", "korea", "mexico", "argentina",
+    ]):
+        # But NOT international if also has US location (e.g., "Remote US / Toronto")
+        has_us = any(k in loc_lower for k in ["austin", "remote us", "us remote",
+                                               "u.s.", "san francisco", "new york",
+                                               "nyc", "seattle", "chicago", "sf,",
+                                               "sf /", "ssf", "bay area"])
+        if not has_us:
+            loc_score, loc_label = 0, "international"
+            is_international = True
+
+    if not is_international:
+        if not location:
+            loc_score, loc_label = 15, "not specified"
+        elif any(k in loc_lower for k in ["austin", "remote us", "us remote", "remote - us",
+                                           "u.s. remote", "remote united states"]):
+            loc_score, loc_label = 30, "austin/remote US"
+        elif "remote" in loc_lower and any(k in loc_lower for k in ["us", "u.s.", "united states"]):
+            loc_score, loc_label = 30, "remote US"
+        elif any(k in loc_lower for k in ["san francisco", "new york", "nyc", "sf "]):
+            loc_score, loc_label = 20, "SF/NYC"
+        elif any(k in loc_lower for k in ["seattle", "chicago", "oakland", "bay area"]):
+            loc_score, loc_label = 15, "major US city"
+        elif any(k in loc_lower for k in ["california", "texas", "san jose"]):
+            loc_score, loc_label = 15, "US state"
+        else:
+            loc_score, loc_label = 10, "other US"
+
+    total = seniority + role_type + loc_score
+    return {
+        "total": total,
+        "pass": total >= 50 and not is_international,
+        "seniority": {"score": seniority, "max": 40, "label": seniority_label},
+        "role_type": {"score": role_type, "max": 30, "label": role_label},
+        "location": {"score": loc_score, "max": 30, "label": loc_label},
+    }
+
+
+# Job listings operations (swarm monitoring)
+
+def record_job_listing(company_id: int, url: str, title: str = None,
+                       location: str = None, salary: str = None,
+                       ats_type: str = None) -> tuple[int, bool]:
+    """Record a job listing. Returns (listing_id, is_new).
+    Uses INSERT OR IGNORE + UPDATE for upsert behavior."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Try insert first (will be ignored if url+company_id already exists)
+        cursor.execute("""
+            INSERT OR IGNORE INTO job_listings (company_id, url, title, location, salary, ats_type)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (company_id, url, title, location, salary, ats_type))
+
+        is_new = cursor.rowcount > 0
+
+        if not is_new:
+            # Update last_seen and any new metadata
+            cursor.execute("""
+                UPDATE job_listings
+                SET last_seen_at = CURRENT_TIMESTAMP,
+                    is_active = 1,
+                    title = COALESCE(?, title),
+                    location = COALESCE(?, location),
+                    salary = COALESCE(?, salary),
+                    ats_type = COALESCE(?, ats_type)
+                WHERE company_id = ? AND url = ?
+            """, (title, location, salary, ats_type, company_id, url))
+
+        conn.commit()
+
+        cursor.execute(
+            "SELECT id FROM job_listings WHERE company_id = ? AND url = ?",
+            (company_id, url)
+        )
+        listing_id = cursor.fetchone()["id"]
+
+        return (listing_id, is_new)
+
+
+def get_known_listing_urls(company_id: int) -> set[str]:
+    """Get set of all known listing URLs for a company (active and inactive)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT url FROM job_listings WHERE company_id = ?",
+            (company_id,)
+        )
+        return {row["url"] for row in cursor.fetchall()}
+
+
+def mark_stale_listings(company_id: int, active_urls: set[str]) -> int:
+    """Mark listings NOT in active_urls as inactive. Returns count marked stale."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        if not active_urls:
+            # Mark all as stale
+            cursor.execute("""
+                UPDATE job_listings SET is_active = 0
+                WHERE company_id = ? AND is_active = 1
+            """, (company_id,))
+        else:
+            placeholders = ",".join("?" for _ in active_urls)
+            cursor.execute(f"""
+                UPDATE job_listings SET is_active = 0
+                WHERE company_id = ? AND is_active = 1 AND url NOT IN ({placeholders})
+            """, (company_id, *active_urls))
+
+        stale_count = cursor.rowcount
+        conn.commit()
+        return stale_count
+
+
+def get_new_listings_since(company_id: int, since: str) -> list[dict]:
+    """Get listings first seen after `since` timestamp (ISO format)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM job_listings
+            WHERE company_id = ? AND first_seen_at > ?
+            ORDER BY first_seen_at DESC
+        """, (company_id, since))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_companies_due_for_check(hours: int = 24) -> list[dict[str, Any]]:
+    """Get target companies with careers_url not checked in the last N hours.
+    Returns same shape as get_target_companies() but filtered by last_searched_at."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                c.*,
+                COUNT(a.id) as application_count,
+                SUM(CASE WHEN a.status NOT IN ('rejected', 'withdrawn', 'prospect') THEN 1 ELSE 0 END) as active_count,
+                MAX(a.applied_at) as latest_applied_at
+            FROM companies c
+            LEFT JOIN applications a ON a.company_id = c.id
+            WHERE c.is_target = 1
+              AND c.careers_url IS NOT NULL
+              AND (c.last_searched_at IS NULL
+                   OR c.last_searched_at < datetime('now', ? || ' hours'))
+            GROUP BY c.id
+            ORDER BY c.fit_score DESC NULLS LAST, c.target_priority DESC, c.name
+        """, (f"-{hours}",))
+        return [dict(row) for row in cursor.fetchall()]
+
+
 def migrate_companies_from_applications() -> dict[str, int]:
     """
     Create companies from existing application company names.
@@ -3135,3 +3468,270 @@ def link_geo_companies() -> int:
         conn.commit()
 
         return linked
+
+
+# =============================================================================
+# Investor Board Functions
+# =============================================================================
+
+
+def get_investor_boards(active_only: bool = True) -> list[dict[str, Any]]:
+    """List investor boards, optionally filtered to active only."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if active_only:
+            cursor.execute("""
+                SELECT *, (SELECT COUNT(*) FROM investor_board_jobs
+                           WHERE investor_board_id = investor_boards.id AND is_active = 1
+                          ) as active_job_count
+                FROM investor_boards WHERE is_active = 1
+                ORDER BY priority DESC, name
+            """)
+        else:
+            cursor.execute("""
+                SELECT *, (SELECT COUNT(*) FROM investor_board_jobs
+                           WHERE investor_board_id = investor_boards.id AND is_active = 1
+                          ) as active_job_count
+                FROM investor_boards
+                ORDER BY priority DESC, name
+            """)
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_investor_board(board_id: int) -> Optional[dict[str, Any]]:
+    """Get a single investor board by ID."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM investor_boards WHERE id = ?", (board_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_investor_board_by_name(name: str) -> Optional[dict[str, Any]]:
+    """Find investor board by name (case-insensitive)."""
+    normalized = name.lower().strip()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM investor_boards WHERE name_normalized = ?",
+            (normalized,)
+        )
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+        # Fuzzy: try LIKE match
+        cursor.execute(
+            "SELECT * FROM investor_boards WHERE name_normalized LIKE ?",
+            (f"%{normalized}%",)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def create_investor_board(name: str, board_url: str = None, **kwargs) -> int:
+    """Create a new investor board. Returns board ID."""
+    normalized = name.lower().strip()
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT OR IGNORE INTO investor_boards (
+                name, name_normalized, short_name, board_url, ats_type,
+                board_type, investor_type, has_talent_network,
+                talent_network_url, talent_network_notes,
+                portfolio_focus, geo_focus, is_active, priority, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            name, normalized,
+            kwargs.get('short_name'),
+            board_url,
+            kwargs.get('ats_type'),
+            kwargs.get('board_type', 'vc'),
+            kwargs.get('investor_type'),
+            kwargs.get('has_talent_network', False),
+            kwargs.get('talent_network_url'),
+            kwargs.get('talent_network_notes'),
+            kwargs.get('portfolio_focus'),
+            kwargs.get('geo_focus'),
+            kwargs.get('is_active', True),
+            kwargs.get('priority', 0),
+            kwargs.get('notes'),
+        ))
+        conn.commit()
+
+        if cursor.rowcount == 0:
+            # Already exists — return existing ID
+            cursor.execute(
+                "SELECT id FROM investor_boards WHERE name_normalized = ?",
+                (normalized,)
+            )
+            return cursor.fetchone()["id"]
+        return cursor.lastrowid
+
+
+def update_investor_board(board_id: int, **kwargs) -> bool:
+    """Update investor board fields. Returns True if updated."""
+    allowed = {
+        'name', 'short_name', 'board_url', 'ats_type', 'board_type',
+        'investor_type', 'has_talent_network', 'talent_network_url',
+        'talent_network_notes', 'portfolio_focus', 'geo_focus',
+        'is_active', 'priority', 'notes',
+    }
+    updates = {k: v for k, v in kwargs.items() if k in allowed}
+    if not updates:
+        return False
+
+    if 'name' in updates:
+        updates['name_normalized'] = updates['name'].lower().strip()
+
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [board_id]
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"UPDATE investor_boards SET {set_clause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            values
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def get_investor_boards_due_for_check(hours: int = 24) -> list[dict[str, Any]]:
+    """Get active boards not checked in the last N hours."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM investor_boards
+            WHERE is_active = 1
+              AND board_url IS NOT NULL
+              AND (last_searched_at IS NULL
+                   OR last_searched_at < datetime('now', ? || ' hours'))
+            ORDER BY priority DESC, name
+        """, (f"-{hours}",))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def increment_investor_board_search(board_id: int) -> None:
+    """Bump search timestamp and count for a board."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE investor_boards
+            SET times_searched = times_searched + 1,
+                last_searched_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (board_id,))
+        conn.commit()
+
+
+def record_investor_board_job(board_id: int, url: str, title: str = None,
+                              company_name: str = None, location: str = None,
+                              salary: str = None,
+                              company_id: int = None) -> tuple[int, bool]:
+    """Record a job from an investor board. Returns (job_id, is_new).
+    Uses INSERT OR IGNORE + UPDATE for upsert behavior."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        cursor.execute("""
+            INSERT OR IGNORE INTO investor_board_jobs
+                (investor_board_id, url, title, company_name, location, salary, company_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (board_id, url, title, company_name, location, salary, company_id))
+
+        is_new = cursor.rowcount > 0
+
+        if not is_new:
+            cursor.execute("""
+                UPDATE investor_board_jobs
+                SET last_seen_at = CURRENT_TIMESTAMP,
+                    is_active = 1,
+                    title = COALESCE(?, title),
+                    company_name = COALESCE(?, company_name),
+                    location = COALESCE(?, location),
+                    salary = COALESCE(?, salary),
+                    company_id = COALESCE(?, company_id)
+                WHERE investor_board_id = ? AND url = ?
+            """, (title, company_name, location, salary, company_id, board_id, url))
+
+        conn.commit()
+
+        cursor.execute(
+            "SELECT id FROM investor_board_jobs WHERE investor_board_id = ? AND url = ?",
+            (board_id, url)
+        )
+        job_id = cursor.fetchone()["id"]
+
+        # Update board job count
+        cursor.execute("""
+            UPDATE investor_boards
+            SET job_count = (SELECT COUNT(*) FROM investor_board_jobs
+                             WHERE investor_board_id = ? AND is_active = 1)
+            WHERE id = ?
+        """, (board_id, board_id))
+        conn.commit()
+
+        return (job_id, is_new)
+
+
+def get_known_investor_board_job_urls(board_id: int) -> set[str]:
+    """Get set of all known job URLs for a board (active and inactive)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT url FROM investor_board_jobs WHERE investor_board_id = ?",
+            (board_id,)
+        )
+        return {row["url"] for row in cursor.fetchall()}
+
+
+def mark_stale_investor_board_jobs(board_id: int, active_urls: set[str]) -> int:
+    """Mark jobs NOT in active_urls as inactive. Returns count marked stale."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        if not active_urls:
+            cursor.execute("""
+                UPDATE investor_board_jobs SET is_active = 0
+                WHERE investor_board_id = ? AND is_active = 1
+            """, (board_id,))
+        else:
+            placeholders = ",".join("?" for _ in active_urls)
+            cursor.execute(f"""
+                UPDATE investor_board_jobs SET is_active = 0
+                WHERE investor_board_id = ? AND is_active = 1 AND url NOT IN ({placeholders})
+            """, (board_id, *active_urls))
+
+        stale_count = cursor.rowcount
+        conn.commit()
+
+        # Update board job count
+        cursor.execute("""
+            UPDATE investor_boards
+            SET job_count = (SELECT COUNT(*) FROM investor_board_jobs
+                             WHERE investor_board_id = ? AND is_active = 1)
+            WHERE id = ?
+        """, (board_id, board_id))
+        conn.commit()
+
+        return stale_count
+
+
+def get_investor_board_jobs(board_id: int, active_only: bool = True) -> list[dict[str, Any]]:
+    """Get jobs for an investor board."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if active_only:
+            cursor.execute("""
+                SELECT * FROM investor_board_jobs
+                WHERE investor_board_id = ? AND is_active = 1
+                ORDER BY first_seen_at DESC
+            """, (board_id,))
+        else:
+            cursor.execute("""
+                SELECT * FROM investor_board_jobs
+                WHERE investor_board_id = ?
+                ORDER BY first_seen_at DESC
+            """, (board_id,))
+        return [dict(row) for row in cursor.fetchall()]
