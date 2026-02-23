@@ -281,8 +281,21 @@ def build_replacement_dict(
                 replacements[f"{role_prefix}BULLET_{bullet_num}}}}}"] = ""
 
     # Section headers (conditionally shown based on whether roles are populated)
-    # AI Consulting section only shown when Role 6 is populated
-    replacements["{{SECTION_CONSULTING}}"] = "AI Consulting" if len(data.roles) >= 6 else ""
+    # The consulting block covers TWO roles: "AI Health-Tech Startup" and
+    # "Clearhead / Accenture Interactive". These are consulting stints that
+    # belong in the consulting section (Role 6), NOT the main experience body.
+    # If the AI Health-Tech role is already in Roles 1-5, the entire consulting
+    # section stays empty (don't show either consulting role).
+    consulting_companies = {"AI Health-Tech Startup", "Clearhead / Accenture Interactive"}
+    consulting_in_main_body = any(
+        r.company in consulting_companies for r in data.roles[:5]
+    )
+    show_consulting = (
+        len(data.roles) >= 6
+        and not consulting_in_main_body
+        and data.roles[5].company in consulting_companies
+    )
+    replacements["{{SECTION_CONSULTING}}"] = "AI Consulting" if show_consulting else ""
 
     # Skills placeholders - named categories (legacy)
     legacy_categories = ["technical", "domain", "leadership", "tools"]

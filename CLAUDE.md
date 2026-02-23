@@ -77,6 +77,14 @@ When the user asks to find job emails not yet in Job Journal:
 5. Look for: SmartRecruiters confirmations, ATS confirmations, recruiter correspondence, interview scheduling
 6. Create new application records for genuine activity; update existing ones for status changes
 
+### Resume Generation
+- Resumes are generated via Google Docs template + PDF export, NOT pandoc/docx
+- Use `generate_resume_from_corpus()` from `jj/google_docs.py` — this is the single method for both `/apply` and `/pipeline`
+- The Google Docs template has 6 role slots: Roles 1-5 are the main experience body, Role 6 sits under a `{{SECTION_CONSULTING}}` header
+- **`custom_skills` parameter must be `dict[str, list[str]]`** — display names mapped to **lists** of skill strings, NOT comma-separated strings. Passing a string instead of a list causes `", ".join()` to iterate over characters, producing `G, r, o, w, t, h` instead of `Growth Strategy, Growth Loops`. Correct: `{"Growth & Experimentation:": ["Growth Strategy", "Growth Loops"]}`. Wrong: `{"Growth & Experimentation:": "Growth Strategy, Growth Loops"}`
+- **Consulting block rule:** The template's consulting section (Role 6) covers TWO consulting roles: "AI Health-Tech Startup" AND "Clearhead / Accenture Interactive". When the AI Health-Tech role is included in the main experience body (Roles 1-5), the entire consulting section stays empty — do NOT include Clearhead/Accenture as a separate role either. These two roles only appear in the consulting block when they're NOT in the main body. When generating resumes with `role_bullets`, do NOT pass Clearhead/Accenture if AI Health-Tech is already in the main roles. Enforced in `build_replacement_dict()` in `google_docs.py`
+- Old `~/.job-apply/` path and pandoc workflow are deprecated — do not reference them
+
 ### Things NOT to Do
 - Don't generate resume bullets — select from corpus
 - Don't commit `.job-journal/` contents, credentials, or tokens
@@ -85,3 +93,4 @@ When the user asks to find job emails not yet in Job Journal:
 - Don't add emoji to output unless the user requests it
 - Don't pass `source=` to `create_application()` — column doesn't exist
 - Don't count ZipRecruiter job alerts, LinkedIn listings, or newsletter emails as job activity — only actual applications, interviews, and responses count
+- Don't pass strings to `custom_skills` in `generate_resume_from_corpus()` — values must be `list[str]`, not `str`
