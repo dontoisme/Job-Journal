@@ -3287,6 +3287,36 @@ def record_job_listing(company_id: int, url: str, title: str = None,
         return (listing_id, is_new)
 
 
+def is_known_job(url: str) -> Optional[dict[str, Any]]:
+    """Check if a job URL has been seen before in job_listings OR applications.
+
+    Returns dict with source info if known, None if never seen.
+    Used by pipeline to skip jobs we've already scraped/filtered/scored.
+    """
+    if not url:
+        return None
+    with get_connection() as conn:
+        # Check job_listings first (covers all scraped jobs including filtered ones)
+        row = conn.execute(
+            "SELECT id, company_id, title, first_seen_at, last_seen_at FROM job_listings WHERE url = ?",
+            (url,)
+        ).fetchone()
+        if row:
+            return {"source": "job_listings", "id": row["id"], "title": row["title"],
+                    "first_seen": row["first_seen_at"], "last_seen": row["last_seen_at"]}
+
+        # Check applications (covers jobs tracked as prospects/applied/etc)
+        row = conn.execute(
+            "SELECT id, company, position, status, fit_score FROM applications WHERE job_url = ?",
+            (url,)
+        ).fetchone()
+        if row:
+            return {"source": "applications", "id": row["id"], "company": row["company"],
+                    "position": row["position"], "status": row["status"], "fit_score": row["fit_score"]}
+
+    return None
+
+
 def get_known_listing_urls(company_id: int) -> set[str]:
     """Get set of all known listing URLs for a company (active and inactive)."""
     with get_connection() as conn:

@@ -240,8 +240,14 @@ class GmailClient:
         # Refresh or get new credentials
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
+                try:
+                    creds.refresh(Request())
+                except Exception:
+                    # Token revoked or refresh failed — delete stale token, start fresh
+                    if TOKEN_PATH.exists():
+                        TOKEN_PATH.unlink()
+                    creds = None
+            if not creds or not creds.valid:
                 if not CREDENTIALS_PATH.exists():
                     raise FileNotFoundError(
                         f"Gmail credentials not found at {CREDENTIALS_PATH}.\n"
