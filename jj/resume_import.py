@@ -13,15 +13,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from jj.corpus import find_matching_entry, find_all_matching_entries, validate_bullet
+from jj.corpus import find_matching_entry
 from jj.db import (
+    create_corpus_suggestion,
     create_resume,
     create_resume_entry,
-    create_resume_section,
-    create_corpus_suggestion,
     get_resume_by_filepath,
     get_roles,
-    find_role_by_company_title,
 )
 
 
@@ -128,7 +126,7 @@ def extract_bullets_from_text(text: str) -> list[str]:
         "Architected", "Spearheaded", "Optimized", "Streamlined",
         "Set", "Shipped", "Engaged", "Mentored", "Hands",  # Additional common starters
     ]
-    action_pattern = "|".join(action_verbs)
+    "|".join(action_verbs)
 
     # Bullet character patterns - extract content starting with action verbs
     # Simple approach: find ● followed by capitalized word and capture until next ●

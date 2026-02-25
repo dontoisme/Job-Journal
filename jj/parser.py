@@ -6,15 +6,14 @@ from typing import Any, Optional
 
 from jj.config import CORPUS_PATH, get_full_name, load_profile
 from jj.db import (
-    create_role,
     create_entry,
+    create_role,
     create_skill,
     find_role_by_company_title,
-    get_roles,
     get_entries_for_role,
+    get_roles,
     get_skills,
 )
-
 
 # Metric extraction patterns
 METRIC_PATTERNS = [
@@ -271,7 +270,7 @@ def import_base_md(path: Path) -> dict[str, int]:
 
 def generate_corpus_md() -> None:
     """Generate corpus.md from database contents."""
-    profile = load_profile()
+    load_profile()
     name = get_full_name() or "Your Name"
 
     lines = [

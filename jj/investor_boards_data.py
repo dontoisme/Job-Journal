@@ -1,8 +1,8 @@
 """Curated seed data for VC/investor portfolio job boards."""
 
-from jj.db import create_investor_board
-
 import json
+
+from jj.db import create_investor_board
 
 INVESTOR_BOARDS = [
     # --- Major VC Firms ---

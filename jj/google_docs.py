@@ -18,8 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-from jj.config import JJ_HOME, load_config, save_config, load_profile
-
+from jj.config import JJ_HOME, load_config, load_profile, save_config
 
 # Google API imports (with graceful fallback)
 try:
@@ -150,8 +149,8 @@ def assemble_template_data(
         ResumeTemplateData with all information needed for template population
     """
     from jj.db import (
-        get_roles_ordered_by_date,
         get_entries_for_role_ordered,
+        get_roles_ordered_by_date,
         get_skills_by_category,
     )
 
@@ -454,7 +453,6 @@ def generate_resume_from_corpus(
         create_resume_section,
         get_connection,
         increment_entry_usage,
-        find_entry_by_text,
     )
 
     # Get config defaults

@@ -2,14 +2,11 @@
 
 import json
 import signal
-import sys
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
 from rich.console import Console
-from rich.live import Live
 from rich.table import Table
 
 from jj.config import JJ_HOME
@@ -46,17 +43,17 @@ def register_handler(task_type: str):
 def handle_email_sync(payload: dict) -> dict:
     """Handle email sync task - check for confirmations and updates."""
     try:
+        from jj.db import (
+            get_applications_for_update_check,
+            get_applications_missing_confirmation,
+            update_application,
+            update_application_email_confirmation,
+            update_application_latest_update,
+        )
         from jj.gmail_checker import (
             get_gmail_service,
             search_updates,
             verify_confirmations,
-        )
-        from jj.db import (
-            get_applications_for_update_check,
-            get_applications_missing_confirmation,
-            update_application_email_confirmation,
-            update_application_latest_update,
-            update_application,
         )
 
         service = get_gmail_service()
@@ -293,13 +290,11 @@ def worker_status():
     import os
 
     pid_file = JJ_HOME / 'worker.pid'
-    running = False
 
     if pid_file.exists():
         try:
             pid = int(pid_file.read_text().strip())
             os.kill(pid, 0)  # Check if process exists
-            running = True
             console.print(f"[green]Worker running (PID: {pid})[/green]")
         except (ProcessLookupError, ValueError):
             console.print("[yellow]Worker not running (stale PID file)[/yellow]")
@@ -352,7 +347,7 @@ def schedule_email_sync(hours: int = 1):
 
     # Schedule next sync
     next_run = (datetime.now() + timedelta(hours=hours)).isoformat()
-    schedule_id = create_task(
+    create_task(
         'schedule_email_sync',
         priority=1,
         scheduled_for=next_run,
@@ -371,13 +366,13 @@ def run_task_now(task_type: str, payload: Optional[dict] = None):
     task = get_task(task_id)
     if task:
         worker = Worker()
-        success = worker.process_task(task)
+        worker.process_task(task)
 
         # Show result
         task = get_task(task_id)
         if task['status'] == 'completed':
             result = json.loads(task['result']) if task['result'] else {}
-            console.print(f"[green]Task completed:[/green]")
+            console.print("[green]Task completed:[/green]")
             console.print(result)
         else:
             console.print(f"[red]Task failed: {task['error']}[/red]")
