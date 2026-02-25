@@ -11,20 +11,17 @@ Extended with:
 """
 
 import json
-import re
-import shutil
+import tempfile
 import zipfile
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
-import tempfile
 
 
 # Default template path - resolved from config or fallback to generic name
 def _get_default_template() -> Path:
     """Resolve the default template path from config or convention."""
-    from jj.config import JJ_HOME, load_config, get_full_name
+    from jj.config import JJ_HOME, load_config
     config = load_config()
     template_rel = config.get("resume", {}).get("template", "")
     if template_rel:
@@ -192,7 +189,7 @@ def select_entries_for_variant(
         List of SelectedEntry objects
     """
     from jj.corpus import get_entries_by_variant
-    from jj.db import get_roles, get_entries_for_role
+    from jj.db import get_roles
 
     entries = get_entries_by_variant(variant)
     roles = get_roles()
@@ -362,10 +359,10 @@ def generate_resume_with_tracking(
         ResumeGenerationResult with all tracking info
     """
     from jj.db import (
+        create_corpus_suggestion,
         create_resume,
         create_resume_entry,
         create_resume_section,
-        create_corpus_suggestion,
         increment_entry_usage,
         validate_resume,
     )
@@ -467,7 +464,7 @@ def list_resumes(
     limit: int = 20,
 ) -> list[dict[str, Any]]:
     """List generated resumes with their entry counts."""
-    from jj.db import get_resumes, get_resume_entries
+    from jj.db import get_resume_entries, get_resumes
 
     resumes = get_resumes(variant=variant, company=company, limit=limit)
 

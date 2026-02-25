@@ -1,11 +1,8 @@
 """Analytics and insights for Job Journal."""
 
-import json
-from collections import defaultdict
-from datetime import datetime, timedelta
-from typing import Any, Optional
+from typing import Any
 
-from jj.db import get_connection, DB_PATH
+from jj.db import DB_PATH, get_connection
 
 
 def get_funnel_stats() -> dict[str, Any]:

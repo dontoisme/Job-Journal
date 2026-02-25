@@ -5,7 +5,6 @@ import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Optional
 
 from jj.config import DB_PATH, JJ_HOME
@@ -2364,8 +2363,8 @@ def get_all_twc_claim_periods() -> list[dict[str, Any]]:
     Uses batch queries for efficiency (3 queries total, not N).
     Returns list of period dicts, newest first.
     """
-    from datetime import timedelta
     from collections import defaultdict
+    from datetime import timedelta
 
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -2413,7 +2412,7 @@ def get_all_twc_claim_periods() -> list[dict[str, Any]]:
     # Align to TWC's fixed biweekly claim period calendar.
     # TWC uses a fixed epoch -- Jan 4, 2026 is a known period start (Sunday).
     # All periods are 14-day multiples from this epoch.
-    TWC_EPOCH = datetime(2026, 1, 4)
+    twc_epoch = datetime(2026, 1, 4)
 
     earliest_dt = datetime.strptime(earliest, "%Y-%m-%d")
     days_since_sunday = (earliest_dt.weekday() + 1) % 7
@@ -2424,7 +2423,7 @@ def get_all_twc_claim_periods() -> list[dict[str, Any]]:
     current_sunday = today - timedelta(days=days_since_sunday)
 
     # Find the TWC period that contains the earliest activity
-    days_from_epoch = (first_sunday - TWC_EPOCH).days
+    days_from_epoch = (first_sunday - twc_epoch).days
     # Align to nearest period boundary (can be negative if before epoch)
     period_offset = days_from_epoch % 14
     period_start = first_sunday - timedelta(days=period_offset)

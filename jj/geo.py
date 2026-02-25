@@ -7,7 +7,6 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Optional
 
 import yaml
@@ -385,15 +384,15 @@ def get_companies_in_area(area_id: int) -> list[dict]:
     conn.close()
 
     # Filter by distance
-    from math import radians, sin, cos, sqrt, atan2
+    from math import atan2, cos, radians, sin, sqrt
 
     def haversine(lat1, lng1, lat2, lng2):
-        R = 6371000  # Earth's radius in meters
+        earth_radius = 6371000  # Earth's radius in meters
         lat1, lng1, lat2, lng2 = map(radians, [lat1, lng1, lat2, lng2])
         dlat = lat2 - lat1
         dlng = lng2 - lng1
         a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlng/2)**2
-        return 2 * R * atan2(sqrt(a), sqrt(1-a))
+        return 2 * earth_radius * atan2(sqrt(a), sqrt(1-a))
 
     radius = area["radius"]
     companies_in_area = []

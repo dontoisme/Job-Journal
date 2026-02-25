@@ -7,7 +7,6 @@ This module provides:
 """
 
 import base64
-import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -17,7 +16,6 @@ from typing import Optional
 import yaml
 
 from jj.config import JJ_HOME
-
 
 # Gmail API imports (with graceful fallback)
 try:
@@ -448,7 +446,7 @@ class GmailClient:
         # Get all company name variants for search
         # e.g., "Outdoorsy/Roamly" → ["Outdoorsy/Roamly", "Outdoorsy", "Roamly"]
         company_names = get_company_search_names(company)
-        primary_name = company_names[0].replace('"', "").strip()
+        company_names[0].replace('"', "").strip()
 
         # Get domain - try known first, then infer
         domain = get_company_domain(company) or infer_company_domain(company)
@@ -658,7 +656,7 @@ def verify_confirmations(
             if match:
                 sender_domain = match.group(1).lower()
                 # Don't save ATS domains as company domains
-                ats_domains = get_ats_domains()
+                get_ats_domains()
                 if not any(ats in sender_domain for ats in ["ashby", "greenhouse", "lever", "icims", "rippling", "workable"]):
                     # Check if we should save this domain
                     existing = get_company_domain(company)
@@ -961,14 +959,15 @@ def sync_application_emails(
         Summary dict with counts of confirmations found, resolutions found, etc.
     """
     from datetime import timedelta
+
     from jj.db import (
+        RESOLUTION_TO_STATUS,
         add_application_email,
+        email_already_recorded,
         get_confirmation_email,
         get_resolution_email,
-        update_application_pairing_status,
-        email_already_recorded,
         transition_application_status,
-        RESOLUTION_TO_STATUS,
+        update_application_pairing_status,
     )
 
     client = GmailClient()
@@ -1016,7 +1015,7 @@ def sync_application_emails(
         if existing_resolution:
             summary['already_resolved'] += 1
             if verbose:
-                print(f"  Already resolved")
+                print("  Already resolved")
             update_application_pairing_status(app_id)
             continue
 
@@ -1112,7 +1111,6 @@ def sync_application_emails(
 def get_pairing_report(applications: list[dict]) -> str:
     """Generate a human-readable report of application email pairing status."""
     from jj.db import (
-        get_applications_with_pairing_status,
         get_pairing_stats,
     )
 

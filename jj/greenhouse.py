@@ -20,16 +20,16 @@ Usage:
     jobs = client.search_jobs(query="Product Manager", location="Austin, Texas")
 """
 
+import json
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
-import json
-import urllib.request
-import urllib.parse
-import urllib.error
 
-from jj.config import JJ_HOME, load_config, save_config, load_yaml, save_yaml
+from jj.config import JJ_HOME, load_config, load_yaml, save_config, save_yaml
 
 # Path for greenhouse auth storage
 GREENHOUSE_AUTH_PATH = JJ_HOME / "greenhouse_auth.yaml"

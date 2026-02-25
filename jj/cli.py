@@ -9,17 +9,15 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
 from jj import __version__
-from jj.db import init_database, get_stats
 from jj.config import (
+    DEFAULT_CONFIG,
+    DEFAULT_PROFILE,
     JJ_HOME,
     ensure_jj_home,
-    load_profile,
-    save_profile,
-    load_config,
     save_config,
-    DEFAULT_PROFILE,
-    DEFAULT_CONFIG,
+    save_profile,
 )
+from jj.db import get_stats, init_database
 
 app = typer.Typer(
     name="jj",
@@ -228,7 +226,7 @@ def corpus_sync(
         console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
         raise typer.Exit(1)
 
-    from jj.corpus import sync_from_base_md, DEFAULT_BASE_MD
+    from jj.corpus import DEFAULT_BASE_MD, sync_from_base_md
 
     base_path = path or DEFAULT_BASE_MD
 
@@ -364,7 +362,7 @@ def corpus_stats():
         f"Total Roles: {stats['total_roles']}\n\n"
         f"[bold]By Source:[/bold]\n" +
         "\n".join(f"  {k}: {v}" for k, v in stats['by_source'].items()) + "\n\n"
-        f"[bold]By Category:[/bold]\n" +
+        "[bold]By Category:[/bold]\n" +
         "\n".join(f"  {k}: {v}" for k, v in list(stats['by_category'].items())[:10]),
         title="Corpus Stats",
     ))
@@ -429,7 +427,7 @@ def corpus_dismiss(
         console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
         raise typer.Exit(1)
 
-    from jj.db import update_corpus_suggestion_status, dismiss_corpus_suggestions_for_theme
+    from jj.db import dismiss_corpus_suggestions_for_theme, update_corpus_suggestion_status
 
     if suggestion_id:
         if update_corpus_suggestion_status(suggestion_id, "dismissed"):
@@ -637,7 +635,7 @@ def resume_import_cmd(
         console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
         raise typer.Exit(1)
 
-    from jj.resume_import import import_resume, import_directory, get_import_summary
+    from jj.resume_import import get_import_summary, import_directory, import_resume
 
     if not path.exists():
         console.print(f"[red]Path not found: {path}[/red]")
@@ -750,7 +748,7 @@ def resume_entries(
         console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
         raise typer.Exit(1)
 
-    from jj.db import get_resume_entries, get_resume
+    from jj.db import get_resume, get_resume_entries
 
     resume = get_resume(resume_id)
     if not resume:
@@ -845,8 +843,8 @@ def serve(
 
     # Open browser
     if open_browser:
-        import webbrowser
         import threading
+        import webbrowser
 
         def open_browser_delayed():
             import time
@@ -941,10 +939,10 @@ def greenhouse_poll(
         raise typer.Exit(1)
 
     from jj.greenhouse import (
-        load_auth,
         GreenhouseClient,
         get_search_config,
         import_jobs_as_prospects,
+        load_auth,
     )
 
     # Load authentication
@@ -1048,7 +1046,7 @@ def greenhouse_config(
         console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
         raise typer.Exit(1)
 
-    from jj.greenhouse import get_search_config, save_search_config, load_auth
+    from jj.greenhouse import get_search_config, load_auth, save_search_config
 
     if show or (query is None and location is None and lat is None and lon is None and date_posted is None):
         # Show current config
@@ -1125,8 +1123,8 @@ def email_setup():
         raise typer.Exit(1)
 
     try:
-        from jj.gmail_checker import GmailClient, CREDENTIALS_PATH, TOKEN_PATH
-    except ImportError as e:
+        from jj.gmail_checker import CREDENTIALS_PATH, TOKEN_PATH, GmailClient
+    except ImportError:
         console.print("[red]Gmail dependencies not installed.[/red]")
         console.print("Install with: [cyan]pip install google-api-python-client google-auth-oauthlib[/cyan]")
         raise typer.Exit(1)
@@ -1181,7 +1179,7 @@ def email_verify(
 
     try:
         from jj.gmail_checker import verify_confirmations
-    except ImportError as e:
+    except ImportError:
         console.print("[red]Gmail dependencies not installed.[/red]")
         console.print("Install with: [cyan]pip install google-api-python-client google-auth-oauthlib[/cyan]")
         raise typer.Exit(1)
@@ -1221,7 +1219,7 @@ def email_verify(
             console.print(f"[red]\u2717[/red] {result.company} - NO CONFIRMATION FOUND")
 
     console.print()
-    console.print(f"[bold]Summary:[/bold]")
+    console.print("[bold]Summary:[/bold]")
     console.print(f"  Confirmed: {len(confirmed)}")
     console.print(f"  Missing: {len(missing)}")
 
@@ -1253,12 +1251,13 @@ def email_updates(
 
     try:
         from jj.gmail_checker import search_updates
-    except ImportError as e:
+    except ImportError:
         console.print("[red]Gmail dependencies not installed.[/red]")
         console.print("Install with: [cyan]pip install google-api-python-client google-auth-oauthlib[/cyan]")
         raise typer.Exit(1)
 
     from datetime import datetime, timedelta
+
     from jj.db import get_applications
 
     # Get applications
@@ -1341,14 +1340,15 @@ def email_sync(
 
     # Run verify
     from typer.testing import CliRunner
-    runner = CliRunner()
+    CliRunner()
 
     # Instead of invoking CLI, just call the functions directly
     try:
-        from jj.gmail_checker import verify_confirmations, search_updates
-        from jj.db import get_applications
         from datetime import datetime, timedelta
-    except ImportError as e:
+
+        from jj.db import get_applications
+        from jj.gmail_checker import search_updates, verify_confirmations
+    except ImportError:
         console.print("[red]Gmail dependencies not installed.[/red]")
         console.print("Install with: [cyan]pip install google-api-python-client google-auth-oauthlib[/cyan]")
         raise typer.Exit(1)
@@ -1433,11 +1433,10 @@ def email_learn(
         raise typer.Exit(1)
 
     try:
-        from jj.gmail_checker import (
-            search_company_emails, save_company_domain, get_company_domain
-        )
         import re
-    except ImportError as e:
+
+        from jj.gmail_checker import get_company_domain, save_company_domain, search_company_emails
+    except ImportError:
         console.print("[red]Gmail dependencies not installed.[/red]")
         console.print("Install with: [cyan]pip install google-api-python-client google-auth-oauthlib[/cyan]")
         raise typer.Exit(1)
@@ -1479,7 +1478,7 @@ def email_learn(
             domains[domain].append(email)
 
     if not domains:
-        console.print(f"[yellow]Only found ATS emails, no company domain detected.[/yellow]")
+        console.print("[yellow]Only found ATS emails, no company domain detected.[/yellow]")
         return
 
     console.print(f"Found {len(emails)} emails. Detected domains:\n")
@@ -1529,7 +1528,7 @@ def email_test(
 
     try:
         from jj.gmail_checker import search_company_emails
-    except ImportError as e:
+    except ImportError:
         console.print("[red]Gmail dependencies not installed.[/red]")
         console.print("Install with: [cyan]pip install google-api-python-client google-auth-oauthlib[/cyan]")
         raise typer.Exit(1)
@@ -1586,7 +1585,7 @@ def email_read(
 
     try:
         from jj.gmail_checker import read_email
-    except ImportError as e:
+    except ImportError:
         console.print("[red]Gmail dependencies not installed.[/red]")
         console.print("Install with: [cyan]pip install google-api-python-client google-auth-oauthlib[/cyan]")
         raise typer.Exit(1)
@@ -1647,9 +1646,9 @@ def email_pair(
         raise typer.Exit(1)
 
     try:
+        from jj.db import get_application, get_applications
         from jj.gmail_checker import sync_application_emails
-        from jj.db import get_applications, get_application
-    except ImportError as e:
+    except ImportError:
         console.print("[red]Gmail dependencies not installed.[/red]")
         console.print("Install with: [cyan]pip install google-api-python-client google-auth-oauthlib[/cyan]")
         raise typer.Exit(1)
@@ -1764,8 +1763,9 @@ def app_status(
         console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
         raise typer.Exit(1)
 
-    from jj.db import get_applications_with_pairing_status, get_pairing_stats
     from rich.table import Table
+
+    from jj.db import get_applications_with_pairing_status, get_pairing_stats
 
     # Get applications
     if ghosted:
@@ -1788,7 +1788,7 @@ def app_status(
         title = "Applications (excluding resolved)"
 
     if not applications:
-        console.print(f"[yellow]No applications found matching criteria.[/yellow]")
+        console.print("[yellow]No applications found matching criteria.[/yellow]")
         return
 
     # Create table
@@ -1931,8 +1931,9 @@ def interests_list():
     Examples:
         jj interests list
     """
-    from jj.db import get_interests
     from rich.table import Table
+
+    from jj.db import get_interests
 
     interests = get_interests()
     if not interests:
@@ -2027,8 +2028,8 @@ def gdocs_setup():
         raise typer.Exit(1)
 
     try:
-        from jj.google_docs import GoogleDocsClient, CREDENTIALS_PATH, GDOCS_TOKEN_PATH
-    except ImportError as e:
+        from jj.google_docs import CREDENTIALS_PATH, GDOCS_TOKEN_PATH, GoogleDocsClient
+    except ImportError:
         console.print("[red]Google API dependencies not installed.[/red]")
         console.print("Install with: [cyan]pip install google-api-python-client google-auth-oauthlib[/cyan]")
         raise typer.Exit(1)
@@ -2089,7 +2090,7 @@ def gdocs_config(
         console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
         raise typer.Exit(1)
 
-    from jj.google_docs import get_gdocs_config, save_gdocs_config, GDOCS_TOKEN_PATH
+    from jj.google_docs import GDOCS_TOKEN_PATH, get_gdocs_config, save_gdocs_config
 
     if show or (template_id is None and output_dir is None and auto_open is None and keep_doc is None):
         # Show current config
@@ -2184,8 +2185,12 @@ def gdocs_generate(
         raise typer.Exit(1)
 
     try:
-        from jj.google_docs import generate_resume_gdocs, generate_resume_from_corpus, get_gdocs_config
-    except ImportError as e:
+        from jj.google_docs import (
+            generate_resume_from_corpus,
+            generate_resume_gdocs,
+            get_gdocs_config,
+        )
+    except ImportError:
         console.print("[red]Google API dependencies not installed.[/red]")
         console.print("Install with: [cyan]pip install google-api-python-client google-auth-oauthlib[/cyan]")
         raise typer.Exit(1)
@@ -2273,8 +2278,8 @@ def gdocs_test():
         raise typer.Exit(1)
 
     try:
-        from jj.google_docs import test_connection, get_gdocs_config, GDOCS_TOKEN_PATH
-    except ImportError as e:
+        from jj.google_docs import GDOCS_TOKEN_PATH, get_gdocs_config, test_connection
+    except ImportError:
         console.print("[red]Google API dependencies not installed.[/red]")
         console.print("Install with: [cyan]pip install google-api-python-client google-auth-oauthlib[/cyan]")
         raise typer.Exit(1)
@@ -2456,6 +2461,7 @@ def worker_run_task(
 ):
     """Run a specific task immediately (for testing)."""
     import json
+
     from jj.worker import run_task_now
 
     payload_dict = json.loads(payload) if payload else None
@@ -2512,8 +2518,9 @@ def investors_list(
         console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
         raise typer.Exit(1)
 
-    from jj.db import get_investor_boards
     from rich.table import Table
+
+    from jj.db import get_investor_boards
 
     boards = get_investor_boards(active_only=not all_boards)
 
@@ -2573,8 +2580,9 @@ def investors_show(
         console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
         raise typer.Exit(1)
 
-    from jj.db import get_investor_board, get_investor_board_jobs
     from rich.table import Table
+
+    from jj.db import get_investor_board, get_investor_board_jobs
 
     board = get_investor_board(board_id)
     if not board:

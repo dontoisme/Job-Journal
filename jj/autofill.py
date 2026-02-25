@@ -3,11 +3,10 @@
 Provides ATS detection and field mapping for automated form filling.
 """
 
+import re
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
-from typing import Any, Optional
-import re
+from typing import Optional
 
 from jj.config import load_profile
 

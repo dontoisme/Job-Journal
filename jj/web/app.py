@@ -4,28 +4,53 @@ import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import AsyncGenerator, Optional
+from typing import AsyncGenerator
 
-from fastapi import FastAPI, Request, Form, Query
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from jj.config import JJ_HOME, load_profile, CORPUS_PATH
-from jj.db import (
-    get_stats, get_roles, get_applications, get_application, get_entries_for_role,
-    get_skills, DB_PATH, get_pipeline_stats, get_stale_applications, get_connection,
-    update_application, get_todays_focus, get_focus_counts, log_event,
-    create_task, get_recent_tasks, get_task_stats,
-    # TWC functions
-    get_twc_week_boundaries, get_twc_activities_for_week, get_twc_week_summary,
-    update_twc_fields, backfill_activity_dates, get_twc_activity_types, get_twc_result_types,
-    get_twc_claim_period, mark_twc_payment_submitted, get_all_twc_claim_periods,
-    # Email pairing functions
-    get_pairing_stats, get_applications_with_pairing_status, get_application_timeline,
-)
-from jj.geo import AREAS, get_all_companies, discover_companies_for_area, save_companies, run_enrichment_pipeline
 from jj.analytics import get_all_analytics, get_funnel_stats, get_weekly_summary
+from jj.config import CORPUS_PATH, JJ_HOME, load_profile
+from jj.db import (
+    DB_PATH,
+    backfill_activity_dates,
+    create_task,
+    get_all_twc_claim_periods,
+    get_application,
+    get_applications,
+    get_applications_with_pairing_status,
+    get_entries_for_role,
+    get_focus_counts,
+    # Email pairing functions
+    get_pairing_stats,
+    get_pipeline_stats,
+    get_recent_tasks,
+    get_roles,
+    get_skills,
+    get_stale_applications,
+    get_stats,
+    get_task_stats,
+    get_todays_focus,
+    get_twc_activities_for_week,
+    get_twc_activity_types,
+    get_twc_result_types,
+    # TWC functions
+    get_twc_week_boundaries,
+    get_twc_week_summary,
+    log_event,
+    mark_twc_payment_submitted,
+    update_application,
+    update_twc_fields,
+)
+from jj.geo import (
+    AREAS,
+    discover_companies_for_area,
+    get_all_companies,
+    run_enrichment_pipeline,
+    save_companies,
+)
 
 # App setup
 app = FastAPI(
@@ -40,7 +65,6 @@ app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=WEB_DIR / "templates")
 
 # Add custom Jinja2 filters
-import json
 
 def parse_tags(value):
     """Parse JSON tags string into a list."""
@@ -308,8 +332,8 @@ def get_table_data(table_name: str, limit: int = 100, offset: int = 0):
 
 def _get_geo_areas() -> list[dict]:
     """Get all geo areas, seeding built-ins if needed."""
-    import sqlite3
     import json as json_module
+    import sqlite3
     from datetime import datetime
     if not DB_PATH.exists():
         return []
@@ -349,7 +373,6 @@ def _get_geo_areas() -> list[dict]:
 def _get_geo_area_by_id(area_id: int) -> dict | None:
     """Get a single geo area by ID."""
     import sqlite3
-    import json as json_module
     if not DB_PATH.exists():
         return None
 
@@ -396,8 +419,8 @@ def _delete_geo_area(area_id: int) -> bool:
 
 def _create_corridor(name: str, lat: float, lng: float, radius: int, points: list) -> int:
     """Create a corridor area with multiple points."""
-    import sqlite3
     import json as json_module
+    import sqlite3
     from datetime import datetime
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -711,7 +734,6 @@ async def api_geo_areas():
 @app.post("/api/geo/areas")
 async def api_create_geo_area(request: Request):
     """Create a new custom search area."""
-    from fastapi import Form
     form = await request.form()
     name = form.get("name")
     latitude = float(form.get("latitude"))
@@ -867,7 +889,7 @@ async def update_application_status(
     reason: str = Form(None),
 ):
     """Update application status via quick action."""
-    from jj.db import transition_application_status, ALL_STATUSES
+    from jj.db import ALL_STATUSES, transition_application_status
 
     valid_statuses = list(ALL_STATUSES) + ['skipped', 'screening']  # Include legacy
     if status not in valid_statuses:
@@ -887,7 +909,7 @@ async def update_application_status(
     success = transition_application_status(
         app_id,
         status,
-        reason=reason or f"Manual update via dashboard",
+        reason=reason or "Manual update via dashboard",
         source='web'
     )
 

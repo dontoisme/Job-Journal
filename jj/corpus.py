@@ -7,7 +7,6 @@ The corpus is the source of truth for all resume bullets. This module:
 4. Validates that resume bullets exist in corpus
 """
 
-import re
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Optional
@@ -20,12 +19,10 @@ from jj.db import (
     find_role_by_company_title,
     get_all_entries,
     get_entries_for_role,
-    get_role,
     get_roles,
     update_entry,
 )
-from jj.parser import extract_metrics, extract_tags, parse_base_md
-
+from jj.parser import parse_base_md
 
 # Default base.md location
 DEFAULT_BASE_MD = Path.home() / ".job-apply" / "resume" / "base.md"
