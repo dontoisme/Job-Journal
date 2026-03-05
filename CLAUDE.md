@@ -4,9 +4,17 @@
 
 Python CLI (`jj`) + optional FastAPI web dashboard for career management and TWC compliance tracking. Built with Typer, Rich, SQLite, and Google APIs.
 
+## Virtual Environment
+
+The `jj` CLI is installed in a project-level venv. Always activate it before running `jj` commands:
+```bash
+source .venv/bin/activate
+```
+The LaunchAgent wrapper (`scripts/monitor-launcher.sh`) handles this automatically for scheduled runs.
+
 ## Architecture
 
-- **Entry point:** `jj/cli.py` — Typer app with 9 sub-apps (corpus, resume, email, greenhouse, app, interests, gdocs, worker, investors)
+- **Entry point:** `jj/cli.py` — Typer app with 11 sub-apps (corpus, resume, email, greenhouse, app, interests, gdocs, worker, investors, monitor, notify)
 - **Database:** `jj/db.py` — SQLite with 16 tables, context-manager connections, `sqlite3.Row` factory
 - **Config:** YAML-based (`~/.job-journal/profile.yaml`, `config.yaml`), loaded via `jj/config.py`
 - **Data path:** `~/.job-journal/` (DB, config, credentials, corpus)

@@ -2656,5 +2656,277 @@ def investors_add(
     console.print(f"[green]Created investor board #{board_id}:[/green] {name} → {url}")
 
 
+# =============================================================================
+# Notify Sub-App
+# =============================================================================
+
+notify_app = typer.Typer(
+    name="notify",
+    help="Send notifications (Slack webhook).",
+    no_args_is_help=True,
+)
+app.add_typer(notify_app, name="notify")
+
+
+@notify_app.command("slack")
+def notify_slack_cmd(
+    message: Optional[str] = typer.Option(None, "--message", "-m", help="Direct text message to send"),
+    file: Optional[Path] = typer.Option(None, "--file", "-f", help="JSON file with jobs + summary data"),
+):
+    """Send a notification to Slack via webhook.
+
+    Either --message or --file is required.
+
+    The --file option expects JSON with keys:
+      new_jobs: [{title, company, location, score, url}, ...]
+      summary: {companies_checked, boards_checked, timestamp}
+    """
+    import json
+    from jj.notifier import notify_slack, send_notification, format_slack_message
+
+    config = load_config()
+    webhook_url = config.get("monitor", {}).get("slack_webhook_url", "")
+
+    if not webhook_url:
+        console.print("[red]No slack_webhook_url configured.[/red]")
+        console.print("Set it in ~/.job-journal/config.yaml under monitor.slack_webhook_url")
+        raise typer.Exit(1)
+
+    if file:
+        if not file.exists():
+            console.print(f"[red]File not found: {file}[/red]")
+            raise typer.Exit(1)
+        data = json.loads(file.read_text())
+        new_jobs = data.get("new_jobs", [])
+        summary = data.get("summary", {})
+        success = notify_slack(webhook_url, new_jobs, summary)
+    elif message:
+        # Send raw text message
+        payload = {"text": message}
+        data = json.dumps(payload).encode("utf-8")
+        from urllib.request import Request, urlopen
+        from urllib.error import URLError
+        req = Request(webhook_url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urlopen(req, timeout=10) as resp:
+                success = resp.status == 200
+        except URLError as e:
+            console.print(f"[red]Slack notification failed: {e}[/red]")
+            raise typer.Exit(1)
+    else:
+        console.print("[red]Provide either --message or --file[/red]")
+        raise typer.Exit(1)
+
+    if success:
+        console.print("[green]Slack notification sent.[/green]")
+    else:
+        console.print("[red]Slack notification failed.[/red]")
+        raise typer.Exit(1)
+
+
+# =============================================================================
+# Monitor Sub-App
+# =============================================================================
+
+monitor_app = typer.Typer(
+    name="monitor",
+    help="Automated job monitoring via scheduled Claude Code sessions.",
+    no_args_is_help=True,
+)
+app.add_typer(monitor_app, name="monitor")
+
+
+@monitor_app.command("install")
+def monitor_install(
+    hours: str = typer.Option("6,12", "--hours", help="Comma-separated hours to run (24h format)"),
+    uninstall: bool = typer.Option(False, "--uninstall", help="Remove the LaunchAgent"),
+):
+    """Install (or uninstall) the macOS LaunchAgent for scheduled monitoring."""
+    import subprocess
+
+    plist_dir = Path.home() / "Library" / "LaunchAgents"
+    plist_path = plist_dir / "com.jj.monitor.plist"
+    log_dir = JJ_HOME / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    if uninstall:
+        if plist_path.exists():
+            subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+            plist_path.unlink()
+            console.print("[green]LaunchAgent removed.[/green]")
+        else:
+            console.print("[yellow]LaunchAgent not installed.[/yellow]")
+        return
+
+    # Find paths
+    import shutil
+    claude_path = shutil.which("claude")
+    if not claude_path:
+        console.print("[red]'claude' not found in PATH.[/red]")
+        console.print("Install Claude Code CLI first: https://docs.anthropic.com/claude-code")
+        raise typer.Exit(1)
+
+    jj_path = shutil.which("jj")
+    if not jj_path:
+        console.print("[red]'jj' not found in PATH.[/red]")
+        raise typer.Exit(1)
+
+    # Find the project directory (where .claude/commands/monitor.md lives)
+    project_dir = Path(__file__).resolve().parent.parent
+    launcher_path = project_dir / "scripts" / "monitor-launcher.sh"
+
+    if not launcher_path.exists():
+        console.print(f"[red]Launcher script not found: {launcher_path}[/red]")
+        raise typer.Exit(1)
+
+    # Build calendar intervals
+    hour_list = [int(h.strip()) for h in hours.split(",")]
+    intervals = ""
+    for h in hour_list:
+        intervals += f"""
+        <dict>
+            <key>Hour</key>
+            <integer>{h}</integer>
+            <key>Minute</key>
+            <integer>0</integer>
+        </dict>"""
+
+    # Generate plist
+    plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jj.monitor</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{launcher_path}</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <array>{intervals}
+    </array>
+    <key>StandardOutPath</key>
+    <string>{log_dir}/monitor.log</string>
+    <key>StandardErrorPath</key>
+    <string>{log_dir}/monitor.log</string>
+    <key>WorkingDirectory</key>
+    <string>{project_dir}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{Path(claude_path).parent}:{Path(jj_path).parent}:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
+"""
+
+    plist_dir.mkdir(parents=True, exist_ok=True)
+
+    # Unload existing if present
+    if plist_path.exists():
+        subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+
+    plist_path.write_text(plist_content)
+    result = subprocess.run(["launchctl", "load", str(plist_path)], capture_output=True, text=True)
+
+    if result.returncode == 0:
+        console.print(f"[green]LaunchAgent installed.[/green]")
+        console.print(f"  Schedule: {', '.join(f'{h}:00' for h in hour_list)}")
+        console.print(f"  Log: {log_dir}/monitor.log")
+        console.print(f"  Plist: {plist_path}")
+    else:
+        console.print(f"[red]launchctl load failed: {result.stderr}[/red]")
+        raise typer.Exit(1)
+
+
+@monitor_app.command("status")
+def monitor_status():
+    """Show monitor status: LaunchAgent state, last run, config."""
+    import subprocess
+
+    plist_path = Path.home() / "Library" / "LaunchAgents" / "com.jj.monitor.plist"
+
+    # Check LaunchAgent
+    if plist_path.exists():
+        result = subprocess.run(
+            ["launchctl", "list", "com.jj.monitor"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            console.print("[green]LaunchAgent: loaded[/green]")
+        else:
+            console.print("[yellow]LaunchAgent: installed but not loaded[/yellow]")
+            console.print("  Run: launchctl load ~/Library/LaunchAgents/com.jj.monitor.plist")
+    else:
+        console.print("[dim]LaunchAgent: not installed[/dim]")
+        console.print("  Run: jj monitor install")
+
+    # Show config
+    config = load_config()
+    monitor_config = config.get("monitor", {})
+    hours = monitor_config.get("schedule_hours", [6, 12])
+    webhook = monitor_config.get("slack_webhook_url", "")
+    console.print(f"\nSchedule: {', '.join(str(h) + ':00' for h in hours)}")
+    console.print(f"Slack webhook: {'configured' if webhook else '[red]not set[/red]'}")
+
+    # Last run
+    if JJ_HOME.exists():
+        from jj.db import get_latest_monitor_run, init_database
+        init_database()  # Ensure monitor_runs table exists
+        last_run = get_latest_monitor_run()
+        if last_run:
+            console.print(f"\nLast run: {last_run['started_at']}")
+            console.print(f"  Type: {last_run['run_type']}")
+            console.print(f"  Companies: {last_run['companies_checked']}, Boards: {last_run['boards_checked']}")
+            console.print(f"  New listings: {last_run['new_listings_found']}")
+            console.print(f"  Notified: {'yes' if last_run['notification_sent'] else 'no'}")
+        else:
+            console.print("\n[dim]No monitor runs yet.[/dim]")
+
+
+@monitor_app.command("test-notify")
+def monitor_test_notify():
+    """Send a test notification to verify Slack webhook."""
+    from jj.notifier import send_notification
+
+    test_jobs = [
+        {"title": "Sr PM, Growth", "company": "Test Company", "location": "Remote", "score": 85, "url": "https://example.com/job/1"},
+        {"title": "PM, AI Platform", "company": "Another Co", "location": "Austin, TX", "score": 72, "url": "https://example.com/job/2"},
+    ]
+    test_summary = {
+        "companies_checked": 5,
+        "boards_checked": 3,
+        "timestamp": "TEST",
+    }
+
+    success = send_notification(test_jobs, test_summary)
+    if success:
+        console.print("[green]Test notification sent! Check Slack.[/green]")
+    else:
+        config = load_config()
+        webhook = config.get("monitor", {}).get("slack_webhook_url", "")
+        if not webhook:
+            console.print("[red]No slack_webhook_url configured.[/red]")
+            console.print("Set it in ~/.job-journal/config.yaml under monitor.slack_webhook_url")
+        else:
+            console.print("[red]Notification failed. Check webhook URL and try again.[/red]")
+
+
+@monitor_app.command("log")
+def monitor_log(
+    lines: int = typer.Option(50, "--lines", "-n", help="Number of lines to show"),
+):
+    """Show recent monitor log output."""
+    log_file = JJ_HOME / "logs" / "monitor.log"
+    if not log_file.exists():
+        console.print("[dim]No monitor log found yet.[/dim]")
+        return
+
+    content = log_file.read_text()
+    log_lines = content.strip().split("\n")
+    for line in log_lines[-lines:]:
+        console.print(line)
+
+
 if __name__ == "__main__":
     app()

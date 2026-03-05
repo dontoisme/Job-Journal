@@ -83,6 +83,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "auto_open": True,
         "keep_google_doc": True,
     },
+    "monitor": {
+        "schedule_hours": [6, 12],
+        "check_interval_hours": 12,
+        "notify_threshold": 50,
+        "slack_webhook_url": "",
+    },
 }
 
 
@@ -91,6 +97,7 @@ def ensure_jj_home() -> None:
     JJ_HOME.mkdir(exist_ok=True)
     (JJ_HOME / "resumes").mkdir(exist_ok=True)
     (JJ_HOME / "exports").mkdir(exist_ok=True)
+    (JJ_HOME / "logs").mkdir(exist_ok=True)
 
 
 def load_yaml(path: Path) -> dict[str, Any]:

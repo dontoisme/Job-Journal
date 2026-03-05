@@ -388,6 +388,20 @@ CREATE TABLE IF NOT EXISTS cover_letters (
 
 CREATE INDEX IF NOT EXISTS idx_interests_topic ON interests(topic);
 CREATE INDEX IF NOT EXISTS idx_cover_letters_company ON cover_letters(target_company);
+
+-- Monitor run history
+CREATE TABLE IF NOT EXISTS monitor_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_type TEXT NOT NULL,               -- 'full', 'companies', 'boards'
+    started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT,
+    companies_checked INTEGER DEFAULT 0,
+    boards_checked INTEGER DEFAULT 0,
+    new_listings_found INTEGER DEFAULT 0,
+    notification_sent BOOLEAN DEFAULT 0,
+    summary TEXT,                          -- JSON
+    error_log TEXT                         -- JSON
+);
 """
 
 
@@ -3763,4 +3777,76 @@ def get_investor_board_jobs(board_id: int, active_only: bool = True) -> list[dic
                 WHERE investor_board_id = ?
                 ORDER BY first_seen_at DESC
             """, (board_id,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+# =============================================================================
+# Monitor Runs
+# =============================================================================
+
+def create_monitor_run(run_type: str = "full") -> int:
+    """Create a new monitor run record. Returns the run ID."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO monitor_runs (run_type) VALUES (?)",
+            (run_type,),
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+
+def complete_monitor_run(
+    run_id: int,
+    companies_checked: int = 0,
+    boards_checked: int = 0,
+    new_listings_found: int = 0,
+    notification_sent: bool = False,
+    summary: dict | None = None,
+    error_log: list | None = None,
+) -> None:
+    """Mark a monitor run as completed with results."""
+    with get_connection() as conn:
+        conn.execute(
+            """UPDATE monitor_runs SET
+                completed_at = CURRENT_TIMESTAMP,
+                companies_checked = ?,
+                boards_checked = ?,
+                new_listings_found = ?,
+                notification_sent = ?,
+                summary = ?,
+                error_log = ?
+            WHERE id = ?""",
+            (
+                companies_checked,
+                boards_checked,
+                new_listings_found,
+                notification_sent,
+                json.dumps(summary) if summary else None,
+                json.dumps(error_log) if error_log else None,
+                run_id,
+            ),
+        )
+        conn.commit()
+
+
+def get_latest_monitor_run() -> Optional[dict[str, Any]]:
+    """Get the most recent monitor run."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM monitor_runs ORDER BY started_at DESC LIMIT 1"
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def get_monitor_runs(limit: int = 10) -> list[dict[str, Any]]:
+    """Get recent monitor runs."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM monitor_runs ORDER BY started_at DESC LIMIT ?",
+            (limit,),
+        )
         return [dict(row) for row in cursor.fetchall()]
