@@ -14,6 +14,7 @@ from jj.config import (
     DEFAULT_PROFILE,
     JJ_HOME,
     ensure_jj_home,
+    load_config,
     save_config,
     save_profile,
 )
@@ -1394,6 +1395,7 @@ def email_sync(
             if update_results:
                 console.print(f"[bold]Found {len(update_results)} updates:[/bold]\n")
 
+                transitioned = []
                 for result in update_results:
                     type_emoji = {
                         "interview": "[green]INTERVIEW[/green]",
@@ -1404,6 +1406,15 @@ def email_sync(
                     console.print(f"{type_emoji}: {result.company}")
                     console.print(f"    {result.email.subject}")
                     console.print(f"    [link={result.email.gmail_link}]Open in Gmail[/link]")
+                    if result.status_transitioned:
+                        console.print(f"    [bold]-> Status updated to {result.status_transitioned}[/bold]")
+                        transitioned.append(result)
+                    console.print()
+
+                if transitioned:
+                    console.print(f"[bold cyan]Auto-updated {len(transitioned)} application(s):[/bold cyan]")
+                    for t in transitioned:
+                        console.print(f"  {t.company} -> [bold]{t.status_transitioned}[/bold]")
                     console.print()
             else:
                 console.print("[green]No new updates found.[/green]")
