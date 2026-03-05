@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}Resumes - Job Journal{% endblock %}
+{% block page_title %}Resumes{% endblock %}
+
+{% block page_actions %}
+<div style="display: flex; gap: 0.5rem; align-items: center; font-size: 0.85rem; color: var(--text-secondary);">
+    {{ total_count }} resume{{ 's' if total_count != 1 else '' }} in last {{ days }} days
+</div>
+{% endblock %}
+
+{% block content %}
+<div class="resume-groups">
+    {% for date, resumes in grouped_resumes.items() %}
+    <div class="resume-date-group">
+        <div class="resume-date-header">
+            <span>{{ date }}</span>
+            <span class="resume-date-count">{{ resumes|length }} resume{{ 's' if resumes|length != 1 else '' }}</span>
+        </div>
+        <div class="table-container">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Company</th>
+                        <th>Role</th>
+                        <th>VC Board</th>
+                        <th>RJ Before</th>
+                        <th>RJ After</th>
+                        <th>Delta</th>
+                        <th>Google Doc</th>
+                        <th>Apply</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for r in resumes %}
+                    <tr>
+                        <td>{{ loop.index }}</td>
+                        <td>{{ r.company or '—' }}</td>
+                        <td>{{ r.position or '—' }}</td>
+                        <td>{{ r.vc_board or '—' }}</td>
+                        <td>{{ r.rj_before if r.rj_before is not none else '—' }}</td>
+                        <td>{{ r.rj_after if r.rj_after is not none else '—' }}</td>
+                        <td>
+                            {% if r.delta is not none %}
+                            <span class="{% if r.delta > 0 %}delta-positive{% elif r.delta < 0 %}delta-negative{% endif %}">
+                                {{ '+' if r.delta > 0 else '' }}{{ r.delta }}
+                            </span>
+                            {% else %}
+                            —
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if r.doc_url %}
+                            <a href="{{ r.doc_url }}" target="_blank" class="table-link">Open</a>
+                            {% else %}
+                            —
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if r.job_url %}
+                            <a href="{{ r.job_url }}" target="_blank" class="table-link">Apply</a>
+                            {% else %}
+                            —
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if r.status %}
+                            <span class="badge {% if r.status == 'applied' %}badge-accent{% elif r.status == 'rejected' %}badge-danger{% elif r.status == 'interview' or r.status == 'screening' %}badge-success{% elif r.status == 'prospect' %}badge-muted{% elif r.status == 'offer' %}badge-warning{% else %}badge-muted{% endif %}">
+                                {{ r.status }}
+                            </span>
+                            {% else %}
+                            —
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% else %}
+    <div style="text-align: center; padding: 3rem; color: var(--text-secondary);">
+        No resumes found in the last {{ days }} days.
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

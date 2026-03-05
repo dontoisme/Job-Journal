@@ -70,6 +70,8 @@ class UpdateResult:
     email: EmailMatch
     update_type: str  # 'interview', 'rejection', 'next_steps', 'assessment', 'unknown'
     action_required: bool = False
+    application_id: Optional[int] = None
+    status_transitioned: Optional[str] = None  # New status if auto-transitioned
 
 
 @dataclass
@@ -693,7 +695,7 @@ def search_updates(
 
     # Import db functions if saving
     if save_to_db:
-        from jj.db import update_application_latest_update
+        from jj.db import update_application_latest_update, transition_application_status, TERMINAL_STATUSES
 
     results = []
     seen_message_ids = set()
@@ -732,7 +734,8 @@ def search_updates(
                 position=position,
                 email=email,
                 update_type=email.match_type,
-                action_required=action_required
+                action_required=action_required,
+                application_id=app_id,
             )
             results.append(result)
 
@@ -742,8 +745,14 @@ def search_updates(
                 if not existing or email.date > existing.email.date:
                     app_latest_updates[app_id] = result
 
-    # Save latest updates to database
+    # Save latest updates to database and auto-transition statuses
     if save_to_db:
+        # Map email update_type to application status
+        update_type_to_status = {
+            'rejection': 'rejected',
+            'interview': 'interview',
+        }
+
         for app_id, update in app_latest_updates.items():
             update_application_latest_update(
                 app_id=app_id,
@@ -752,6 +761,25 @@ def search_updates(
                 subject=update.email.subject,
                 email_id=update.email.message_id,
             )
+
+            # Auto-transition status for rejections and interviews
+            new_status = update_type_to_status.get(update.update_type)
+            if new_status:
+                # Look up current status to skip terminal apps
+                current_app = next(
+                    (a for a in applications if a.get("id") == app_id), None
+                )
+                current_status = current_app.get("status") if current_app else None
+                if current_status and current_status not in TERMINAL_STATUSES:
+                    success = transition_application_status(
+                        app_id=app_id,
+                        new_status=new_status,
+                        reason=f"Email: {update.email.subject}",
+                        source='email',
+                        metadata={'email_id': update.email.message_id},
+                    )
+                    if success:
+                        update.status_transitioned = new_status
 
     return results
 

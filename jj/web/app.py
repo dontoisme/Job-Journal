@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import AsyncGenerator
@@ -27,6 +28,7 @@ from jj.db import (
     get_pairing_stats,
     get_pipeline_stats,
     get_recent_tasks,
+    get_resumes_with_applications,
     get_roles,
     get_skills,
     get_stale_applications,
@@ -1037,6 +1039,57 @@ async def sse_events():
             "Connection": "keep-alive",
         }
     )
+
+
+# --------------------------------------------------------------------------
+# Resumes routes
+# --------------------------------------------------------------------------
+
+def extract_vc_board(notes: str | None) -> str:
+    """Extract VC/investor board name from notes field."""
+    if not notes:
+        return ""
+    # Try [VC Board: NAME] pattern first
+    match = re.search(r'\[VC Board:\s*(.+?)\]', notes)
+    if match:
+        return match.group(1)
+    # Try "Fund portfolio" pattern (e.g. "a16z portfolio", "Sequoia portfolio")
+    match = re.search(r'(\w[\w\s]*?)\s+portfolio\b', notes, re.IGNORECASE)
+    if match:
+        return match.group(1).strip()
+    return ""
+
+
+@app.get("/resumes", response_class=HTMLResponse)
+async def resumes_page(request: Request, days: int = 30):
+    """Resumes dashboard - generated resumes with application data."""
+    rows = get_resumes_with_applications(days=days)
+
+    # Enrich rows and group by date
+    grouped: dict[str, list[dict]] = {}
+    for row in rows:
+        row["vc_board"] = extract_vc_board(row.get("notes"))
+        rj_before = row.get("rj_before")
+        rj_after = row.get("rj_after")
+        if rj_before is not None and rj_after is not None:
+            row["delta"] = rj_after - rj_before
+        else:
+            row["delta"] = None
+
+        if row.get("google_doc_id"):
+            row["doc_url"] = f"https://docs.google.com/document/d/{row['google_doc_id']}/edit"
+        else:
+            row["doc_url"] = None
+
+        date_key = row["created_at"][:10] if row.get("created_at") else "Unknown"
+        grouped.setdefault(date_key, []).append(row)
+
+    return templates.TemplateResponse("resumes.html", {
+        "request": request,
+        "grouped_resumes": grouped,
+        "days": days,
+        "total_count": len(rows),
+    })
 
 
 # --------------------------------------------------------------------------

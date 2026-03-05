@@ -1593,6 +1593,53 @@ tr:hover {
     font-size: 0.9rem;
 }
 
+/* Resume date groups */
+.resume-date-group {
+    margin-bottom: 1.5rem;
+}
+
+.resume-date-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.75rem 1rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px 8px 0 0;
+    font-weight: 600;
+}
+
+.resume-date-count {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-weight: 400;
+}
+
+.resume-date-group .table-container {
+    border-top: none;
+}
+
+.delta-positive {
+    color: var(--success);
+    font-weight: 600;
+}
+
+.delta-negative {
+    color: var(--danger);
+    font-weight: 600;
+}
+
+.table-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 0.85rem;
+}
+
+.table-link:hover {
+    color: var(--accent-hover);
+    text-decoration: underline;
+}
+
 /* Form select for TWC */
 .form-select {
     appearance: none;

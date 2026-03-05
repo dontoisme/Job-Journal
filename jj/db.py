@@ -198,6 +198,7 @@ CREATE TABLE IF NOT EXISTS applications (
     job_url TEXT,
     rj_before INTEGER,
     rj_after INTEGER,
+    posted_at TEXT,                  -- Date job was originally posted (YYYY-MM-DD when available)
     applied_at TEXT,
     notes TEXT,
     -- Email tracking fields
@@ -468,6 +469,8 @@ def migrate_database() -> None:
         # Company fit scoring
         ("companies", "fit_score", "INTEGER"),
         ("companies", "fit_notes", "TEXT"),
+        # Job posting date
+        ("applications", "posted_at", "TEXT"),
     ]
 
     with get_connection() as conn:
@@ -1575,6 +1578,49 @@ def validate_resume(resume_id: int, is_valid: bool, drift_score: int = 0) -> boo
         )
         conn.commit()
         return cursor.rowcount > 0
+
+
+def get_resumes_with_applications(days: int = 30) -> list[dict]:
+    """Get resumes joined with application data, ordered by date desc.
+
+    Joins on resume_id FK first, falls back to company name match.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT
+                r.id as resume_id,
+                r.target_company as company,
+                r.target_role as position,
+                r.variant,
+                r.google_doc_id,
+                r.filepath as pdf_path,
+                r.created_at,
+                r.rj_score,
+                COALESCE(a_fk.id, a_name.id) as application_id,
+                COALESCE(a_fk.fit_score, a_name.fit_score) as fit_score,
+                COALESCE(a_fk.rj_before, a_name.rj_before) as rj_before,
+                COALESCE(a_fk.rj_after, a_name.rj_after) as rj_after,
+                COALESCE(a_fk.status, a_name.status) as status,
+                COALESCE(a_fk.job_url, a_name.job_url) as job_url,
+                COALESCE(a_fk.location, a_name.location) as location,
+                COALESCE(a_fk.notes, a_name.notes) as notes
+            FROM resumes r
+            LEFT JOIN applications a_fk ON a_fk.resume_id = r.id
+            LEFT JOIN applications a_name
+                ON a_fk.id IS NULL
+                AND LOWER(a_name.company) = LOWER(r.target_company)
+                AND a_name.id = (
+                    SELECT MAX(a2.id) FROM applications a2
+                    WHERE LOWER(a2.company) = LOWER(r.target_company)
+                )
+            WHERE r.created_at >= datetime('now', ?)
+            ORDER BY r.created_at DESC
+            """,
+            (f"-{days} days",)
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
 
 # Resume Entry operations
