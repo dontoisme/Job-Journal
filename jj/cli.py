@@ -2168,7 +2168,7 @@ def gdocs_generate(
     replacement: Optional[list[str]] = typer.Option(None, "--replace", "-r", help="Custom replacement: OLD=NEW"),
     from_corpus: bool = typer.Option(False, "--from-corpus", "-c", help="Populate from corpus database"),
     variant: str = typer.Option("general", "--variant", "-v", help="Summary variant (growth, ai-agentic, health-tech, general)"),
-    max_roles: int = typer.Option(4, "--max-roles", help="Maximum roles to include (1-6)"),
+    max_roles: int = typer.Option(5, "--max-roles", help="Maximum roles to include (1-6)"),
     max_bullets: int = typer.Option(4, "--max-bullets", help="Maximum bullets per role (1-6)"),
 ):
     """Generate a resume from Google Docs template.
