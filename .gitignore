@@ -62,3 +62,6 @@ pipeline-log.md
 
 # Generated docs (keep templates, exclude output)
 EXECUTIVE_SUMMARY.md
+
+# Dolt database files (added by bd init)
+.dolt/
