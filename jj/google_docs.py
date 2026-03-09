@@ -133,10 +133,84 @@ def format_date_range(start_date: Optional[str], end_date: Optional[str], is_cur
     return ""
 
 
+def _extract_jd_keywords(jd_text: str) -> set[str]:
+    """Extract meaningful keywords from job description text.
+
+    Tokenizes the JD, removes stop words, and returns a set of lowercase
+    keywords (single words and bigrams) for bullet relevance scoring.
+    """
+    import re
+
+    stop_words = {
+        "a", "an", "the", "and", "or", "but", "in", "on", "at", "to", "for",
+        "of", "with", "by", "from", "is", "are", "was", "were", "be", "been",
+        "being", "have", "has", "had", "do", "does", "did", "will", "would",
+        "could", "should", "may", "might", "shall", "can", "need", "must",
+        "it", "its", "this", "that", "these", "those", "we", "you", "your",
+        "our", "they", "their", "them", "who", "what", "which", "when",
+        "where", "how", "not", "no", "if", "as", "so", "than", "too", "very",
+        "just", "about", "also", "into", "over", "such", "all", "any", "each",
+        "every", "both", "few", "more", "most", "other", "some", "up", "out",
+        "new", "work", "role", "team", "ability", "experience", "years",
+        "strong", "including", "across", "within", "well", "etc", "e.g",
+    }
+
+    # Normalize: lowercase, replace punctuation with spaces
+    text = re.sub(r"[^a-z0-9\s/+#.-]", " ", jd_text.lower())
+    words = [w for w in text.split() if w not in stop_words and len(w) > 2]
+
+    keywords = set(words)
+
+    # Add bigrams for multi-word terms (e.g., "product management", "a/b testing")
+    for i in range(len(words) - 1):
+        keywords.add(f"{words[i]} {words[i+1]}")
+
+    return keywords
+
+
+def _score_bullet_relevance(
+    bullet_text: str,
+    bullet_tags: list[str],
+    jd_keywords: set[str],
+) -> float:
+    """Score a bullet's relevance to a job description.
+
+    Returns a score from 0.0 to 1.0 based on keyword overlap between the
+    bullet text/tags and extracted JD keywords.
+    """
+    import re
+
+    # Normalize bullet text
+    bullet_lower = re.sub(r"[^a-z0-9\s/+#.-]", " ", bullet_text.lower())
+    bullet_words = set(bullet_lower.split())
+
+    # Build bullet bigrams
+    word_list = bullet_lower.split()
+    bullet_bigrams = {f"{word_list[i]} {word_list[i+1]}" for i in range(len(word_list) - 1)}
+
+    # Score: count JD keywords found in bullet text or tags
+    tag_set = {t.lower() for t in bullet_tags}
+    matches = 0
+    for kw in jd_keywords:
+        if " " in kw:
+            # Bigram: check in bullet bigrams
+            if kw in bullet_bigrams:
+                matches += 1.5  # Bigram matches are worth more
+        else:
+            if kw in bullet_words or kw in tag_set:
+                matches += 1.0
+
+    # Normalize by JD keyword count to get 0-1 range
+    if not jd_keywords:
+        return 0.0
+    return min(matches / len(jd_keywords), 1.0)
+
+
 def assemble_template_data(
     variant: str = "general",
     max_roles: int = 5,
     max_bullets_per_role: int = 6,
+    jd_text: Optional[str] = None,
 ) -> ResumeTemplateData:
     """Assemble all data needed to populate a resume template from the corpus.
 
@@ -144,10 +218,13 @@ def assemble_template_data(
         variant: Summary variant to use (e.g., "growth", "ai-agentic", "general")
         max_roles: Maximum number of roles to include
         max_bullets_per_role: Maximum bullets per role
+        jd_text: Optional job description text for relevance-based bullet ranking
 
     Returns:
         ResumeTemplateData with all information needed for template population
     """
+    import json
+
     from jj.db import (
         get_entries_for_role_ordered,
         get_roles_ordered_by_date,
@@ -161,13 +238,28 @@ def assemble_template_data(
     summaries = profile.get("summaries", {})
     summary = summaries.get(variant, summaries.get("general", ""))
 
+    # Extract JD keywords if JD text provided
+    jd_keywords = _extract_jd_keywords(jd_text) if jd_text else None
+
     # Get roles ordered by date (most recent first)
     all_roles = get_roles_ordered_by_date(limit=max_roles)
 
     roles: list[RoleData] = []
     for role in all_roles:
-        # Get entries for this role, ordered by times_used
-        entries = get_entries_for_role_ordered(role["id"], limit=max_bullets_per_role)
+        if jd_keywords:
+            # Fetch ALL entries for this role, score by JD relevance, take top N
+            all_entries = get_entries_for_role_ordered(role["id"], limit=None)
+            scored = []
+            for e in all_entries:
+                tags = json.loads(e.get("tags", "[]")) if isinstance(e.get("tags"), str) else (e.get("tags") or [])
+                score = _score_bullet_relevance(e["text"], tags, jd_keywords)
+                scored.append((score, e))
+            # Sort by relevance (desc), then times_used (desc) as tiebreaker
+            scored.sort(key=lambda x: (x[0], x[1].get("times_used", 0)), reverse=True)
+            entries = [e for _, e in scored[:max_bullets_per_role]]
+        else:
+            # Default: ordered by times_used
+            entries = get_entries_for_role_ordered(role["id"], limit=max_bullets_per_role)
 
         role_data = RoleData(
             role_id=role["id"],
@@ -1017,6 +1109,7 @@ def generate_resume_programmatic(
     role_bullets: Optional[dict[str, list[str]]] = None,
     max_roles: int = 5,
     max_bullets_per_role: int = 6,
+    jd_text: Optional[str] = None,
     output_dir: Optional[Path] = None,
     auto_open: bool = True,
     keep_google_doc: bool = True,
@@ -1026,6 +1119,9 @@ def generate_resume_programmatic(
     Builds the entire Google Doc from scratch using insertText + formatting
     API calls. Produces a clean single-column document with no section breaks,
     tables, or multi-column layouts that break ATS parsing.
+
+    When jd_text is provided, bullets are ranked by relevance to the job
+    description using keyword matching against bullet text and tags.
 
     Args:
         company: Target company name
@@ -1037,6 +1133,7 @@ def generate_resume_programmatic(
         role_bullets: Custom bullet selection per role (company -> bullet texts)
         max_roles: Maximum number of roles to include
         max_bullets_per_role: Maximum bullets per role
+        jd_text: Optional job description text for relevance-based bullet ranking
         output_dir: Directory for PDF output
         auto_open: Whether to open the PDF after generation
         keep_google_doc: Whether to keep the Google Doc
@@ -1058,12 +1155,13 @@ def generate_resume_programmatic(
         output_dir_str = config.get("pdf_output_dir", "~/Documents/Resumes")
         output_dir = Path(output_dir_str).expanduser()
 
-    # Assemble data from corpus
+    # Assemble data from corpus (with JD-aware bullet ranking if provided)
     try:
         data = assemble_template_data(
             variant=variant,
             max_roles=max_roles,
             max_bullets_per_role=max_bullets_per_role,
+            jd_text=jd_text,
         )
     except Exception as e:
         return ResumeGenerationResult(success=False, error=f"Error assembling corpus data: {e}")

@@ -2170,6 +2170,7 @@ def gdocs_generate(
     variant: str = typer.Option("general", "--variant", "-v", help="Summary variant (growth, ai-agentic, health-tech, general)"),
     max_roles: int = typer.Option(5, "--max-roles", help="Maximum roles to include (1-6)"),
     max_bullets: int = typer.Option(4, "--max-bullets", help="Maximum bullets per role (1-6)"),
+    jd_file: Optional[str] = typer.Option(None, "--jd", help="Path to job description text file for relevance-based bullet ranking"),
 ):
     """Generate a resume from Google Docs template.
 
@@ -2190,6 +2191,7 @@ def gdocs_generate(
         jj gdocs generate "Startup Inc" "Senior PM" --replace "{{TEAM}}=Growth"
         jj gdocs generate "BigCo" "Director" --from-corpus --variant growth
         jj gdocs generate "TechCo" "PM" --from-corpus --max-roles 3 --max-bullets 4
+        jj gdocs generate "DataCo" "PM" --from-corpus --jd ~/jd-dataco.txt
     """
     if not JJ_HOME.exists():
         console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
@@ -2214,8 +2216,18 @@ def gdocs_generate(
 
     if from_corpus:
         # ATS-friendly programmatic generation (no template)
-        console.print(f"[bold]Generating resume for {company} - {position}...[/bold]")
-        console.print(f"[dim]Variant: {variant} | Max roles: {max_roles} | Max bullets: {max_bullets}[/dim]\n")
+        jd_text = None
+        if jd_file:
+            jd_path = Path(jd_file).expanduser()
+            if not jd_path.exists():
+                console.print(f"[red]JD file not found: {jd_path}[/red]")
+                raise typer.Exit(1)
+            jd_text = jd_path.read_text()
+            console.print(f"[bold]Generating resume for {company} - {position}...[/bold]")
+            console.print(f"[dim]Variant: {variant} | Max roles: {max_roles} | Max bullets: {max_bullets} | JD: {jd_path.name}[/dim]\n")
+        else:
+            console.print(f"[bold]Generating resume for {company} - {position}...[/bold]")
+            console.print(f"[dim]Variant: {variant} | Max roles: {max_roles} | Max bullets: {max_bullets}[/dim]\n")
 
         result = generate_resume_programmatic(
             company=company,
@@ -2223,6 +2235,7 @@ def gdocs_generate(
             variant=variant,
             max_roles=max_roles,
             max_bullets_per_role=max_bullets,
+            jd_text=jd_text,
             output_dir=output_path,
             auto_open=auto_open,
             keep_google_doc=keep_doc,
