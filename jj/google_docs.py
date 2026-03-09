@@ -546,6 +546,12 @@ def generate_resume_from_corpus(
         # Make replacements
         replacements_made = client.replace_text(doc_id, replacements)
 
+        # Flatten multi-column sections to single-column (ATS can't parse columns)
+        client.flatten_column_sections(doc_id)
+
+        # Flatten any tables to simple paragraphs (ATS can't parse tables)
+        client.flatten_tables(doc_id)
+
         # Clean up empty sections from unused role slots
         client.cleanup_empty_sections(doc_id)
 
@@ -613,6 +619,599 @@ def generate_resume_from_corpus(
             doc_url=final_doc_url,
             pdf_path=pdf_path,
             replacements_made=replacements_made,
+            resume_id=resume_id,
+        )
+
+    except FileNotFoundError as e:
+        return ResumeGenerationResult(success=False, error=str(e))
+    except Exception as e:
+        return ResumeGenerationResult(success=False, error=f"API error: {e}")
+
+
+@dataclass
+class _Segment:
+    """A piece of resume text with its formatting type."""
+    text: str
+    kind: str  # "name", "contact", "links", "section_header", "summary",
+               # "role_header", "role_location", "bullet", "edu_degree",
+               # "edu_school", "edu_details", "skills_line", "blank"
+    bold_prefix_len: int = 0  # For skills_line: bold up to the colon
+
+
+def _build_resume_segments(
+    data: ResumeTemplateData,
+    resolved_skills: dict[str, list[str]],
+    show_consulting: bool,
+) -> list[_Segment]:
+    """Build the ordered list of text segments for a resume.
+
+    Args:
+        data: Assembled template data from corpus
+        resolved_skills: Display name -> skill list (already resolved)
+        show_consulting: Whether to include the consulting section
+
+    Returns:
+        Ordered list of _Segment objects
+    """
+    profile = data.profile
+    name_data = profile.get("name", {})
+    full_name = f"{name_data.get('first', '')} {name_data.get('last', '')}".strip()
+
+    contact = profile.get("contact", {})
+    email = contact.get("email", "")
+    phone = contact.get("phone", "")
+    location = contact.get("location", "")
+    contact_parts = [p for p in [email, phone, location] if p]
+    contact_line = " | ".join(contact_parts)
+
+    links = profile.get("links", {})
+    link_parts = [v for v in [links.get("linkedin", ""), links.get("github", "")] if v]
+    links_line = " | ".join(link_parts)
+
+    segments: list[_Segment] = []
+
+    # Header
+    segments.append(_Segment(full_name, "name"))
+    if contact_line:
+        segments.append(_Segment(contact_line, "contact"))
+    if links_line:
+        segments.append(_Segment(links_line, "links"))
+
+    # Summary (join multiple lines into a single paragraph)
+    segments.append(_Segment("", "blank"))
+    segments.append(_Segment("SUMMARY", "section_header"))
+    if data.summary:
+        # Collapse newlines into spaces for a single-paragraph summary
+        summary_text = " ".join(data.summary.split("\n"))
+        summary_text = " ".join(summary_text.split())  # Normalize whitespace
+        segments.append(_Segment(summary_text, "summary"))
+
+    # Experience
+    segments.append(_Segment("", "blank"))
+    segments.append(_Segment("EXPERIENCE", "section_header"))
+
+    # Determine which roles go in main body vs consulting
+    main_roles = data.roles[:5]  # Up to 5 main roles
+    consulting_role = data.roles[5] if len(data.roles) >= 6 and show_consulting else None
+
+    for role_idx, role in enumerate(main_roles):
+        if not role.company and not role.title:
+            continue  # Skip empty role slots
+
+        # Role header line 1: "Company, Location | Date Range"
+        header_parts = [role.company]
+        if role.location:
+            header_parts[0] += f", {role.location}"
+        if role.date_range:
+            header_parts.append(role.date_range)
+        header = " | ".join(header_parts)
+        segments.append(_Segment(header, "role_header"))
+
+        # Role title on its own line
+        if role.title:
+            segments.append(_Segment(role.title, "role_title"))
+
+        # Bullets (use text prefix, not Google Docs list formatting)
+        for bullet in role.bullets:
+            if bullet:
+                segments.append(_Segment(f"• {bullet}", "bullet"))
+
+        # Spacer between roles (but not after the last one before next section)
+        if role_idx < len(main_roles) - 1:
+            segments.append(_Segment("", "blank"))
+
+    # Consulting section
+    if consulting_role and consulting_role.company:
+        segments.append(_Segment("", "blank"))
+        segments.append(_Segment("AI CONSULTING", "section_header"))
+        header_parts = [consulting_role.company]
+        if consulting_role.location:
+            header_parts[0] += f", {consulting_role.location}"
+        if consulting_role.date_range:
+            header_parts.append(consulting_role.date_range)
+        header = " | ".join(header_parts)
+        segments.append(_Segment(header, "role_header"))
+        if consulting_role.title:
+            segments.append(_Segment(consulting_role.title, "role_title"))
+        for bullet in consulting_role.bullets:
+            if bullet:
+                segments.append(_Segment(f"• {bullet}", "bullet"))
+
+    # Education
+    education = profile.get("education", {})
+    if education:
+        segments.append(_Segment("", "blank"))
+        segments.append(_Segment("EDUCATION", "section_header"))
+
+        degree = education.get("degree", "")
+        school = education.get("school", "")
+        school_loc = education.get("location", "")
+        grad = education.get("graduation", "")
+        # "Degree | School, Location | Graduation"
+        degree_parts = [degree]
+        school_str = f"{school}, {school_loc}" if school_loc else school
+        if school_str:
+            degree_parts.append(school_str)
+        if grad:
+            degree_parts.append(grad)
+        segments.append(_Segment(" | ".join(degree_parts), "edu_degree"))
+
+        details = education.get("details", "")
+        if details:
+            segments.append(_Segment(details, "edu_details"))
+
+    # Skills
+    if resolved_skills:
+        segments.append(_Segment("", "blank"))
+        segments.append(_Segment("SKILLS", "section_header"))
+        for display_name, skill_list in resolved_skills.items():
+            skills_str = ", ".join(skill_list)
+            # Add colon if display name doesn't already have one
+            label = display_name if display_name.endswith(":") else f"{display_name}:"
+            line = f"{label} {skills_str}"
+            segments.append(_Segment(line, "skills_line", bold_prefix_len=len(label)))
+
+    return segments
+
+
+def _segments_to_text_and_requests(
+    segments: list[_Segment],
+) -> tuple[str, list[dict]]:
+    """Convert segments to insertable text and formatting requests.
+
+    Args:
+        segments: Ordered list of _Segment objects
+
+    Returns:
+        Tuple of (full_text, formatting_requests)
+    """
+    # Build full text
+    lines = [seg.text for seg in segments]
+    full_text = "\n".join(lines)
+    text_len = len(full_text)
+
+    requests: list[dict] = []
+
+    # Document-wide styles
+    # Page margins: 0.6in = 43.2pt
+    requests.append({
+        "updateDocumentStyle": {
+            "documentStyle": {
+                "marginTop": {"magnitude": 43.2, "unit": "PT"},
+                "marginBottom": {"magnitude": 43.2, "unit": "PT"},
+                "marginLeft": {"magnitude": 43.2, "unit": "PT"},
+                "marginRight": {"magnitude": 43.2, "unit": "PT"},
+            },
+            "fields": "marginTop,marginBottom,marginLeft,marginRight",
+        }
+    })
+
+    # Default font for entire body: Garamond 10.5pt
+    requests.append({
+        "updateTextStyle": {
+            "range": {"startIndex": 1, "endIndex": 1 + text_len},
+            "textStyle": {
+                "weightedFontFamily": {"fontFamily": "Garamond"},
+                "fontSize": {"magnitude": 10.5, "unit": "PT"},
+            },
+            "fields": "weightedFontFamily,fontSize",
+        }
+    })
+
+    # Default line spacing: 1.15
+    requests.append({
+        "updateParagraphStyle": {
+            "range": {"startIndex": 1, "endIndex": 1 + text_len},
+            "paragraphStyle": {
+                "lineSpacing": 115,
+                "spaceAbove": {"magnitude": 0, "unit": "PT"},
+                "spaceBelow": {"magnitude": 0, "unit": "PT"},
+            },
+            "fields": "lineSpacing,spaceAbove,spaceBelow",
+        }
+    })
+
+    # Per-segment formatting
+    offset = 1  # Google Docs body starts at index 1
+
+    for seg in segments:
+        seg_start = offset
+        seg_end = offset + len(seg.text)
+        # Account for the newline after this segment
+        next_offset = seg_end + 1  # +1 for \n
+
+        if seg.kind == "name":
+            requests.append({
+                "updateTextStyle": {
+                    "range": {"startIndex": seg_start, "endIndex": seg_end},
+                    "textStyle": {
+                        "bold": True,
+                        "fontSize": {"magnitude": 16, "unit": "PT"},
+                    },
+                    "fields": "bold,fontSize",
+                }
+            })
+            requests.append({
+                "updateParagraphStyle": {
+                    "range": {"startIndex": seg_start, "endIndex": seg_end},
+                    "paragraphStyle": {
+                        "alignment": "CENTER",
+                        "spaceBelow": {"magnitude": 2, "unit": "PT"},
+                    },
+                    "fields": "alignment,spaceBelow",
+                }
+            })
+
+        elif seg.kind == "contact":
+            requests.append({
+                "updateTextStyle": {
+                    "range": {"startIndex": seg_start, "endIndex": seg_end},
+                    "textStyle": {
+                        "fontSize": {"magnitude": 9.5, "unit": "PT"},
+                    },
+                    "fields": "fontSize",
+                }
+            })
+            requests.append({
+                "updateParagraphStyle": {
+                    "range": {"startIndex": seg_start, "endIndex": seg_end},
+                    "paragraphStyle": {"alignment": "CENTER"},
+                    "fields": "alignment",
+                }
+            })
+
+        elif seg.kind == "links":
+            requests.append({
+                "updateTextStyle": {
+                    "range": {"startIndex": seg_start, "endIndex": seg_end},
+                    "textStyle": {
+                        "fontSize": {"magnitude": 9.5, "unit": "PT"},
+                    },
+                    "fields": "fontSize",
+                }
+            })
+            requests.append({
+                "updateParagraphStyle": {
+                    "range": {"startIndex": seg_start, "endIndex": seg_end},
+                    "paragraphStyle": {"alignment": "CENTER"},
+                    "fields": "alignment",
+                }
+            })
+
+        elif seg.kind == "section_header":
+            requests.append({
+                "updateTextStyle": {
+                    "range": {"startIndex": seg_start, "endIndex": seg_end},
+                    "textStyle": {"bold": True},
+                    "fields": "bold",
+                }
+            })
+            requests.append({
+                "updateParagraphStyle": {
+                    "range": {"startIndex": seg_start, "endIndex": seg_end},
+                    "paragraphStyle": {
+                        "spaceAbove": {"magnitude": 6, "unit": "PT"},
+                        "spaceBelow": {"magnitude": 2, "unit": "PT"},
+                        "borderBottom": {
+                            "color": {"color": {"rgbColor": {"red": 0, "green": 0, "blue": 0}}},
+                            "width": {"magnitude": 0.5, "unit": "PT"},
+                            "padding": {"magnitude": 1, "unit": "PT"},
+                            "dashStyle": "SOLID",
+                        },
+                    },
+                    "fields": "spaceAbove,spaceBelow,borderBottom",
+                }
+            })
+
+        elif seg.kind == "role_header":
+            requests.append({
+                "updateTextStyle": {
+                    "range": {"startIndex": seg_start, "endIndex": seg_end},
+                    "textStyle": {"bold": True},
+                    "fields": "bold",
+                }
+            })
+            requests.append({
+                "updateParagraphStyle": {
+                    "range": {"startIndex": seg_start, "endIndex": seg_end},
+                    "paragraphStyle": {
+                        "spaceAbove": {"magnitude": 4, "unit": "PT"},
+                    },
+                    "fields": "spaceAbove",
+                }
+            })
+
+        elif seg.kind == "role_title":
+            requests.append({
+                "updateTextStyle": {
+                    "range": {"startIndex": seg_start, "endIndex": seg_end},
+                    "textStyle": {
+                        "italic": True,
+                    },
+                    "fields": "italic",
+                }
+            })
+
+        elif seg.kind == "bullet":
+            # Hanging indent: first line at 0, body at 14.4pt (0.2in)
+            requests.append({
+                "updateParagraphStyle": {
+                    "range": {"startIndex": seg_start, "endIndex": seg_end},
+                    "paragraphStyle": {
+                        "indentFirstLine": {"magnitude": 0, "unit": "PT"},
+                        "indentStart": {"magnitude": 14.4, "unit": "PT"},
+                    },
+                    "fields": "indentFirstLine,indentStart",
+                }
+            })
+
+        elif seg.kind == "summary":
+            pass  # Uses default font
+
+        elif seg.kind == "edu_degree":
+            requests.append({
+                "updateTextStyle": {
+                    "range": {"startIndex": seg_start, "endIndex": seg_end},
+                    "textStyle": {"bold": True},
+                    "fields": "bold",
+                }
+            })
+
+        elif seg.kind == "edu_details":
+            requests.append({
+                "updateTextStyle": {
+                    "range": {"startIndex": seg_start, "endIndex": seg_end},
+                    "textStyle": {
+                        "fontSize": {"magnitude": 10, "unit": "PT"},
+                    },
+                    "fields": "fontSize",
+                }
+            })
+
+        elif seg.kind == "skills_line":
+            # Bold just the category name prefix
+            if seg.bold_prefix_len > 0:
+                requests.append({
+                    "updateTextStyle": {
+                        "range": {
+                            "startIndex": seg_start,
+                            "endIndex": seg_start + seg.bold_prefix_len,
+                        },
+                        "textStyle": {"bold": True},
+                        "fields": "bold",
+                    }
+                })
+
+        offset = next_offset
+
+    return full_text, requests
+
+
+def generate_resume_programmatic(
+    company: str,
+    position: str,
+    variant: str = "general",
+    custom_summary: Optional[str] = None,
+    skill_categories: Optional[list[str]] = None,
+    custom_skills: Optional[dict[str, list[str]]] = None,
+    role_bullets: Optional[dict[str, list[str]]] = None,
+    max_roles: int = 5,
+    max_bullets_per_role: int = 6,
+    output_dir: Optional[Path] = None,
+    auto_open: bool = True,
+    keep_google_doc: bool = True,
+) -> ResumeGenerationResult:
+    """Generate an ATS-friendly resume programmatically (no template).
+
+    Builds the entire Google Doc from scratch using insertText + formatting
+    API calls. Produces a clean single-column document with no section breaks,
+    tables, or multi-column layouts that break ATS parsing.
+
+    Args:
+        company: Target company name
+        position: Target position title
+        variant: Summary variant to use (e.g., "growth", "ai-agentic")
+        custom_summary: Custom summary text (overrides variant summary)
+        skill_categories: Ordered list of skill category keys to include
+        custom_skills: Custom skills dict (display name -> skill list)
+        role_bullets: Custom bullet selection per role (company -> bullet texts)
+        max_roles: Maximum number of roles to include
+        max_bullets_per_role: Maximum bullets per role
+        output_dir: Directory for PDF output
+        auto_open: Whether to open the PDF after generation
+        keep_google_doc: Whether to keep the Google Doc
+
+    Returns:
+        ResumeGenerationResult with details of the operation
+    """
+    from jj.db import (
+        create_resume,
+        create_resume_entry,
+        create_resume_section,
+        get_connection,
+        increment_entry_usage,
+    )
+
+    config = get_gdocs_config()
+
+    if output_dir is None:
+        output_dir_str = config.get("pdf_output_dir", "~/Documents/Resumes")
+        output_dir = Path(output_dir_str).expanduser()
+
+    # Assemble data from corpus
+    try:
+        data = assemble_template_data(
+            variant=variant,
+            max_roles=max_roles,
+            max_bullets_per_role=max_bullets_per_role,
+        )
+    except Exception as e:
+        return ResumeGenerationResult(success=False, error=f"Error assembling corpus data: {e}")
+
+    # Override bullets per role if custom selection provided
+    if role_bullets:
+        with get_connection() as conn:
+            for role in data.roles:
+                if role.company not in role_bullets:
+                    continue
+                custom_texts = role_bullets[role.company]
+                new_bullets = []
+                new_entry_ids = []
+                for bullet_text in custom_texts:
+                    prefix = bullet_text[:60]
+                    row = conn.execute(
+                        "SELECT id, text FROM entries WHERE text LIKE ? AND role_id = ?",
+                        (prefix + "%", role.role_id),
+                    ).fetchone()
+                    if row:
+                        new_bullets.append(row["text"])
+                        new_entry_ids.append(row["id"])
+                role.bullets = new_bullets
+                role.entry_ids = new_entry_ids
+
+    # Override summary
+    if custom_summary:
+        data.summary = custom_summary
+
+    # Resolve skills (limit to 5 categories)
+    max_skill_categories = 5
+    resolved_skills: dict[str, list[str]] = {}
+
+    def _format_category_name(cat_key: str) -> str:
+        """Format a skill category key into a display name."""
+        name = cat_key.replace("-", " ").replace("_", " ").title()
+        # Fix common acronym casing
+        for acronym in ["Ai", "Api", "Ehr", "Cdp", "Sql", "Iam", "Sso"]:
+            name = name.replace(acronym, acronym.upper())
+        return name
+
+    if custom_skills:
+        resolved_skills = dict(list(custom_skills.items())[:max_skill_categories])
+    elif skill_categories:
+        for cat in skill_categories[:max_skill_categories]:
+            if cat in data.skills_by_category:
+                resolved_skills[_format_category_name(cat)] = data.skills_by_category[cat]
+    else:
+        for cat, skills in list(data.skills_by_category.items())[:max_skill_categories]:
+            if skills:
+                resolved_skills[_format_category_name(cat)] = skills
+
+    # Determine consulting visibility
+    consulting_companies = {"AI Health-Tech Startup", "Clearhead / Accenture Interactive"}
+    consulting_in_main_body = any(
+        r.company in consulting_companies for r in data.roles[:5]
+    )
+    show_consulting = (
+        len(data.roles) >= 6
+        and not consulting_in_main_body
+        and data.roles[5].company in consulting_companies
+    )
+
+    # Build document segments
+    segments = _build_resume_segments(data, resolved_skills, show_consulting)
+
+    # Convert to text + formatting requests
+    full_text, formatting_requests = _segments_to_text_and_requests(segments)
+
+    # Build document title and PDF path
+    name_data = data.profile.get("name", {})
+    full_name = f"{name_data.get('first', '')} {name_data.get('last', '')}".strip() or "Resume"
+    timestamp = datetime.now().strftime("%Y%m%d")
+    doc_title = f"{full_name} - {position} - {company} - {timestamp}"
+    pdf_filename = f"{full_name} - {position} - {company} - Resume.pdf"
+    pdf_path = output_dir / pdf_filename
+
+    try:
+        client = GoogleDocsClient()
+        client.authenticate()
+
+        # Create blank document
+        doc_id = client.create_document(doc_title)
+        doc_url = client.get_document_url(doc_id)
+
+        # Insert all text at once
+        client.insert_text(doc_id, full_text)
+
+        # Apply all formatting in one batch
+        client.apply_formatting(doc_id, formatting_requests)
+
+        # Export PDF
+        client.export_pdf(doc_id, pdf_path)
+
+        # Optionally delete the Google Doc
+        final_doc_id = doc_id
+        final_doc_url = doc_url
+        if not keep_google_doc:
+            client.delete_document(doc_id)
+            final_doc_id = None
+            final_doc_url = None
+
+        # Track in database
+        resume_id = create_resume(
+            filename=pdf_path.name,
+            filepath=str(pdf_path),
+            variant=variant,
+            summary_text=data.summary,
+            target_company=company,
+            target_role=position,
+            google_doc_id=doc_id if keep_google_doc else None,
+        )
+
+        for role in data.roles:
+            for position_idx, entry_id in enumerate(role.entry_ids):
+                create_resume_entry(
+                    resume_id=resume_id,
+                    entry_id=entry_id,
+                    role_id=role.role_id,
+                    position=position_idx,
+                )
+                increment_entry_usage(entry_id)
+
+        create_resume_section(
+            resume_id=resume_id,
+            section_type="summary",
+            section_name=variant,
+            content=data.summary,
+        )
+
+        for category, skills in data.skills_by_category.items():
+            if skills:
+                create_resume_section(
+                    resume_id=resume_id,
+                    section_type="skills",
+                    section_name=category,
+                    content=", ".join(skills),
+                )
+
+        if auto_open and pdf_path.exists():
+            open_file(pdf_path)
+
+        return ResumeGenerationResult(
+            success=True,
+            doc_id=final_doc_id,
+            doc_url=final_doc_url,
+            pdf_path=pdf_path,
+            replacements_made=len(segments),
             resume_id=resume_id,
         )
 
@@ -917,8 +1516,16 @@ class GoogleDocsClient:
         # Refresh or get new credentials
         if not creds or not creds.valid:
             if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
+                try:
+                    creds.refresh(Request())
+                except Exception:
+                    # Token revoked or expired beyond refresh — delete stale
+                    # token and fall through to browser OAuth flow
+                    if GDOCS_TOKEN_PATH.exists():
+                        GDOCS_TOKEN_PATH.unlink()
+                    creds = None
+
+            if not creds or not creds.valid:
                 if not CREDENTIALS_PATH.exists():
                     raise FileNotFoundError(
                         f"Google credentials not found at {CREDENTIALS_PATH}.\n"
@@ -1035,9 +1642,10 @@ class GoogleDocsClient:
     def cleanup_empty_sections(self, doc_id: str) -> int:
         """Remove empty role artifacts left after placeholder replacement.
 
-        When roles 5-6 are unused, replacing their placeholders with empty
-        strings leaves behind commas, empty bullets, and blank lines.
-        This method reads the document and deletes those empty paragraphs.
+        When roles are unused or have fewer bullets than template slots,
+        replacing placeholders with empty strings leaves behind commas,
+        empty bullets, blank lines, and orphaned text. This method uses
+        multiple passes to reliably delete those artifacts.
 
         Args:
             doc_id: The document ID to clean up
@@ -1047,15 +1655,62 @@ class GoogleDocsClient:
         """
         self._ensure_authenticated()
 
+        total_deleted = 0
+        for _ in range(5):  # Up to 5 passes — each re-reads fresh indices
+            deleted = self._cleanup_pass(doc_id)
+            total_deleted += deleted
+            if deleted == 0:
+                break
+
+        return total_deleted
+
+    def _is_artifact_paragraph(self, text: str, is_list_item: bool) -> bool:
+        """Determine if a paragraph is an artifact from empty template slots.
+
+        Args:
+            text: The raw text content of the paragraph
+            is_list_item: Whether the paragraph has bullet/list formatting
+
+        Returns:
+            True if this paragraph should be deleted
+        """
+        stripped = text.strip()
+
+        # Empty bullet list items (from empty {{BULLET_N}} placeholders)
+        if stripped == "" and is_list_item:
+            return True
+
+        # Comma-only or comma+space lines (from empty "{{COMPANY}}, {{LOCATION}}")
+        if stripped.replace(" ", "") == ",":
+            return True
+
+        # Lines that are just commas and spaces (e.g., ", " or " ,  ")
+        if stripped and all(c in ", " for c in stripped):
+            return True
+
+        return False
+
+    def _cleanup_pass(self, doc_id: str) -> int:
+        """Single pass: read doc, find artifacts, delete them.
+
+        Each pass re-reads the document so indices are fresh after
+        any prior deletions. Detects both explicit artifacts (empty bullets,
+        comma lines) and consecutive empty paragraphs from unused role slots.
+
+        Returns:
+            Number of paragraphs deleted in this pass
+        """
         doc = self.docs_service.documents().get(documentId=doc_id).execute()
         body = doc.get("body", {})
         content = body.get("content", [])
 
-        # Find the body's end index (the trailing newline we can't delete)
-        body_end = content[-1]["endIndex"] if content else 0
+        if not content:
+            return 0
 
-        # Collect paragraph ranges to delete (must delete in reverse order)
-        delete_ranges = []
+        body_end = content[-1]["endIndex"]
+
+        # First pass: identify all paragraph info
+        para_info = []  # (element, text_stripped, is_list_item, is_artifact)
         for element in content:
             if "paragraph" not in element:
                 continue
@@ -1067,64 +1722,243 @@ class GoogleDocsClient:
 
             stripped = text.strip()
             is_list_item = "bullet" in para
+            is_artifact = self._is_artifact_paragraph(text, is_list_item)
+            para_info.append((element, stripped, is_list_item, is_artifact))
 
-            # Only delete artifacts from empty role slots, not intentional spacing:
-            # - Comma-only lines (from empty "{{COMPANY}}, {{LOCATION}}")
-            # - Empty bullet list items (from empty "{{BULLET_N}}")
-            # Intentional blank lines (non-list, no comma) are preserved.
-            if stripped == "," or (stripped == "" and is_list_item):
-                start = element["startIndex"]
-                end = element["endIndex"]
-                delete_ranges.append((start, end))
+        # Second pass: also mark consecutive empty non-list paragraphs as artifacts.
+        # A single blank line between roles is intentional spacing; 2+ consecutive
+        # blank lines are artifacts from empty role headers (title, dates).
+        for i in range(len(para_info)):
+            element, stripped, is_list_item, is_artifact = para_info[i]
+            if is_artifact or stripped:
+                continue
+            # This is a non-artifact empty paragraph. Check if it's adjacent
+            # to another empty paragraph (artifact or not).
+            has_empty_neighbor = False
+            if i > 0:
+                _, prev_stripped, _, prev_artifact = para_info[i - 1]
+                if prev_stripped == "" or prev_artifact:
+                    has_empty_neighbor = True
+            if i < len(para_info) - 1:
+                _, next_stripped, _, next_artifact = para_info[i + 1]
+                if next_stripped == "" or next_artifact:
+                    has_empty_neighbor = True
+            if has_empty_neighbor:
+                para_info[i] = (element, stripped, is_list_item, True)
 
-        if not delete_ranges:
-            return 0
-
-        # Delete in reverse order so indices don't shift
-        delete_ranges.sort(key=lambda r: r[0], reverse=True)
-
-        requests = []
-        for start, end in delete_ranges:
-            # Don't delete the very first element (index 0-1 is the doc body start)
+        # Collect ranges to delete
+        delete_ranges = []
+        for element, stripped, is_list_item, is_artifact in para_info:
+            if not is_artifact:
+                continue
+            start = element["startIndex"]
+            end = element["endIndex"]
+            # Don't delete the doc body start (index 0-1)
             if start < 2:
                 continue
-            # Can't delete the body's final newline — shrink range by 1
+            # Can't delete the body's final newline — shrink range
             if end >= body_end:
                 end = body_end - 1
                 if end <= start:
                     continue
+            delete_ranges.append((start, end))
+
+        if not delete_ranges:
+            return 0
+
+        # Delete in reverse order so earlier indices aren't affected
+        delete_ranges.sort(key=lambda r: r[0], reverse=True)
+
+        # Delete one at a time in reverse — each deletion is independent
+        # because we only affect content after the current range
+        deleted = 0
+        for start, end in delete_ranges:
+            try:
+                self.docs_service.documents().batchUpdate(
+                    documentId=doc_id,
+                    body={"requests": [{
+                        "deleteContentRange": {
+                            "range": {
+                                "startIndex": start,
+                                "endIndex": end,
+                            }
+                        }
+                    }]},
+                ).execute()
+                deleted += 1
+            except Exception:
+                # Range may span a structural boundary (table cell, etc.)
+                # Skip it — a subsequent pass with fresh indices may catch it
+                pass
+
+        return deleted
+
+    def flatten_column_sections(self, doc_id: str) -> int:
+        """Convert all multi-column sections to single-column.
+
+        Resume templates often use 2-column section breaks for role headers
+        (company on left, dates on right). ATS systems and PDF copy-paste
+        can't handle multi-column sections — dates get disassociated from
+        role titles and phantom empty bullets appear.
+
+        Uses updateSectionStyle to convert each 2-column section to
+        single-column while preserving the content.
+
+        Args:
+            doc_id: The document ID to modify
+
+        Returns:
+            Number of column sections flattened
+        """
+        self._ensure_authenticated()
+
+        doc = self.docs_service.documents().get(documentId=doc_id).execute()
+        body = doc.get("body", {})
+        content = body.get("content", [])
+
+        flattened = 0
+        for i, element in enumerate(content):
+            if "sectionBreak" not in element:
+                continue
+            style = element["sectionBreak"].get("sectionStyle", {})
+            cols = style.get("columnProperties", [])
+            if len(cols) < 2:
+                continue
+
+            # Find the first paragraph in this section to use as the range
+            para_start = None
+            para_end = None
+            for j in range(i + 1, len(content)):
+                if "paragraph" in content[j]:
+                    para_start = content[j]["startIndex"]
+                    para_end = content[j]["endIndex"]
+                    break
+                elif "sectionBreak" in content[j]:
+                    break
+
+            if para_start is None:
+                continue
+
+            try:
+                self.docs_service.documents().batchUpdate(
+                    documentId=doc_id,
+                    body={"requests": [{
+                        "updateSectionStyle": {
+                            "range": {
+                                "startIndex": para_start,
+                                "endIndex": para_end,
+                            },
+                            "sectionStyle": {
+                                "columnProperties": [{}],
+                            },
+                            "fields": "columnProperties",
+                        }
+                    }]},
+                ).execute()
+                flattened += 1
+            except Exception:
+                pass
+
+        return flattened
+
+    def flatten_tables(self, doc_id: str) -> int:
+        """Convert table-based layouts to simple paragraphs for ATS compatibility.
+
+        Resume templates often use tables for side-by-side layout (e.g.,
+        company name on left, dates on right). ATS systems can't parse tables
+        reliably, causing dates to be disassociated from role titles.
+
+        This method finds tables, extracts text from each row (joining cells
+        with tab characters), replaces each table with plain paragraphs, and
+        copies basic formatting (bold, font size) from the original cells.
+
+        Args:
+            doc_id: The document ID to modify
+
+        Returns:
+            Number of tables flattened
+        """
+        self._ensure_authenticated()
+
+        doc = self.docs_service.documents().get(documentId=doc_id).execute()
+        body = doc.get("body", {})
+        content = body.get("content", [])
+
+        # Find all tables
+        tables = []
+        for element in content:
+            if "table" in element:
+                tables.append(element)
+
+        if not tables:
+            return 0
+
+        # Process tables in reverse order (so indices don't shift)
+        tables.sort(key=lambda t: t["startIndex"], reverse=True)
+        flattened = 0
+
+        for table_element in tables:
+            table = table_element["table"]
+            table_start = table_element["startIndex"]
+            table_end = table_element["endIndex"]
+
+            # Extract text from each row, joining cells with tab
+            row_texts = []
+            row_styles = []
+            for row in table.get("tableRows", []):
+                cell_texts = []
+                first_style = {}
+                for cell_idx, cell in enumerate(row.get("tableCells", [])):
+                    cell_text = ""
+                    for cell_content in cell.get("content", []):
+                        if "paragraph" in cell_content:
+                            for elem in cell_content["paragraph"].get("elements", []):
+                                text_run = elem.get("textRun", {})
+                                cell_text += text_run.get("content", "")
+                                # Capture formatting from first non-empty cell
+                                if cell_idx == 0 and not first_style:
+                                    first_style = text_run.get("textStyle", {})
+                    cell_texts.append(cell_text.strip())
+                # Filter empty cells, join with tab for right-alignment effect
+                non_empty = [t for t in cell_texts if t]
+                row_text = "\t".join(non_empty)
+                row_texts.append(row_text)
+                row_styles.append(first_style)
+
+            # Build requests: delete table, insert replacement text
+            requests = []
+
+            # Delete the table
             requests.append({
                 "deleteContentRange": {
                     "range": {
-                        "startIndex": start,
-                        "endIndex": end,
+                        "startIndex": table_start,
+                        "endIndex": table_end,
                     }
                 }
             })
 
-        if not requests:
-            return 0
+            # Insert replacement text at the table's start position
+            # Insert in reverse order so each goes to the same position
+            for row_text in reversed(row_texts):
+                if row_text:  # Skip fully empty rows
+                    requests.append({
+                        "insertText": {
+                            "location": {"index": table_start},
+                            "text": row_text + "\n",
+                        }
+                    })
 
-        # Try batch delete; if it fails, fall back to one-at-a-time
-        try:
-            self.docs_service.documents().batchUpdate(
-                documentId=doc_id,
-                body={"requests": requests},
-            ).execute()
-            return len(requests)
-        except Exception:
-            # Some ranges may span structural boundaries — delete individually
-            deleted = 0
-            for req in requests:
-                try:
-                    self.docs_service.documents().batchUpdate(
-                        documentId=doc_id,
-                        body={"requests": [req]},
-                    ).execute()
-                    deleted += 1
-                except Exception:
-                    pass  # Skip invalid ranges
-            return deleted
+            try:
+                self.docs_service.documents().batchUpdate(
+                    documentId=doc_id,
+                    body={"requests": requests},
+                ).execute()
+                flattened += 1
+            except Exception:
+                pass  # Skip tables that can't be flattened
+
+        return flattened
 
     def export_pdf(self, doc_id: str, output_path: Path) -> Path:
         """Export a document as PDF.

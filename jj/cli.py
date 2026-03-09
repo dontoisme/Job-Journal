@@ -2169,7 +2169,7 @@ def gdocs_generate(
     from_corpus: bool = typer.Option(False, "--from-corpus", "-c", help="Populate from corpus database"),
     variant: str = typer.Option("general", "--variant", "-v", help="Summary variant (growth, ai-agentic, health-tech, general)"),
     max_roles: int = typer.Option(4, "--max-roles", help="Maximum roles to include (1-6)"),
-    max_bullets: int = typer.Option(6, "--max-bullets", help="Maximum bullets per role (1-6)"),
+    max_bullets: int = typer.Option(4, "--max-bullets", help="Maximum bullets per role (1-6)"),
 ):
     """Generate a resume from Google Docs template.
 
@@ -2199,6 +2199,7 @@ def gdocs_generate(
         from jj.google_docs import (
             generate_resume_from_corpus,
             generate_resume_gdocs,
+            generate_resume_programmatic,
             get_gdocs_config,
         )
     except ImportError:
@@ -2212,17 +2213,16 @@ def gdocs_generate(
     output_path = Path(output_dir).expanduser() if output_dir else None
 
     if from_corpus:
-        # Corpus-based generation
-        console.print(f"[bold]Generating resume from corpus for {company} - {position}...[/bold]")
+        # ATS-friendly programmatic generation (no template)
+        console.print(f"[bold]Generating resume for {company} - {position}...[/bold]")
         console.print(f"[dim]Variant: {variant} | Max roles: {max_roles} | Max bullets: {max_bullets}[/dim]\n")
 
-        result = generate_resume_from_corpus(
+        result = generate_resume_programmatic(
             company=company,
             position=position,
             variant=variant,
             max_roles=max_roles,
             max_bullets_per_role=max_bullets,
-            template_id=template_id,
             output_dir=output_path,
             auto_open=auto_open,
             keep_google_doc=keep_doc,
@@ -2230,9 +2230,8 @@ def gdocs_generate(
 
         if result.success:
             console.print(Panel.fit(
-                f"[green]Resume generated from corpus![/green]\n\n"
+                f"[green]Resume generated![/green]\n\n"
                 f"PDF: {result.pdf_path}\n"
-                f"Replacements made: {result.replacements_made}\n"
                 f"Resume ID: {result.resume_id}\n" +
                 (f"Google Doc: {result.doc_url}\n" if result.doc_url else "[dim]Google Doc deleted[/dim]\n"),
                 title="Resume Generated",
