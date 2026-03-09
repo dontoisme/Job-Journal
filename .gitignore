@@ -45,8 +45,19 @@ Thumbs.db
 claude/
 firebase-debug.log
 
+# Credentials & tokens (defense-in-depth)
+.env
+.env.*
+credentials.json
+*-credentials.json
+*_token.json
+*token.json
+*-sa.json
+*-serviceaccount.json
+
 # Pipeline output (ephemeral per-run data)
 jobs/*.json
+greenhouse-pm-jobs*.json
 pipeline-log.md
 
 # Generated docs (keep templates, exclude output)

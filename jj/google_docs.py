@@ -79,12 +79,21 @@ class RoleData:
 
 
 @dataclass
+class ProjectData:
+    """Data for a project entry in a resume template."""
+    name: str
+    bullets: list[str] = field(default_factory=list)
+    entry_ids: list[int] = field(default_factory=list)
+
+
+@dataclass
 class ResumeTemplateData:
     """Complete data for populating a resume template."""
     profile: dict[str, Any]
     summary: str
     roles: list[RoleData]
     skills_by_category: dict[str, list[str]]
+    projects: list[ProjectData] = field(default_factory=list)
 
 
 # Month abbreviations for date formatting
@@ -241,8 +250,12 @@ def assemble_template_data(
     # Extract JD keywords if JD text provided
     jd_keywords = _extract_jd_keywords(jd_text) if jd_text else None
 
-    # Get roles ordered by date (most recent first)
-    all_roles = get_roles_ordered_by_date(limit=max_roles)
+    # Get roles ordered by date (most recent first), excluding project roles
+    all_roles_unfiltered = get_roles_ordered_by_date(limit=None)
+    all_roles = [
+        r for r in all_roles_unfiltered
+        if "project" not in r.get("company", "").lower()
+    ][:max_roles]
 
     roles: list[RoleData] = []
     for role in all_roles:
@@ -276,6 +289,32 @@ def assemble_template_data(
         )
         roles.append(role_data)
 
+    # Get project entries (roles with "Projects" in the company name)
+    projects: list[ProjectData] = []
+    all_project_roles = [
+        r for r in get_roles_ordered_by_date(limit=None)
+        if "project" in r.get("company", "").lower()
+    ]
+    for proj_role in all_project_roles:
+        if jd_keywords:
+            all_entries = get_entries_for_role_ordered(proj_role["id"], limit=None)
+            scored = []
+            for e in all_entries:
+                tags = json.loads(e.get("tags", "[]")) if isinstance(e.get("tags"), str) else (e.get("tags") or [])
+                score = _score_bullet_relevance(e["text"], tags, jd_keywords)
+                scored.append((score, e))
+            scored.sort(key=lambda x: (x[0], x[1].get("times_used", 0)), reverse=True)
+            entries = [e for _, e in scored[:max_bullets_per_role]]
+        else:
+            entries = get_entries_for_role_ordered(proj_role["id"], limit=max_bullets_per_role)
+
+        if entries:
+            projects.append(ProjectData(
+                name=proj_role.get("company", ""),
+                bullets=[e["text"] for e in entries],
+                entry_ids=[e["id"] for e in entries],
+            ))
+
     # Get skills grouped by category
     skills_by_category = get_skills_by_category()
 
@@ -284,6 +323,7 @@ def assemble_template_data(
         summary=summary,
         roles=roles,
         skills_by_category=skills_by_category,
+        projects=projects,
     )
 
 
@@ -829,6 +869,15 @@ def _build_resume_segments(
             if bullet:
                 segments.append(_Segment(f"• {bullet}", "bullet"))
 
+    # Projects
+    if data.projects:
+        segments.append(_Segment("", "blank"))
+        segments.append(_Segment("PROJECTS", "section_header"))
+        for proj in data.projects:
+            for bullet in proj.bullets:
+                if bullet:
+                    segments.append(_Segment(f"• {bullet}", "bullet"))
+
     # Education
     education = profile.get("education", {})
     if education:
@@ -1283,6 +1332,10 @@ def generate_resume_programmatic(
                     role_id=role.role_id,
                     position=position_idx,
                 )
+                increment_entry_usage(entry_id)
+
+        for proj in data.projects:
+            for entry_id in proj.entry_ids:
                 increment_entry_usage(entry_id)
 
         create_resume_section(

@@ -11,12 +11,13 @@ Usage (from repo root):
 """
 
 import json
+import os
 import re
 import sys
 
 from jj.google_docs import GoogleDocsClient
 
-TEMPLATE_ID = "1RKslXSe6aWpz3hBoZyzVa3iseuhX6nqdbIHmBaXzLcA"
+TEMPLATE_ID = os.environ.get("JJ_TEMPLATE_ID", "YOUR_TEMPLATE_ID_HERE")
 
 
 def fmt_index(element: dict) -> str:
