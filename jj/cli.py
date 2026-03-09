@@ -2171,6 +2171,7 @@ def gdocs_generate(
     max_roles: int = typer.Option(5, "--max-roles", help="Maximum roles to include (1-6)"),
     max_bullets: int = typer.Option(4, "--max-bullets", help="Maximum bullets per role (1-6)"),
     jd_file: Optional[str] = typer.Option(None, "--jd", help="Path to job description text file for relevance-based bullet ranking"),
+    summary: Optional[str] = typer.Option(None, "--summary", "-s", help="Custom summary text (overrides variant summary)"),
 ):
     """Generate a resume from Google Docs template.
 
@@ -2233,6 +2234,7 @@ def gdocs_generate(
             company=company,
             position=position,
             variant=variant,
+            custom_summary=summary,
             max_roles=max_roles,
             max_bullets_per_role=max_bullets,
             jd_text=jd_text,
