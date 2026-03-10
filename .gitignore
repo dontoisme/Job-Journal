@@ -41,7 +41,9 @@ Thumbs.db
 
 # Private/user-specific
 /templates/
-.claude/
+# Claude Code — ignore everything except commands (skills)
+.claude/*
+!.claude/commands/
 claude/
 firebase-debug.log
 
@@ -63,5 +65,7 @@ pipeline-log.md
 # Generated docs (keep templates, exclude output)
 EXECUTIVE_SUMMARY.md
 
-# Dolt database files (added by bd init)
+# Beads task tracking + Dolt database
+.beads/
 .dolt/
+AGENTS.md

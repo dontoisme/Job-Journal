@@ -134,8 +134,12 @@ templates.env.filters["relative_date"] = format_relative_date
 # Helper functions
 # --------------------------------------------------------------------------
 
-def get_prospects_from_db(unapplied_only=False):
-    """Get prospects from SQLite database."""
+def get_prospects_from_db(unapplied_only=False, include_stale=False):
+    """Get prospects from applications table (status='prospect').
+
+    Prospects older than 7 days without action are considered stale.
+    By default, stale prospects are hidden from the view.
+    """
     import sqlite3
     if not DB_PATH.exists():
         return []
@@ -144,26 +148,61 @@ def get_prospects_from_db(unapplied_only=False):
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
-    # Check if prospects table exists
-    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='prospects'")
-    if not cursor.fetchone():
-        conn.close()
-        return []
-
-    if unapplied_only:
-        # Filter out prospects that have been applied to (case-insensitive)
+    if include_stale:
         cursor.execute("""
-            SELECT * FROM prospects
-            WHERE date_applied IS NULL
-              AND LOWER(company) NOT IN (SELECT LOWER(company) FROM applications)
+            SELECT * FROM applications
+            WHERE status IN ('prospect', 'stale')
             ORDER BY fit_score DESC
         """)
     else:
-        cursor.execute("SELECT * FROM prospects ORDER BY fit_score DESC")
+        cursor.execute("""
+            SELECT * FROM applications
+            WHERE status = 'prospect'
+              AND created_at >= datetime('now', '-7 days')
+            ORDER BY fit_score DESC
+        """)
 
-    rows = [dict(row) for row in cursor.fetchall()]
+    rows = []
+    for row in cursor.fetchall():
+        r = dict(row)
+        # Map applications fields to prospect template fields
+        r['role'] = r.get('position', '')
+        r['date_added'] = r.get('created_at', '')
+        r['url'] = r.get('job_url', '')
+        rows.append(r)
+
+    # Also include legacy prospects table if it exists
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='prospects'")
+    if cursor.fetchone():
+        cursor.execute("SELECT * FROM prospects ORDER BY fit_score DESC")
+        for row in cursor.fetchall():
+            r = dict(row)
+            # Legacy prospects already have the right field names
+            rows.append(r)
+
+    # Sort merged list by fit_score descending
+    rows.sort(key=lambda x: x.get('fit_score') or 0, reverse=True)
+
     conn.close()
     return rows
+
+
+def get_stale_prospects_count():
+    """Count archived prospects (status='stale' or prospect older than 7 days)."""
+    import sqlite3
+    if not DB_PATH.exists():
+        return 0
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT COUNT(*) FROM applications
+        WHERE status = 'stale'
+           OR (status = 'prospect' AND created_at < datetime('now', '-7 days'))
+    """)
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count
 
 
 def get_applications_from_csv():
@@ -522,26 +561,61 @@ async def applications_page(request: Request, status: str = None, pairing: str =
     })
 
 
-@app.get("/prospects", response_class=HTMLResponse)
-async def prospects_page(request: Request, show: str = "unapplied"):
-    """Prospects board page."""
-    if show == "all":
-        prospects = get_prospects_from_db(unapplied_only=False)
-    else:
-        prospects = get_prospects_from_db(unapplied_only=True)
+@app.get("/email-activity", response_class=HTMLResponse)
+async def email_activity_page(request: Request, days: int = 30):
+    """Email sync activity feed — shows discovered emails grouped by day."""
+    from itertools import groupby
+    from jj.db import get_email_sync_feed
 
-    # Count totals
-    all_prospects = get_prospects_from_db(unapplied_only=False)
-    unapplied_count = len([p for p in all_prospects if not p.get('date_applied')])
-    applied_count = len(all_prospects) - unapplied_count
+    feed = get_email_sync_feed(days=days)
+
+    # Group by discovery date (created_at day)
+    def day_key(item):
+        return (item.get("created_at") or "")[:10]
+
+    days_grouped = []
+    for day, items in groupby(feed, key=day_key):
+        day_items = list(items)
+        days_grouped.append({
+            "date": day,
+            "emails": day_items,
+            "count": len(day_items),
+        })
+
+    return templates.TemplateResponse("email_activity.html", {
+        "request": request,
+        "days_grouped": days_grouped,
+        "total_count": len(feed),
+        "days_param": days,
+    })
+
+
+@app.get("/prospects", response_class=HTMLResponse)
+async def prospects_page(request: Request, show: str = "active"):
+    """Prospects board page."""
+    if show == "archived":
+        all_p = get_prospects_from_db(include_stale=True)
+        active_p = get_prospects_from_db(include_stale=False)
+        active_ids = {p.get('id') for p in active_p}
+        prospects = [p for p in all_p if p.get('id') not in active_ids]
+    elif show == "all":
+        prospects = get_prospects_from_db(include_stale=True)
+    else:
+        # Default: active (non-stale) prospects
+        prospects = get_prospects_from_db(include_stale=False)
+
+    # Counts
+    active_count = len(get_prospects_from_db(include_stale=False))
+    stale_count = get_stale_prospects_count()
+    total_count = active_count + stale_count
 
     return templates.TemplateResponse("prospects.html", {
         "request": request,
         "prospects": prospects,
         "show": show,
-        "unapplied_count": unapplied_count,
-        "applied_count": applied_count,
-        "total_count": len(all_prospects),
+        "active_count": active_count,
+        "stale_count": stale_count,
+        "total_count": total_count,
     })
 
 
@@ -700,9 +774,34 @@ async def api_applications(status: str = None):
 
 
 @app.get("/api/prospects")
-async def api_prospects():
+async def api_prospects(include_stale: bool = False):
     """Get prospects list."""
-    return get_prospects_from_db()
+    return get_prospects_from_db(include_stale=include_stale)
+
+
+@app.post("/api/prospects/{app_id}/archive")
+async def api_archive_prospect(app_id: int):
+    """Archive a prospect by setting status to 'stale'."""
+    from jj.db import update_application
+    success = update_application(app_id, status="stale")
+    if success:
+        return {"ok": True}
+    return JSONResponse(status_code=404, content={"error": "Not found"})
+
+
+@app.post("/api/prospects/{app_id}/applied")
+async def api_mark_applied(app_id: int):
+    """Mark a prospect as applied."""
+    from datetime import datetime
+    from jj.db import update_application
+    success = update_application(
+        app_id,
+        status="applied",
+        applied_at=datetime.now().isoformat(),
+    )
+    if success:
+        return {"ok": True}
+    return JSONResponse(status_code=404, content={"error": "Not found"})
 
 
 @app.get("/api/roles")

@@ -1316,6 +1316,44 @@ def email_updates(
         console.print()
 
 
+def _notify_email_updates(update_results):
+    """Send Slack notification when email sync finds actionable updates."""
+    if not update_results:
+        return
+
+    try:
+        config = load_config()
+        webhook_url = config.get("monitor", {}).get("slack_webhook_url", "")
+        if not webhook_url:
+            return
+
+        lines = []
+        for result in update_results:
+            emoji = {
+                "interview": ":green_circle:",
+                "next_steps": ":large_blue_circle:",
+                "rejection": ":red_circle:",
+            }.get(result.update_type, ":white_circle:")
+
+            status_text = f" -> {result.status_transitioned}" if result.status_transitioned else ""
+            lines.append(f"{emoji} *{result.company}*: {result.update_type}{status_text}")
+            lines.append(f"    _{result.email.subject}_")
+
+        text = (
+            f"*Email Sync: {len(update_results)} update{'s' if len(update_results) != 1 else ''} found*\n\n"
+            + "\n".join(lines)
+            + "\n\n<http://localhost:8000/email-activity|View Email Activity>"
+        )
+
+        import json
+        from urllib.request import Request, urlopen
+        payload = json.dumps({"text": text}).encode("utf-8")
+        req = Request(webhook_url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+        urlopen(req, timeout=10)
+    except Exception:
+        pass  # Notification failure should never block sync
+
+
 @email_app.command("sync")
 def email_sync(
     days: int = typer.Option(7, "--days", "-d", help="Search emails from last N days"),
@@ -1416,6 +1454,10 @@ def email_sync(
                     for t in transitioned:
                         console.print(f"  {t.company} -> [bold]{t.status_transitioned}[/bold]")
                     console.print()
+
+                # Send Slack notification for actionable updates
+                _notify_email_updates(update_results)
+
             else:
                 console.print("[green]No new updates found.[/green]")
 
@@ -2703,8 +2745,9 @@ def notify_slack_cmd(
     Either --message or --file is required.
 
     The --file option expects JSON with keys:
-      new_jobs: [{title, company, location, score, url}, ...]
-      summary: {companies_checked, boards_checked, timestamp}
+      new_jobs: [{title, company, location, score, score_type, verdict, url, doc_url}, ...]
+      summary: {companies_checked, boards_checked, timestamp, prospects_created, resumes_generated}
+      email_sync: {confirmations_found, resolutions_found, applications_checked}  (optional)
     """
     import json
     from jj.notifier import notify_slack, send_notification, format_slack_message
@@ -2724,7 +2767,8 @@ def notify_slack_cmd(
         data = json.loads(file.read_text())
         new_jobs = data.get("new_jobs", [])
         summary = data.get("summary", {})
-        success = notify_slack(webhook_url, new_jobs, summary)
+        email_sync = data.get("email_sync")
+        success = notify_slack(webhook_url, new_jobs, summary, email_sync=email_sync)
     elif message:
         # Send raw text message
         payload = {"text": message}
@@ -2935,6 +2979,201 @@ def monitor_test_notify():
             console.print("Set it in ~/.job-journal/config.yaml under monitor.slack_webhook_url")
         else:
             console.print("[red]Notification failed. Check webhook URL and try again.[/red]")
+
+
+@monitor_app.command("install-email-sync")
+def monitor_install_email_sync(
+    hours: int = typer.Option(2, "--every", help="Run every N hours"),
+    uninstall: bool = typer.Option(False, "--uninstall", help="Remove the email sync LaunchAgent"),
+):
+    """Install (or uninstall) a LaunchAgent for periodic email sync.
+
+    Runs 'jj email sync --days 3' every N hours (default: 2).
+    No Claude session needed — runs the CLI directly.
+    """
+    import subprocess
+
+    plist_dir = Path.home() / "Library" / "LaunchAgents"
+    plist_path = plist_dir / "com.jj.email-sync.plist"
+    log_dir = JJ_HOME / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    if uninstall:
+        if plist_path.exists():
+            subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+            plist_path.unlink()
+            console.print("[green]Email sync LaunchAgent removed.[/green]")
+        else:
+            console.print("[yellow]Email sync LaunchAgent not installed.[/yellow]")
+        return
+
+    import shutil
+    jj_path = shutil.which("jj")
+    if not jj_path:
+        console.print("[red]'jj' not found in PATH.[/red]")
+        raise typer.Exit(1)
+
+    project_dir = Path(__file__).resolve().parent.parent
+    launcher_path = project_dir / "scripts" / "email-sync-launcher.sh"
+
+    if not launcher_path.exists():
+        console.print(f"[red]Launcher script not found: {launcher_path}[/red]")
+        raise typer.Exit(1)
+
+    interval_seconds = hours * 3600
+
+    plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jj.email-sync</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{launcher_path}</string>
+    </array>
+    <key>StartInterval</key>
+    <integer>{interval_seconds}</integer>
+    <key>StandardOutPath</key>
+    <string>{log_dir}/email-sync.log</string>
+    <key>StandardErrorPath</key>
+    <string>{log_dir}/email-sync.log</string>
+    <key>WorkingDirectory</key>
+    <string>{project_dir}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{Path(jj_path).parent}:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
+"""
+
+    plist_dir.mkdir(parents=True, exist_ok=True)
+
+    if plist_path.exists():
+        subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+
+    plist_path.write_text(plist_content)
+    result = subprocess.run(["launchctl", "load", str(plist_path)], capture_output=True, text=True)
+
+    if result.returncode == 0:
+        console.print("[green]Email sync LaunchAgent installed.[/green]")
+        console.print(f"  Schedule: every {hours} hours")
+        console.print(f"  Log: {log_dir}/email-sync.log")
+        console.print(f"  Plist: {plist_path}")
+    else:
+        console.print(f"[red]launchctl load failed: {result.stderr}[/red]")
+        raise typer.Exit(1)
+
+
+@monitor_app.command("stats")
+def monitor_stats(
+    days: int = typer.Option(30, "--days", "-d", help="Number of days to analyze"),
+    company: Optional[int] = typer.Option(None, "--company", "-c", help="Show stats for a specific company ID"),
+):
+    """Show monitor analytics: run history, company yield, failure rates."""
+    import json
+
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized.[/red]")
+        raise typer.Exit(1)
+
+    from jj.db import get_monitor_analytics, get_company_scrape_stats, init_database
+    init_database()
+
+    if company:
+        # Per-company stats
+        stats = get_company_scrape_stats(company)
+        if "error" in stats:
+            console.print(f"[red]{stats['error']}[/red]")
+            raise typer.Exit(1)
+
+        from rich.panel import Panel
+        from rich.table import Table
+
+        table = Table(show_header=False, box=None, padding=(0, 2))
+        table.add_column("Key", style="dim")
+        table.add_column("Value")
+        table.add_row("Company", stats["company_name"])
+        table.add_row("Careers URL", stats.get("careers_url", "—"))
+        table.add_row("Total scrapes", str(stats["total_scrapes"]))
+        table.add_row("Last scraped", stats.get("last_scraped") or "never")
+        table.add_row("Active listings", str(stats["active_listings"]))
+        table.add_row("Stale listings", str(stats["stale_listings"]))
+        table.add_row("New (last 30d)", str(stats["new_last_30d"]))
+        table.add_row("Avg new/scrape", str(stats["avg_new_per_scrape"]))
+
+        console.print(Panel(table, title=f"Company Scrape Stats: {stats['company_name']}"))
+
+        if stats["failure_indicators"]:
+            console.print()
+            for indicator in stats["failure_indicators"]:
+                console.print(f"[yellow]  {indicator}[/yellow]")
+        return
+
+    # Overall analytics
+    analytics = get_monitor_analytics(days=days)
+
+    from rich.panel import Panel
+    from rich.table import Table
+
+    # Summary panel
+    summary_table = Table(show_header=False, box=None, padding=(0, 2))
+    summary_table.add_column("Key", style="dim")
+    summary_table.add_column("Value")
+    summary_table.add_row("Period", f"Last {analytics['days']} days")
+    summary_table.add_row("Total runs", str(analytics["total_runs"]))
+    summary_table.add_row("Completed", str(analytics["completed_runs"]))
+    summary_table.add_row("Total new listings", str(analytics["total_new_listings"]))
+    summary_table.add_row("Avg new/run", str(analytics["avg_new_listings"]))
+    if analytics["avg_duration_seconds"]:
+        mins = analytics["avg_duration_seconds"] / 60
+        summary_table.add_row("Avg duration", f"{mins:.1f} min")
+    summary_table.add_row("Prospects created", str(analytics["prospects_created"]))
+    summary_table.add_row("Resumes generated", str(analytics["resumes_generated"]))
+    summary_table.add_row("Email syncs", str(analytics["email_syncs"]))
+
+    failures = analytics["scrape_failures"] + analytics["scoring_failures"] + analytics["resume_failures"]
+    if failures > 0:
+        summary_table.add_row("Scrape failures", str(analytics["scrape_failures"]))
+        summary_table.add_row("Scoring failures", str(analytics["scoring_failures"]))
+        summary_table.add_row("Resume failures", str(analytics["resume_failures"]))
+
+    console.print(Panel(summary_table, title="Monitor Analytics"))
+
+    # Company yield table
+    if analytics["company_yield"]:
+        console.print()
+        yield_table = Table(title="Top Companies by New Listings")
+        yield_table.add_column("Company", style="cyan")
+        yield_table.add_column("New Listings", justify="right")
+        for cy in analytics["company_yield"]:
+            yield_table.add_row(cy["name"], str(cy["new_count"]))
+        console.print(yield_table)
+
+    # Recent runs
+    if analytics["runs"]:
+        console.print()
+        runs_table = Table(title="Recent Runs")
+        runs_table.add_column("Started", style="dim")
+        runs_table.add_column("Companies", justify="right")
+        runs_table.add_column("Boards", justify="right")
+        runs_table.add_column("New", justify="right")
+        runs_table.add_column("Notified", justify="center")
+
+        for run in analytics["runs"][:10]:
+            started = run.get("started_at", "?")
+            if started and len(started) > 16:
+                started = started[:16]
+            runs_table.add_row(
+                started,
+                str(run.get("companies_checked", 0)),
+                str(run.get("boards_checked", 0)),
+                str(run.get("new_listings_found", 0)),
+                "Y" if run.get("notification_sent") else "N",
+            )
+        console.print(runs_table)
 
 
 @monitor_app.command("log")

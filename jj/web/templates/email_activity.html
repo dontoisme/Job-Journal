@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}Email Activity - Job Journal{% endblock %}
+{% block page_title %}Email Activity{% endblock %}
+
+{% block page_actions %}
+<div style="display: flex; gap: 0.5rem; align-items: center;">
+    <span class="badge badge-muted">{{ total_count }} emails (last {{ days_param }}d)</span>
+</div>
+{% endblock %}
+
+{% block content %}
+{% if days_grouped %}
+{% for day in days_grouped %}
+<div style="margin-bottom: 2.5rem;">
+    <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border);">
+        <h3 style="margin: 0; font-size: 1.1rem;">{{ day.date }}</h3>
+        <span class="badge badge-muted">{{ day.count }}</span>
+    </div>
+
+    {% for item in day.emails %}
+    <div style="background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; margin-bottom: 0.75rem;
+        {% if item.email_type == 'resolution' and item.resolution_type == 'interview' %}border-left: 3px solid var(--success);
+        {% elif item.email_type == 'resolution' and item.resolution_type == 'rejection' %}border-left: 3px solid var(--danger);
+        {% elif item.email_type == 'resolution' and item.resolution_type == 'offer' %}border-left: 3px solid gold;
+        {% elif item.email_type == 'resolution' %}border-left: 3px solid var(--warning, #f59e0b);
+        {% else %}border-left: 3px solid var(--text-secondary);{% endif %}">
+
+        <!-- Header row: type badge + company + position -->
+        <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; flex-wrap: wrap;">
+            {% if item.email_type == 'resolution' %}
+                {% if item.resolution_type == 'rejection' %}
+                    <span style="background: var(--danger); color: white; padding: 0.125rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">REJECTION</span>
+                {% elif item.resolution_type == 'interview' %}
+                    <span style="background: var(--success); color: white; padding: 0.125rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">INTERVIEW</span>
+                {% elif item.resolution_type == 'screening' %}
+                    <span style="background: #3b82f6; color: white; padding: 0.125rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">SCREENING</span>
+                {% elif item.resolution_type == 'offer' %}
+                    <span style="background: #eab308; color: black; padding: 0.125rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">OFFER</span>
+                {% else %}
+                    <span style="background: var(--warning, #f59e0b); color: black; padding: 0.125rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">{{ (item.resolution_type or 'UPDATE') | upper }}</span>
+                {% endif %}
+            {% else %}
+                <span style="background: var(--bg-tertiary, #374151); color: var(--text-secondary); padding: 0.125rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600;">CONFIRMATION</span>
+            {% endif %}
+            <span style="font-weight: 600; font-size: 1rem;">{{ item.company }}</span>
+            <span style="color: var(--text-secondary);">{{ item.position }}</span>
+        </div>
+
+        <!-- Email subject -->
+        <div style="font-size: 0.9rem; margin-bottom: 0.75rem; color: var(--text-primary, #e5e7eb);">
+            {{ item.subject or 'No subject' }}
+        </div>
+
+        <!-- Application context table -->
+        <table style="font-size: 0.8rem; color: var(--text-secondary); border-collapse: collapse; width: 100%; margin-bottom: 0.75rem;">
+            <tr>
+                <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap; color: var(--text-tertiary, #6b7280);">Status</td>
+                <td style="padding: 0.2rem 0;">
+                    <span style="
+                        {% if item.app_status == 'interview' %}color: var(--success);
+                        {% elif item.app_status == 'rejected' %}color: var(--danger);
+                        {% elif item.app_status == 'offer' %}color: gold;
+                        {% elif item.app_status == 'applied' %}color: #3b82f6;
+                        {% else %}color: var(--text-secondary);{% endif %}
+                        font-weight: 600;">{{ item.app_status | title }}</span>
+                </td>
+                <td style="padding: 0.2rem 1rem 0.2rem 2rem; white-space: nowrap; color: var(--text-tertiary, #6b7280);">Fit Score</td>
+                <td style="padding: 0.2rem 0;">{{ item.fit_score or '—' }}</td>
+            </tr>
+            <tr>
+                <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap; color: var(--text-tertiary, #6b7280);">Location</td>
+                <td style="padding: 0.2rem 0;">{{ item.location or '—' }}</td>
+                <td style="padding: 0.2rem 1rem 0.2rem 2rem; white-space: nowrap; color: var(--text-tertiary, #6b7280);">Applied</td>
+                <td style="padding: 0.2rem 0;">{{ item.applied_at[:10] if item.applied_at else '—' }}</td>
+            </tr>
+            <tr>
+                <td style="padding: 0.2rem 1rem 0.2rem 0; white-space: nowrap; color: var(--text-tertiary, #6b7280);">From</td>
+                <td style="padding: 0.2rem 0;" colspan="3">{{ item.sender or '—' }}</td>
+            </tr>
+        </table>
+
+        <!-- Action buttons -->
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+            {% if item.email_id %}
+            <a href="https://mail.google.com/mail/u/0/#inbox/{{ item.email_id }}"
+               target="_blank" class="btn btn-sm btn-primary" style="font-size: 0.75rem;">
+                Open in Gmail
+            </a>
+            {% endif %}
+            {% if item.job_url %}
+            <a href="{{ item.job_url }}" target="_blank" class="btn btn-sm" style="font-size: 0.75rem;">
+                View Job
+            </a>
+            {% endif %}
+            <a href="/applications" class="btn btn-sm" style="font-size: 0.75rem; opacity: 0.7;">
+                View Application
+            </a>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% endfor %}
+{% else %}
+<div style="background: var(--bg-secondary); border: 1px solid var(--border); border-radius: 8px; padding: 3rem; text-align: center;">
+    <div style="font-size: 2rem; margin-bottom: 0.5rem;">&#x2709;</div>
+    <div style="font-weight: 600; margin-bottom: 0.25rem;">No email activity yet</div>
+    <div style="font-size: 0.875rem; color: var(--text-secondary);">
+        Run <code>jj email sync</code> to discover application emails
+    </div>
+</div>
+{% endif %}
+{% endblock %}

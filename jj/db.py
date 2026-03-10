@@ -3896,3 +3896,200 @@ def get_monitor_runs(limit: int = 10) -> list[dict[str, Any]]:
             (limit,),
         )
         return [dict(row) for row in cursor.fetchall()]
+
+
+def get_monitor_analytics(days: int = 30) -> dict[str, Any]:
+    """Get monitor run analytics for the last N days.
+
+    Returns dict with:
+        total_runs, completed_runs, avg_new_listings, total_new_listings,
+        avg_duration_seconds, company_yield (top companies by new listings),
+        failure_rate, runs (list of run summaries)
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get runs in the date range
+        cursor.execute(
+            """SELECT * FROM monitor_runs
+            WHERE started_at >= datetime('now', ?)
+            ORDER BY started_at DESC""",
+            (f"-{days} days",),
+        )
+        runs = [dict(row) for row in cursor.fetchall()]
+
+        total_runs = len(runs)
+        completed_runs = sum(1 for r in runs if r.get("completed_at"))
+        total_new = sum(r.get("new_listings_found", 0) for r in runs)
+        avg_new = total_new / total_runs if total_runs > 0 else 0
+
+        # Parse summary JSON for enriched stats
+        durations = []
+        prospects_created = 0
+        resumes_generated = 0
+        scrape_failures = 0
+        scoring_failures = 0
+        resume_failures = 0
+        email_syncs = 0
+
+        for r in runs:
+            summary_str = r.get("summary")
+            if not summary_str:
+                continue
+            try:
+                summary = json.loads(summary_str)
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            if "duration_seconds" in summary:
+                durations.append(summary["duration_seconds"])
+            prospects_created += summary.get("prospects_created", 0)
+            resumes_generated += summary.get("resumes_generated", 0)
+            scrape_failures += summary.get("scrape_failures", 0)
+            scoring_failures += summary.get("scoring_failures", 0)
+            resume_failures += summary.get("resume_failures", 0)
+            if summary.get("email_sync"):
+                email_syncs += 1
+
+        avg_duration = sum(durations) / len(durations) if durations else None
+
+        # Company yield: which companies produced the most new listings
+        cursor.execute(
+            """SELECT c.name, COUNT(*) as new_count
+            FROM job_listings jl
+            JOIN companies c ON c.id = jl.company_id
+            WHERE jl.first_seen_at >= datetime('now', ?)
+            GROUP BY c.id
+            ORDER BY new_count DESC
+            LIMIT 10""",
+            (f"-{days} days",),
+        )
+        company_yield = [dict(row) for row in cursor.fetchall()]
+
+        return {
+            "days": days,
+            "total_runs": total_runs,
+            "completed_runs": completed_runs,
+            "total_new_listings": total_new,
+            "avg_new_listings": round(avg_new, 1),
+            "avg_duration_seconds": round(avg_duration, 1) if avg_duration else None,
+            "prospects_created": prospects_created,
+            "resumes_generated": resumes_generated,
+            "scrape_failures": scrape_failures,
+            "scoring_failures": scoring_failures,
+            "resume_failures": resume_failures,
+            "email_syncs": email_syncs,
+            "company_yield": company_yield,
+            "runs": runs,
+        }
+
+
+
+# Sender domains that are noise — not actual application correspondence
+_NOISE_SENDER_PATTERNS = (
+    "%ziprecruiter.com%",
+    "%substack.com%",
+    "%userinterviews.com%",
+    "%updates@m.discord.com%",
+    "%jointheflyover%",
+    "%notifications@mail.pos%",
+    "%invoice+statements@%",
+    "%alerts@ziprecruiter%",
+    "%@linkedin.com%",
+    "%@builtin.com%",
+    "%@maven.com%",
+)
+
+
+def get_email_sync_feed(days: int = 30) -> list[dict[str, Any]]:
+    """Get email sync activity feed: emails discovered, grouped by day.
+
+    Filters out noise (newsletters, alerts, marketing) by sender domain.
+
+    Returns list of dicts with: id, application_id, company, position,
+    email_type, resolution_type, email_id, sender, subject, received_at,
+    created_at (when sync discovered it).
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        noise_clause = " AND ".join(
+            f"ae.sender NOT LIKE ?" for _ in _NOISE_SENDER_PATTERNS
+        )
+
+        cursor.execute(
+            f"""SELECT ae.id, ae.application_id, ae.email_type, ae.resolution_type,
+                      ae.email_id, ae.sender, ae.subject, ae.received_at, ae.created_at,
+                      a.company, a.position, a.status as app_status, a.location,
+                      a.job_url, a.fit_score, a.applied_at
+               FROM application_emails ae
+               JOIN applications a ON a.id = ae.application_id
+               WHERE ae.created_at >= datetime('now', ?)
+                 AND {noise_clause}
+               ORDER BY ae.created_at DESC""",
+            (f"-{days} days", *_NOISE_SENDER_PATTERNS),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_company_scrape_stats(company_id: int) -> dict[str, Any]:
+    """Get per-company scrape performance stats.
+
+    Returns dict with:
+        company_name, total_listings, active_listings, stale_listings,
+        total_scrapes, last_scraped, avg_new_per_scrape, failure_indicators
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Company info
+        cursor.execute("SELECT * FROM companies WHERE id = ?", (company_id,))
+        company = cursor.fetchone()
+        if not company:
+            return {"error": f"Company {company_id} not found"}
+        company = dict(company)
+
+        # Listing stats
+        cursor.execute(
+            """SELECT
+                COUNT(*) as total,
+                SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END) as active,
+                SUM(CASE WHEN is_active = 0 THEN 1 ELSE 0 END) as stale
+            FROM job_listings WHERE company_id = ?""",
+            (company_id,),
+        )
+        listing_stats = dict(cursor.fetchone())
+
+        # Scrape history from search_count
+        search_count = company.get("search_count", 0)
+        last_searched = company.get("last_searched_at")
+
+        # New listings over time
+        cursor.execute(
+            """SELECT COUNT(*) as new_30d FROM job_listings
+            WHERE company_id = ? AND first_seen_at >= datetime('now', '-30 days')""",
+            (company_id,),
+        )
+        new_30d = cursor.fetchone()["new_30d"]
+
+        avg_new = new_30d / search_count if search_count > 0 else 0
+
+        # Check for potential issues
+        failure_indicators = []
+        if search_count > 5 and new_30d == 0:
+            failure_indicators.append("No new listings in 30 days — consider removing or checking URL")
+        if listing_stats["active"] == 0 and listing_stats["total"] > 0:
+            failure_indicators.append("All listings stale — career page may have changed")
+
+        return {
+            "company_name": company.get("name"),
+            "careers_url": company.get("careers_url"),
+            "total_listings": listing_stats["total"],
+            "active_listings": listing_stats["active"],
+            "stale_listings": listing_stats["stale"],
+            "total_scrapes": search_count,
+            "last_scraped": last_searched,
+            "new_last_30d": new_30d,
+            "avg_new_per_scrape": round(avg_new, 2),
+            "failure_indicators": failure_indicators,
+        }

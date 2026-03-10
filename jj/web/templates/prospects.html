@@ -12,12 +12,17 @@
 {% block content %}
 <!-- Filter tabs -->
 <div class="filter-tabs">
-    <a href="/prospects?show=unapplied" class="filter-tab {% if show != 'all' %}active{% endif %}">
-        Ready to Apply ({{ unapplied_count }})
+    <a href="/prospects?show=active" class="filter-tab {% if show == 'active' %}active{% endif %}">
+        Active ({{ active_count }})
     </a>
     <a href="/prospects?show=all" class="filter-tab {% if show == 'all' %}active{% endif %}">
         All ({{ total_count }})
     </a>
+    {% if stale_count > 0 %}
+    <a href="/prospects?show=archived" class="filter-tab {% if show == 'archived' %}active{% endif %}">
+        Archived ({{ stale_count }})
+    </a>
+    {% endif %}
 </div>
 
 {% if prospects %}
@@ -54,6 +59,12 @@
                 View Job →
             </a>
             {% endif %}
+            {% if show != 'archived' and prospect.id %}
+            <div style="display: flex; gap: 0.25rem; margin-top: 0.25rem;">
+                <button class="btn btn-sm btn-success" style="font-size: 0.75rem;" onclick="markApplied({{ prospect.id }}, this)">Applied</button>
+                <button class="btn btn-sm" style="font-size: 0.75rem; opacity: 0.6;" onclick="archiveProspect({{ prospect.id }}, this)">Archive</button>
+            </div>
+            {% endif %}
         </div>
     </div>
     {% endfor %}
@@ -84,4 +95,45 @@
         </div>
     </div>
 </div>
+
+<script>
+async function markApplied(id, btn) {
+    btn.disabled = true;
+    btn.textContent = '...';
+    const resp = await fetch(`/api/prospects/${id}/applied`, {method: 'POST'});
+    if (resp.ok) {
+        const card = btn.closest('.prospect-card');
+        card.style.borderLeft = '3px solid var(--success)';
+        card.style.opacity = '0.5';
+        btn.textContent = 'Applied!';
+        setTimeout(() => card.remove(), 500);
+        const activeTab = document.querySelector('.filter-tab.active');
+        if (activeTab) {
+            const m = activeTab.textContent.match(/\((\d+)\)/);
+            if (m) activeTab.textContent = activeTab.textContent.replace(`(${m[1]})`, `(${parseInt(m[1]) - 1})`);
+        }
+    } else {
+        btn.disabled = false;
+        btn.textContent = 'Applied';
+    }
+}
+
+async function archiveProspect(id, btn) {
+    btn.disabled = true;
+    btn.textContent = '...';
+    const resp = await fetch(`/api/prospects/${id}/archive`, {method: 'POST'});
+    if (resp.ok) {
+        btn.closest('.prospect-card').style.opacity = '0.3';
+        setTimeout(() => btn.closest('.prospect-card').remove(), 300);
+        const activeTab = document.querySelector('.filter-tab.active');
+        if (activeTab) {
+            const m = activeTab.textContent.match(/\((\d+)\)/);
+            if (m) activeTab.textContent = activeTab.textContent.replace(`(${m[1]})`, `(${parseInt(m[1]) - 1})`);
+        }
+    } else {
+        btn.disabled = false;
+        btn.textContent = 'Archive';
+    }
+}
+</script>
 {% endblock %}
