@@ -8,24 +8,50 @@
   @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800;900&family=Instrument+Serif:ital@0;1&display=swap');
 
   :root {
-    --bg: #0c0c1d;
-    --bg-card: #12122a;
-    --bg-surface: #1a1a35;
-    --cyan: #00d4ff;
-    --orange: #ff6b35;
-    --teal: #00bfa5;
-    --coral: #ff7043;
-    --purple: #bb86fc;
-    --green: #00e676;
-    --gold: #ffd740;
-    --red: #ff5252;
-    --text: #d8d8e8;
-    --text-dim: #6a6a8a;
-    --text-bright: #ffffff;
-    --border: rgba(255,255,255,0.06);
+    --bg: #faf8f4;
+    --bg-card: #ffffff;
+    --bg-surface: #f0ede7;
+    --accent: #9a7b2e;
+    --accent-dim: rgba(154,123,46,0.1);
+    --accent-border: rgba(154,123,46,0.2);
+    --cyan: #9a7b2e;
+    --orange: #9a7b2e;
+    --teal: #9a7b2e;
+    --coral: #9a7b2e;
+    --purple: #9a7b2e;
+    --green: #9a7b2e;
+    --gold: #9a7b2e;
+    --red: #8a5040;
+    --text: #4a4540;
+    --text-dim: #8a847a;
+    --text-bright: #1a1816;
+    --border: rgba(0,0,0,0.07);
+  }
+
+  [data-theme="dark"] {
+    --bg: #141210;
+    --bg-card: #1c1a17;
+    --bg-surface: #222019;
+    --accent: #c8a44e;
+    --accent-dim: rgba(200,164,78,0.15);
+    --accent-border: rgba(200,164,78,0.25);
+    --cyan: #c8a44e;
+    --orange: #c8a44e;
+    --teal: #c8a44e;
+    --coral: #c8a44e;
+    --purple: #c8a44e;
+    --green: #c8a44e;
+    --gold: #c8a44e;
+    --red: #a0604a;
+    --text: #c8c2b6;
+    --text-dim: #7a7468;
+    --text-bright: #ece6da;
+    --border: rgba(255,255,255,0.05);
   }
 
   * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
 
   body {
     background: var(--bg);
@@ -35,18 +61,42 @@
     overflow-x: hidden;
   }
 
+  /* ═══ SCROLL REVEAL ═══ */
+  .reveal {
+    opacity: 0;
+    transform: translateY(32px);
+    transition: opacity 0.8s cubic-bezier(0.16, 1, 0.3, 1), transform 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .reveal.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .reveal-delay-1 { transition-delay: 0.1s; }
+  .reveal-delay-2 { transition-delay: 0.2s; }
+  .reveal-delay-3 { transition-delay: 0.3s; }
+
   /* ═══ AMBIENT BACKGROUND ═══ */
   body::before {
     content: '';
     position: fixed;
     top: 0; left: 0; right: 0; bottom: 0;
     background:
-      radial-gradient(ellipse 1200px 800px at 15% 5%, rgba(0,212,255,0.04) 0%, transparent 60%),
-      radial-gradient(ellipse 800px 1000px at 85% 25%, rgba(187,134,252,0.03) 0%, transparent 60%),
-      radial-gradient(ellipse 1000px 600px at 50% 55%, rgba(255,107,53,0.02) 0%, transparent 60%),
-      radial-gradient(ellipse 900px 700px at 20% 80%, rgba(0,230,118,0.03) 0%, transparent 60%);
+      radial-gradient(ellipse 1200px 800px at 15% 5%, rgba(154,123,46,0.04) 0%, transparent 60%),
+      radial-gradient(ellipse 800px 1000px at 85% 50%, rgba(154,123,46,0.03) 0%, transparent 60%),
+      radial-gradient(ellipse 1000px 600px at 50% 80%, rgba(0,0,0,0.01) 0%, transparent 60%);
     pointer-events: none;
     z-index: 0;
+  }
+
+  /* ═══ GRAIN TEXTURE ═══ */
+  body::after {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.4;
   }
 
   /* ═══ SCROLL TIMELINE ═══ */
@@ -62,47 +112,54 @@
   }
 
   .timeline-dot {
-    width: 10px;
-    height: 10px;
+    width: 12px;
+    height: 12px;
     border-radius: 50%;
-    background: rgba(255,255,255,0.1);
-    border: 1px solid rgba(255,255,255,0.15);
+    background: rgba(255,255,255,0.08);
+    border: 1.5px solid rgba(255,255,255,0.12);
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
     position: relative;
+    text-decoration: none;
   }
 
   .timeline-dot:hover,
   .timeline-dot.active {
-    background: var(--cyan);
-    border-color: var(--cyan);
-    box-shadow: 0 0 12px rgba(0,212,255,0.4);
+    background: var(--accent);
+    border-color: var(--accent);
+    box-shadow: 0 0 8px rgba(154,123,46,0.3);
+    transform: scale(1.2);
   }
 
-  .timeline-dot:hover .timeline-label {
+  .timeline-dot:hover .timeline-label,
+  .timeline-dot.active .timeline-label {
     opacity: 1;
     transform: translateX(0);
   }
 
   .timeline-label {
     position: absolute;
-    left: 20px;
+    left: 22px;
     top: 50%;
-    transform: translateY(-50%) translateX(-5px);
+    transform: translateY(-50%) translateX(-8px);
     font-family: 'JetBrains Mono', monospace;
     font-size: 10px;
-    color: var(--cyan);
+    color: var(--accent);
     white-space: nowrap;
     opacity: 0;
-    transition: all 0.2s ease;
+    transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     pointer-events: none;
+    background: var(--bg-surface);
+    padding: 2px 8px;
+    border-radius: 4px;
+    backdrop-filter: blur(8px);
   }
 
   .timeline-line {
     width: 1px;
-    height: 20px;
-    background: rgba(255,255,255,0.06);
-    margin-left: 4.5px;
+    height: 24px;
+    background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+    margin-left: 5.5px;
   }
 
   /* ═══ PAGE CONTAINER ═══ */
@@ -128,71 +185,102 @@
   .hero-overline {
     font-family: 'JetBrains Mono', monospace;
     font-size: 11px;
-    letter-spacing: 4px;
+    letter-spacing: 5px;
     text-transform: uppercase;
     color: var(--cyan);
-    opacity: 0.7;
-    margin-bottom: 24px;
+    margin-bottom: 28px;
+    opacity: 0;
+    animation: heroFadeDown 1s cubic-bezier(0.16, 1, 0.3, 1) 0.2s forwards;
   }
 
   .hero h1 {
     font-family: 'Instrument Serif', serif;
-    font-size: 72px;
+    font-size: 76px;
     font-weight: 400;
     color: var(--text-bright);
     line-height: 1.05;
-    margin-bottom: 20px;
-    letter-spacing: -2px;
+    margin-bottom: 24px;
+    letter-spacing: -2.5px;
+    opacity: 0;
+    animation: heroFadeUp 1s cubic-bezier(0.16, 1, 0.3, 1) 0.4s forwards;
   }
 
   .hero h1 em {
     font-style: italic;
-    background: linear-gradient(135deg, var(--cyan), var(--purple));
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    color: var(--accent);
+  }
+
+  @keyframes heroFadeUp {
+    from { opacity: 0; transform: translateY(24px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes heroFadeDown {
+    from { opacity: 0; transform: translateY(-12px); }
+    to { opacity: 0.8; transform: translateY(0); }
   }
 
   .hero-sub {
     font-size: 18px;
     color: var(--text-dim);
-    max-width: 500px;
-    margin-bottom: 40px;
+    max-width: 540px;
+    margin-bottom: 48px;
     font-weight: 300;
+    line-height: 1.7;
+    opacity: 0;
+    animation: heroFadeUp 1s cubic-bezier(0.16, 1, 0.3, 1) 0.6s forwards;
   }
 
   .hero-stats {
     display: flex;
-    gap: 32px;
+    gap: 40px;
+    opacity: 0;
+    animation: heroFadeUp 1s cubic-bezier(0.16, 1, 0.3, 1) 0.8s forwards;
   }
 
   .hero-stat {
     text-align: center;
+    position: relative;
+  }
+
+  .hero-stat + .hero-stat::before {
+    content: '';
+    position: absolute;
+    left: -20px;
+    top: 8px;
+    bottom: 8px;
+    width: 1px;
+    background: rgba(255,255,255,0.08);
   }
 
   .hero-stat-num {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 28px;
+    font-size: 32px;
     font-weight: 700;
     color: var(--text-bright);
+    transition: color 0.3s ease;
+  }
+
+  .hero-stat:hover .hero-stat-num {
+    color: var(--cyan);
   }
 
   .hero-stat-label {
     font-size: 11px;
     color: var(--text-dim);
     text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-top: 4px;
+    letter-spacing: 1.5px;
+    margin-top: 6px;
   }
 
   .scroll-hint {
-    margin-top: 60px;
+    margin-top: 72px;
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 8px;
-    opacity: 0.3;
-    animation: pulse 2s ease-in-out infinite;
+    gap: 10px;
+    opacity: 0;
+    animation: heroFadeUp 1s cubic-bezier(0.16, 1, 0.3, 1) 1.2s forwards;
   }
 
   .scroll-hint span {
@@ -200,33 +288,66 @@
     font-size: 10px;
     letter-spacing: 3px;
     text-transform: uppercase;
+    color: var(--text-dim);
   }
 
-  @keyframes pulse {
-    0%, 100% { opacity: 0.2; }
-    50% { opacity: 0.5; }
+  .scroll-hint div {
+    animation: scrollBounce 2s ease-in-out infinite;
+    color: var(--accent);
+    opacity: 0.4;
+    font-size: 18px;
+  }
+
+  @keyframes scrollBounce {
+    0%, 100% { transform: translateY(0); opacity: 0.3; }
+    50% { transform: translateY(6px); opacity: 0.7; }
+  }
+
+  /* ═══ CHAPTER SEPARATOR ═══ */
+  .chapter-sep {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 0;
+  }
+
+  .chapter-sep-line {
+    height: 1px;
+    flex: 1;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+  }
+
+  .chapter-sep-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.08);
+    margin: 0 16px;
+    flex-shrink: 0;
   }
 
   /* ═══ CHAPTER ═══ */
   .chapter {
-    padding: 100px 0;
+    padding: 60px 0 40px;
     position: relative;
   }
 
   .chapter-num {
     font-family: 'JetBrains Mono', monospace;
-    font-size: 80px;
-    font-weight: 700;
-    opacity: 0.04;
+    font-size: 120px;
+    font-weight: 800;
+    opacity: 0.035;
     position: absolute;
-    top: 80px;
-    right: 0;
+    top: 90px;
+    right: -10px;
     line-height: 1;
     user-select: none;
+    letter-spacing: -4px;
+    color: rgba(255,255,255,0.04);
   }
 
   .chapter-header {
-    margin-bottom: 40px;
+    margin-bottom: 44px;
   }
 
   .chapter-overline {
@@ -234,7 +355,21 @@
     font-size: 11px;
     letter-spacing: 3px;
     text-transform: uppercase;
-    margin-bottom: 12px;
+    margin-bottom: 14px;
+    display: inline-block;
+    position: relative;
+  }
+
+  .chapter-overline::after {
+    content: '';
+    position: absolute;
+    bottom: -4px;
+    left: 0;
+    width: 24px;
+    height: 2px;
+    border-radius: 1px;
+    background: currentColor;
+    opacity: 0.4;
   }
 
   .chapter-overline.cyan { color: var(--cyan); }
@@ -247,26 +382,38 @@
 
   .chapter-title {
     font-family: 'Instrument Serif', serif;
-    font-size: 42px;
+    font-size: 44px;
     font-weight: 400;
     color: var(--text-bright);
-    line-height: 1.15;
+    line-height: 1.18;
     letter-spacing: -1px;
-    margin-bottom: 12px;
+    margin-bottom: 16px;
   }
 
   .chapter-lead {
-    font-size: 16px;
+    font-size: 17px;
     color: var(--text-dim);
-    max-width: 600px;
+    max-width: 620px;
     font-weight: 300;
-    line-height: 1.7;
+    line-height: 1.75;
+  }
+
+  .chapter-lead code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
   }
 
   /* ═══ IMAGE PLACEHOLDER ═══ */
   .visual-block {
-    margin: 40px 0;
+    margin: 48px 0;
     position: relative;
+    border-radius: 18px;
+    overflow: hidden;
+  }
+
+  .visual-block > div:first-child {
+    border-radius: 16px;
+    overflow: hidden;
   }
 
   .image-slot {
@@ -331,9 +478,9 @@
     font-size: 10px;
     padding: 6px 14px;
     border-radius: 8px;
-    background: rgba(0,212,255,0.1);
-    border: 1px solid rgba(0,212,255,0.2);
-    color: var(--cyan);
+    background: var(--accent-dim);
+    border: 1px solid var(--accent-border);
+    color: var(--accent);
     cursor: pointer;
     transition: all 0.2s ease;
     z-index: 2;
@@ -341,8 +488,8 @@
   }
 
   .prompt-toggle:hover {
-    background: rgba(0,212,255,0.2);
-    border-color: rgba(0,212,255,0.4);
+    background: rgba(200,164,78,0.2);
+    border-color: rgba(200,164,78,0.4);
   }
 
   .prompt-drawer {
@@ -382,19 +529,19 @@
     font-size: 10px;
     padding: 4px 12px;
     border-radius: 6px;
-    background: rgba(0,230,118,0.1);
-    border: 1px solid rgba(0,230,118,0.2);
-    color: var(--green);
+    background: var(--accent-dim);
+    border: 1px solid var(--accent-border);
+    color: var(--accent);
     cursor: pointer;
     transition: all 0.2s ease;
   }
 
   .prompt-copy-btn:hover {
-    background: rgba(0,230,118,0.2);
+    background: rgba(200,164,78,0.2);
   }
 
   .prompt-copy-btn.copied {
-    background: rgba(0,230,118,0.3);
+    background: rgba(200,164,78,0.3);
     color: var(--text-bright);
   }
 
@@ -422,6 +569,17 @@
     padding: 24px;
     position: relative;
     overflow: hidden;
+    transition: border-color 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  .detail-card:hover {
+    border-color: var(--accent-border);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+  }
+
+  [data-theme="dark"] .detail-card:hover {
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
   }
 
   .detail-card::before {
@@ -431,12 +589,12 @@
     height: 2px;
   }
 
-  .detail-card.cyan-top::before { background: linear-gradient(90deg, var(--cyan), transparent); }
-  .detail-card.orange-top::before { background: linear-gradient(90deg, var(--orange), transparent); }
-  .detail-card.green-top::before { background: linear-gradient(90deg, var(--green), transparent); }
-  .detail-card.teal-top::before { background: linear-gradient(90deg, var(--teal), transparent); }
-  .detail-card.coral-top::before { background: linear-gradient(90deg, var(--coral), transparent); }
-  .detail-card.purple-top::before { background: linear-gradient(90deg, var(--purple), transparent); }
+  .detail-card.cyan-top::before,
+  .detail-card.orange-top::before,
+  .detail-card.green-top::before,
+  .detail-card.teal-top::before,
+  .detail-card.coral-top::before,
+  .detail-card.purple-top::before { background: linear-gradient(90deg, var(--accent), transparent); }
 
   .detail-card-title {
     font-family: 'JetBrains Mono', monospace;
@@ -505,9 +663,9 @@
   }
 
   .flow-h-step.gate {
-    background: rgba(255,82,82,0.1);
-    border-color: rgba(255,82,82,0.25);
-    color: #ff8a80;
+    background: rgba(160,96,74,0.12);
+    border-color: rgba(160,96,74,0.3);
+    color: #c08070;
     font-weight: 600;
   }
 
@@ -531,7 +689,7 @@
     top: 0;
     bottom: 0;
     width: 2px;
-    background: linear-gradient(180deg, var(--teal) 0%, var(--teal) 70%, var(--red) 85%, var(--red) 100%);
+    background: linear-gradient(180deg, var(--accent) 0%, var(--accent) 70%, var(--red) 85%, var(--red) 100%);
     opacity: 0.3;
     border-radius: 1px;
   }
@@ -548,7 +706,7 @@
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: var(--teal);
+    background: var(--accent);
     border: 2px solid var(--bg);
   }
 
@@ -570,24 +728,33 @@
 
   /* ═══ CALLOUT ═══ */
   .callout {
-    padding: 20px 24px;
-    border-radius: 10px;
-    margin: 24px 0;
-    font-size: 14px;
+    padding: 24px 28px;
+    border-radius: 12px;
+    margin: 32px 0;
+    font-size: 15px;
     font-weight: 500;
-    line-height: 1.6;
+    line-height: 1.7;
+    position: relative;
   }
 
-  .callout.teal {
-    background: rgba(0,191,165,0.06);
-    border: 1px solid rgba(0,191,165,0.15);
-    color: var(--teal);
+  .callout::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    border-radius: 12px 0 0 12px;
   }
 
+  .callout.teal::before,
+  .callout.purple::before { background: var(--accent); }
+
+  .callout.teal,
   .callout.purple {
-    background: rgba(187,134,252,0.06);
-    border: 1px solid rgba(187,134,252,0.15);
-    color: var(--purple);
+    background: var(--accent-dim);
+    border: 1px solid var(--accent-border);
+    color: var(--text);
   }
 
   .callout-label {
@@ -609,6 +776,12 @@
     margin: 16px 0;
     position: relative;
     overflow: hidden;
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+
+  .tier-card:hover {
+    border-color: rgba(255,255,255,0.1);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.2);
   }
 
   .tier-card::before {
@@ -618,9 +791,9 @@
     width: 4px;
   }
 
-  .tier-card.cyan-left::before { background: var(--cyan); }
-  .tier-card.orange-left::before { background: var(--orange); }
-  .tier-card.green-left::before { background: var(--green); }
+  .tier-card.cyan-left::before,
+  .tier-card.orange-left::before,
+  .tier-card.green-left::before { background: var(--accent); }
 
   .tier-card-head {
     display: flex;
@@ -661,9 +834,9 @@
     white-space: nowrap;
   }
 
-  .badge.cyan { background: rgba(0,212,255,0.1); color: var(--cyan); border: 1px solid rgba(0,212,255,0.2); }
-  .badge.orange { background: rgba(255,107,53,0.1); color: var(--orange); border: 1px solid rgba(255,107,53,0.2); }
-  .badge.green { background: rgba(0,230,118,0.1); color: var(--green); border: 1px solid rgba(0,230,118,0.2); }
+  .badge.cyan,
+  .badge.orange,
+  .badge.green { background: var(--accent-dim); color: var(--accent); border: 1px solid var(--accent-border); }
 
   .tier-meta {
     display: flex;
@@ -734,6 +907,12 @@
     padding: 24px;
     position: relative;
     overflow: hidden;
+    transition: border-color 0.3s ease, transform 0.3s ease;
+  }
+
+  .rubric-card:hover {
+    border-color: rgba(255,255,255,0.1);
+    transform: translateY(-2px);
   }
 
   .rubric-card::before {
@@ -743,8 +922,8 @@
     height: 2px;
   }
 
-  .rubric-card.orange-top::before { background: linear-gradient(90deg, var(--orange), transparent); }
-  .rubric-card.teal-top::before { background: linear-gradient(90deg, var(--teal), transparent); }
+  .rubric-card.orange-top::before,
+  .rubric-card.teal-top::before { background: linear-gradient(90deg, var(--accent), transparent); }
 
   .rubric-title {
     font-size: 14px;
@@ -782,8 +961,8 @@
   }
 
   .rubric-bar-fill { height: 100%; border-radius: 2px; }
-  .rubric-bar-fill.orange { background: var(--orange); }
-  .rubric-bar-fill.teal { background: var(--teal); }
+  .rubric-bar-fill.orange,
+  .rubric-bar-fill.teal { background: var(--accent); }
 
   .rubric-weight {
     font-family: 'JetBrains Mono', monospace;
@@ -813,18 +992,18 @@
   }
 
   .stack-layer.purple-bg {
-    background: linear-gradient(135deg, rgba(187,134,252,0.06), rgba(187,134,252,0.02));
-    border: 1px solid rgba(187,134,252,0.15);
+    background: linear-gradient(135deg, rgba(200,164,78,0.05), rgba(200,164,78,0.01));
+    border: 1px solid var(--accent-border);
   }
 
   .stack-layer.cyan-bg {
-    background: linear-gradient(135deg, rgba(0,212,255,0.06), rgba(0,212,255,0.02));
-    border: 1px solid rgba(0,212,255,0.15);
+    background: linear-gradient(135deg, rgba(255,255,255,0.03), rgba(255,255,255,0.01));
+    border: 1px solid rgba(255,255,255,0.08);
   }
 
   .stack-layer.orange-bg {
-    background: linear-gradient(135deg, rgba(255,107,53,0.06), rgba(255,107,53,0.02));
-    border: 1px solid rgba(255,107,53,0.15);
+    background: linear-gradient(135deg, rgba(255,255,255,0.02), transparent);
+    border: 1px solid rgba(255,255,255,0.06);
   }
 
   .stack-label {
@@ -887,18 +1066,30 @@
     white-space: nowrap;
   }
 
-  .status-node.active { background: rgba(255,112,67,0.1); border: 1px solid rgba(255,112,67,0.2); color: var(--coral); }
-  .status-node.success { background: rgba(0,230,118,0.1); border: 1px solid rgba(0,230,118,0.2); color: var(--green); }
-  .status-node.terminal { background: rgba(255,82,82,0.08); border: 1px solid rgba(255,82,82,0.15); color: #ff8a80; }
+  .status-node.active { background: var(--accent-dim); border: 1px solid var(--accent-border); color: var(--accent); }
+  .status-node.success { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); color: var(--text-bright); }
+  .status-node.terminal { background: rgba(160,96,74,0.1); border: 1px solid rgba(160,96,74,0.2); color: #c08070; }
 
   .status-arrow { color: var(--text-dim); opacity: 0.3; font-size: 11px; }
 
   /* ═══ FOOTER ═══ */
   .footer {
-    padding: 80px 0 60px;
+    padding: 100px 0 80px;
     text-align: center;
-    border-top: 1px solid var(--border);
-    margin-top: 40px;
+    margin-top: 60px;
+    position: relative;
+  }
+
+  .footer::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 200px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--accent), transparent);
+    opacity: 0.3;
   }
 
   .footer-pills {
@@ -906,27 +1097,34 @@
     flex-wrap: wrap;
     justify-content: center;
     gap: 10px;
-    margin-bottom: 24px;
+    margin-bottom: 32px;
   }
 
   .footer-pill {
     font-family: 'JetBrains Mono', monospace;
     font-size: 11px;
-    padding: 6px 16px;
+    padding: 8px 18px;
     border-radius: 20px;
     background: rgba(255,255,255,0.03);
     border: 1px solid var(--border);
     color: var(--text);
+    transition: all 0.3s ease;
   }
 
-  .footer-pill .num { font-weight: 700; color: var(--cyan); }
+  .footer-pill:hover {
+    border-color: var(--accent-border);
+    background: var(--accent-dim);
+  }
+
+  .footer-pill .num { font-weight: 700; color: var(--accent); }
 
   .footer-tagline {
     font-family: 'Instrument Serif', serif;
-    font-size: 24px;
+    font-size: 28px;
     color: var(--text);
-    opacity: 0.4;
+    opacity: 0.35;
     font-style: italic;
+    letter-spacing: -0.5px;
   }
 
   /* ═══ SECTION DIVIDER ═══ */
@@ -943,6 +1141,101 @@
     border-radius: 12px;
     padding: 28px;
     margin: 16px 0;
+  }
+
+  /* ═══ THEME SWITCHER ═══ */
+  .theme-switcher {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 8px;
+    opacity: 0;
+    animation: heroFadeUp 1s cubic-bezier(0.16, 1, 0.3, 1) 1.4s forwards;
+  }
+
+  .theme-switcher-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: color 0.3s ease;
+    padding: 4px 0;
+  }
+
+  .theme-switcher-label:hover {
+    color: var(--text);
+  }
+
+  .theme-switcher-label.active {
+    color: var(--accent);
+  }
+
+  .theme-toggle {
+    width: 40px;
+    height: 22px;
+    border-radius: 11px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    position: relative;
+    transition: background 0.3s ease, border-color 0.3s ease;
+    flex-shrink: 0;
+  }
+
+  .theme-toggle::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  [data-theme="dark"] .theme-toggle::after {
+    transform: translateX(18px);
+  }
+
+  .theme-toggle:hover {
+    border-color: var(--accent-border);
+  }
+
+  /* ═══ DIAGRAM EMBED DARK CARD (light mode) ═══ */
+  .visual-block > div:first-child {
+    border-radius: 16px;
+    overflow: hidden;
+    transition: box-shadow 0.3s ease;
+  }
+
+  :root:not([data-theme="dark"]) .visual-block {
+    box-shadow: 0 4px 24px rgba(0,0,0,0.1);
+    border-radius: 18px;
+  }
+
+  /* ═══ LIGHT MODE OVERRIDES ═══ */
+  .chapter-sep-dot {
+    background: var(--border);
+  }
+
+  [data-theme="dark"] .tier-card:hover,
+  [data-theme="dark"] .rubric-card:hover {
+    box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+  }
+
+  /* Transition everything smoothly on theme change */
+  body, .page, .hero, .chapter, .detail-card, .tier-card, .rubric-card,
+  .callout, .footer, .schema-cluster, .stack-layer, .badge, .flow-h-step,
+  .status-node, .chip, .v-step-title, .v-step-desc, .footer-pill,
+  .timeline-dot, .chapter-overline, .chapter-title, .chapter-lead,
+  .hero h1, .hero-sub, .hero-overline, .hero-stat-num, .hero-stat-label {
+    transition-property: background, color, border-color, box-shadow;
+    transition-duration: 0.4s;
+    transition-timing-function: ease;
   }
 </style>
 </head>
@@ -982,6 +1275,11 @@
       <div class="hero-stat"><div class="hero-stat-num">30+</div><div class="hero-stat-label">Commands</div></div>
       <div class="hero-stat"><div class="hero-stat-num">3</div><div class="hero-stat-label">Autonomy Tiers</div></div>
     </div>
+    <div class="theme-switcher">
+      <span class="theme-switcher-label active" data-theme-val="light">Light</span>
+      <div class="theme-toggle" id="theme-toggle"></div>
+      <span class="theme-switcher-label" data-theme-val="dark">Dark</span>
+    </div>
     <div class="scroll-hint">
       <span>Scroll to explore</span>
       <div>&#8595;</div>
@@ -998,32 +1296,122 @@
     </div>
 
     <div class="visual-block">
-      <div class="image-slot" id="img-corpus">
-        <img src="" alt="Corpus building interview flow">
-        <div class="image-placeholder-content">
-          <div class="image-placeholder-icon">&#128483;</div>
-          <div class="image-placeholder-text">Interview &amp; corpus building visualization</div>
+      <!-- Live HTML embed — replaces image placeholder -->
+      <div class="corpus-viz" id="corpus-viz">
+        <style>
+          .corpus-viz{--accent:#bb86fc;--accent-dim:#9a67db;--accent-muted:rgba(187,134,252,0.12);--accent-border:rgba(187,134,252,0.25);--cv-teal:#5DCAA5;--cv-teal-muted:rgba(93,202,165,0.12);--cv-amber:#EF9F27;--cv-amber-muted:rgba(239,159,39,0.12);--cv-green:#97C459;--cv-red:#F09595;--cv-bg:#0c0c1d;--cv-bg-card:#13132b;--cv-border:rgba(255,255,255,0.08);--cv-border-accent:rgba(187,134,252,0.2);--cv-text-primary:#e8e6f0;--cv-text-secondary:#9896a8;--cv-text-dim:#6b6980;font-family:'Outfit',sans-serif;color:var(--cv-text-primary);padding:32px 28px 24px;box-sizing:border-box;width:100%;background:var(--cv-bg);border-radius:16px;border:1px solid var(--cv-border)}
+          .corpus-viz *,.corpus-viz *::before,.corpus-viz *::after{box-sizing:border-box;margin:0;padding:0}
+          .cv-grid{display:grid;grid-template-columns:1fr 1.5fr 1fr;gap:20px;align-items:start}
+          .cv-col{display:flex;flex-direction:column;gap:8px}
+          .cv-col-center{align-items:center}
+          .cv-section{font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:500;letter-spacing:2px;text-transform:uppercase;color:var(--cv-text-dim);margin-bottom:4px}
+          .cv-bubble{position:relative;padding:10px 12px;border-radius:8px;font-size:12px;line-height:1.5;animation:cv-fadeUp .4s ease both}
+          .cv-bubble:nth-child(2){animation-delay:.05s}.cv-bubble:nth-child(3){animation-delay:.1s}.cv-bubble:nth-child(4){animation-delay:.15s}.cv-bubble:nth-child(5){animation-delay:.2s}.cv-bubble:nth-child(6){animation-delay:.25s}.cv-bubble:nth-child(7){animation-delay:.3s}
+          .cv-bubble-q{background:var(--cv-bg-card);border:.5px solid var(--cv-border);border-left:2px solid var(--accent);color:var(--cv-text-secondary)}
+          .cv-bubble-a{background:var(--accent-muted);border:.5px solid var(--accent-border);border-left:2px solid var(--cv-teal);color:var(--cv-text-primary)}
+          .cv-speaker{font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:var(--cv-text-dim);margin-bottom:3px}
+          .cv-bubble-a .cv-speaker{color:var(--cv-teal)}
+          .cv-voice{width:100%;background:var(--accent-muted);border:.5px solid var(--accent-border);border-radius:10px;padding:12px 14px}
+          .cv-voice-label{font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:600;letter-spacing:1.8px;text-transform:uppercase;color:var(--accent-dim);margin-bottom:6px}
+          .cv-voice-row{font-size:11.5px;line-height:1.7;color:var(--cv-text-secondary)}
+          .cv-avoid{color:var(--cv-red);font-weight:600}.cv-prefer{color:var(--cv-teal);font-weight:600}
+          .cv-flow-down{display:flex;justify-content:center;padding:2px 0}
+          .cv-flow-down svg{width:2px;height:18px}
+          .cv-corpus{width:100%;background:var(--cv-bg-card);border:.5px solid var(--cv-border-accent);border-radius:14px;padding:0;overflow:hidden;position:relative;animation:cv-fadeUp .5s ease .2s both}
+          .cv-corpus-cap{height:6px;background:linear-gradient(90deg,var(--accent-dim),var(--accent),var(--accent-dim));opacity:.5}
+          .cv-corpus-inner{padding:12px 14px 14px}
+          .cv-corpus-title{font-size:13px;font-weight:600;text-align:center;color:var(--cv-text-primary);margin-bottom:10px;letter-spacing:.3px}
+          .cv-bullet-row{display:flex;align-items:center;gap:6px;padding:3px 0;flex-wrap:wrap}
+          .cv-bullet-dot{width:5px;height:5px;border-radius:50%;background:var(--accent);flex-shrink:0;opacity:.7}
+          .cv-bullet-text{font-size:10.5px;color:var(--cv-text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+          .cv-tag{display:inline-block;font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:500;padding:1px 6px;border-radius:3px;background:var(--accent-muted);color:var(--accent);letter-spacing:.5px;white-space:nowrap;flex-shrink:0}
+          .cv-tag-teal{background:var(--cv-teal-muted);color:var(--cv-teal)}.cv-tag-amber{background:var(--cv-amber-muted);color:var(--cv-amber)}
+          .cv-output{background:var(--cv-bg-card);border:.5px solid var(--cv-border);border-radius:10px;padding:14px 12px;text-align:center;transition:border-color .2s}
+          .cv-output:hover{border-color:var(--accent-border)}
+          .cv-output-icon{width:40px;height:40px;margin:0 auto 8px;border-radius:10px;display:flex;align-items:center;justify-content:center}
+          .cv-icon-resume{background:var(--accent-muted)}.cv-icon-score{background:var(--cv-teal-muted)}.cv-icon-drift{background:var(--cv-amber-muted)}
+          .cv-output-title{font-size:12px;font-weight:600;color:var(--cv-text-primary);margin-bottom:2px}
+          .cv-output-sub{font-size:10px;color:var(--cv-text-dim)}
+          .cv-badge{display:inline-block;margin-top:10px;font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:600;padding:4px 10px;border-radius:4px;background:var(--accent-muted);color:var(--accent);letter-spacing:1.2px;text-transform:uppercase;border:.5px solid var(--accent-border)}
+          .cv-progress{margin-top:20px;padding-top:16px;border-top:.5px solid var(--cv-border)}
+          .cv-progress-label{font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:500;letter-spacing:2px;text-transform:uppercase;color:var(--cv-text-dim);margin-bottom:8px}
+          .cv-progress-bar{display:flex;gap:6px}
+          .cv-role{flex:1;border-radius:8px;padding:8px 6px;text-align:center;background:var(--cv-bg-card);border:.5px solid var(--cv-border);transition:all .2s}
+          .cv-role-done{border-color:var(--accent-border);background:var(--accent-muted)}
+          .cv-role-name{font-size:10px;font-weight:600;color:var(--cv-text-secondary)}.cv-role-done .cv-role-name{color:var(--accent)}
+          .cv-role-count{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--cv-text-dim);margin-top:2px}
+          .cv-role-active{border-color:rgba(93,202,165,0.3);background:var(--cv-teal-muted)}.cv-role-active .cv-role-name{color:var(--cv-teal)}
+          @keyframes cv-fadeUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+          @media(max-width:600px){.cv-grid{grid-template-columns:1fr;gap:24px}}
+        </style>
+        <div class="cv-grid">
+          <div class="cv-col">
+            <div class="cv-section">AI interview</div>
+            <div class="cv-bubble cv-bubble-q"><div class="cv-speaker">Interviewer</div>What did you ship?</div>
+            <div class="cv-bubble cv-bubble-q"><div class="cv-speaker">Interviewer</div>What metrics did you move?</div>
+            <div class="cv-bubble cv-bubble-q"><div class="cv-speaker">Interviewer</div>What was broken that you fixed?</div>
+            <div class="cv-bubble cv-bubble-a"><div class="cv-speaker">Drafted bullet</div>Shipped provider matching algo that reduced assignment time by 62%</div>
+            <div class="cv-bubble cv-bubble-q"><div class="cv-speaker">Interviewer</div>Who did you convince, and how?</div>
+            <div class="cv-bubble cv-bubble-q"><div class="cv-speaker">Interviewer</div>What would you do differently?</div>
+          </div>
+          <div class="cv-col cv-col-center">
+            <div class="cv-section">Corpus</div>
+            <div class="cv-voice">
+              <div class="cv-voice-label">Voice profile</div>
+              <div class="cv-voice-row"><span class="cv-avoid">Avoids:</span> leveraged, synergy, spearheaded</div>
+              <div class="cv-voice-row"><span class="cv-prefer">Prefers:</span> shipped, built, drove, cut</div>
+            </div>
+            <div class="cv-flow-down"><svg viewBox="0 0 2 18"><line x1="1" y1="0" x2="1" y2="18" stroke="#bb86fc" stroke-width="1" stroke-dasharray="2 2" opacity="0.4"/></svg></div>
+            <div class="cv-corpus">
+              <div class="cv-corpus-cap"></div>
+              <div class="cv-corpus-inner">
+                <div class="cv-corpus-title">Verified bullet store</div>
+                <div class="cv-bullet-row"><span class="cv-bullet-dot"></span><span class="cv-bullet-text">Shipped provider matching algo</span><span class="cv-tag">shipping</span></div>
+                <div class="cv-bullet-row"><span class="cv-bullet-dot"></span><span class="cv-bullet-text">Reduced churn 34% via engagement model</span><span class="cv-tag cv-tag-teal">metrics</span></div>
+                <div class="cv-bullet-row"><span class="cv-bullet-dot"></span><span class="cv-bullet-text">Built real-time eligibility dashboard</span><span class="cv-tag">shipping</span></div>
+                <div class="cv-bullet-row"><span class="cv-bullet-dot"></span><span class="cv-bullet-text">Drove adoption from 12% to 89%</span><span class="cv-tag cv-tag-teal">growth</span></div>
+                <div class="cv-bullet-row"><span class="cv-bullet-dot"></span><span class="cv-bullet-text">Cut onboarding 3 wk &rarr; 4 days</span><span class="cv-tag cv-tag-amber">process</span></div>
+                <div class="cv-bullet-row"><span class="cv-bullet-dot"></span><span class="cv-bullet-text">Defined API contract spec for partners</span><span class="cv-tag">technical</span></div>
+                <div class="cv-bullet-row"><span class="cv-bullet-dot"></span><span class="cv-bullet-text">Launched A/B framework in regulated env</span><span class="cv-tag cv-tag-teal">experimentation</span></div>
+                <div class="cv-bullet-row"><span class="cv-bullet-dot"></span><span class="cv-bullet-text">Negotiated vendor SLA with 3 payers</span><span class="cv-tag cv-tag-amber">stakeholder</span></div>
+                <div class="cv-bullet-row"><span class="cv-bullet-dot"></span><span class="cv-bullet-text">Migrated 40k members to new platform</span><span class="cv-tag">shipping</span></div>
+                <div class="cv-bullet-row"><span class="cv-bullet-dot"></span><span class="cv-bullet-text">Increased NPS +18 pts in 2 quarters</span><span class="cv-tag cv-tag-teal">metrics</span></div>
+                <div class="cv-bullet-row"><span class="cv-bullet-dot"></span><span class="cv-bullet-text">Redesigned care manager intake flow</span><span class="cv-tag cv-tag-amber">UX</span></div>
+                <div class="cv-bullet-row"><span class="cv-bullet-dot"></span><span class="cv-bullet-text">Stood up PostHog analytics pipeline</span><span class="cv-tag">technical</span></div>
+              </div>
+              <div class="cv-corpus-cap"></div>
+            </div>
+          </div>
+          <div class="cv-col" style="gap:10px;">
+            <div class="cv-section">Outputs</div>
+            <div class="cv-output">
+              <div class="cv-output-icon cv-icon-resume"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><rect x="3" y="1" width="16" height="20" rx="2.5" stroke="#bb86fc" stroke-width="1"/><line x1="6.5" y1="6" x2="15.5" y2="6" stroke="#bb86fc" stroke-width="1" opacity="0.8"/><line x1="6.5" y1="9.5" x2="15.5" y2="9.5" stroke="#bb86fc" stroke-width="0.7" opacity="0.4"/><line x1="6.5" y1="12.5" x2="13" y2="12.5" stroke="#bb86fc" stroke-width="0.7" opacity="0.4"/><line x1="6.5" y1="15.5" x2="14" y2="15.5" stroke="#bb86fc" stroke-width="0.7" opacity="0.4"/></svg></div>
+              <div class="cv-output-title">Resume generation</div>
+              <div class="cv-output-sub">Role-tailored, voice-matched</div>
+            </div>
+            <div class="cv-output">
+              <div class="cv-output-icon cv-icon-score"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M4 17 A7.5 7.5 0 0 1 18 17" stroke="#5DCAA5" stroke-width="1.2" stroke-linecap="round"/><line x1="11" y1="16" x2="14.5" y2="9" stroke="#5DCAA5" stroke-width="1" stroke-linecap="round"/><circle cx="11" cy="16" r="1.5" fill="#5DCAA5"/></svg></div>
+              <div class="cv-output-title">JD scoring</div>
+              <div class="cv-output-sub">Bullet &harr; requirement match rate</div>
+            </div>
+            <div class="cv-output">
+              <div class="cv-output-icon cv-icon-drift"><svg width="22" height="22" viewBox="0 0 22 22" fill="none"><path d="M11 2L19 8V15L11 20L3 15V8Z" stroke="#EF9F27" stroke-width="1"/><path d="M7.5 11L10 13.5L15 8" stroke="#97C459" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></div>
+              <div class="cv-output-title">Drift check = 0</div>
+              <div class="cv-output-sub">No unverified claims</div>
+            </div>
+            <div style="text-align:center;"><span class="cv-badge">Single source of truth</span></div>
+          </div>
         </div>
-        <div class="prompt-toggle" onclick="togglePrompt('corpus')">Show Prompt</div>
-      </div>
-      <div class="prompt-drawer" id="prompt-corpus">
-        <div class="prompt-drawer-header">
-          <span class="prompt-drawer-label">Image Generation Prompt</span>
-          <button class="prompt-copy-btn" onclick="copyPrompt('corpus')">Copy</button>
+        <div class="cv-progress">
+          <div class="cv-progress-label">Role completion</div>
+          <div class="cv-progress-bar">
+            <div class="cv-role cv-role-done"><div class="cv-role-name">Role 1 &#10003;</div><div class="cv-role-count">12 bullets</div></div>
+            <div class="cv-role cv-role-done"><div class="cv-role-name">Role 2 &#10003;</div><div class="cv-role-count">9 bullets</div></div>
+            <div class="cv-role cv-role-done"><div class="cv-role-name">Role 3 &#10003;</div><div class="cv-role-count">14 bullets</div></div>
+            <div class="cv-role cv-role-active"><div class="cv-role-name">Role 4</div><div class="cv-role-count">6 / 10</div></div>
+            <div class="cv-role"><div class="cv-role-name">Role N</div><div class="cv-role-count">&mdash;</div></div>
+          </div>
         </div>
-        <div class="prompt-text">Create a polished dark-background (#0c0c1d) technical diagram showing a career interview process that builds a verified resume corpus.
-
-Left side: show a conversation between a person icon and an AI interviewer icon. Speech bubbles contain prompts like "What did you ship?", "What metrics did you move?", "What was broken that you fixed?" The AI responds with a drafted bullet point.
-
-Center: a large cylinder/database labeled "Corpus" with bullet points flowing into it. Each bullet has small tags attached (e.g., "shipping", "metrics", "growth"). Show 8-15 bullets per role slot. Above the corpus, show a voice profile card with "Avoids: leveraged, synergy" and "Prefers: shipped, built, drove."
-
-Right side: show the corpus connecting outward to three outputs: a resume document icon labeled "Resume Generation", a score gauge labeled "JD Scoring", and a validation shield labeled "Drift Check = 0". A badge reads "Single source of truth."
-
-Bottom: a progress bar showing "Role 1 ✓ Role 2 ✓ Role 3 ... Role N" with bullet counts per role (e.g., "12 bullets", "9 bullets", "14 bullets").
-
-Visual treatment: purple (#bb86fc) accent color, the corpus cylinder as the central hero element, conversation flow shown as a gentle arc from left to center.
-
-Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only — no photographs, no people.</div>
       </div>
     </div>
 
@@ -1066,30 +1454,74 @@ Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only 
     </div>
 
     <div class="visual-block">
-      <div class="image-slot has-image" id="img-discovery">
-        <img src="diagrams/discovery.png" alt="Discovery visualization">
-        <div class="image-placeholder-content">
-          <div class="image-placeholder-icon">&#128269;</div>
-          <div class="image-placeholder-text">Discovery flow visualization</div>
+      <div class="dv-root" id="img-discovery">
+        <style>
+          .dv-root{--dv-accent:#00d4ff;--dv-accent-dim:rgba(0,212,255,0.12);--dv-accent-border:rgba(0,212,255,0.25);--dv-bg:#0c0c1d;--dv-card:#12122a;--dv-border:rgba(255,255,255,0.08);--dv-text:#e8e6f0;--dv-dim:#6a6a8a;font-family:'Outfit',sans-serif;color:var(--dv-text);padding:32px 24px 28px;background:var(--dv-bg);border-radius:16px;border:1px solid var(--dv-border);width:100%;box-sizing:border-box}
+          .dv-root *{box-sizing:border-box;margin:0;padding:0}
+          .dv-grid{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;gap:16px;align-items:start}
+          .dv-section{font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:var(--dv-dim);margin-bottom:8px}
+          .dv-col{display:flex;flex-direction:column;gap:8px;animation:dv-up .4s ease both}
+          .dv-col:nth-child(3){animation-delay:.15s}.dv-col:nth-child(5){animation-delay:.3s}
+          .dv-card-group{background:var(--dv-card);border-radius:10px;padding:12px;border:.5px solid var(--dv-border)}
+          .dv-card-group-title{font-size:11px;font-weight:600;color:var(--dv-accent);margin-bottom:8px}
+          .dv-squares{display:flex;flex-wrap:wrap;gap:3px}
+          .dv-sq{width:10px;height:10px;border-radius:2px;background:var(--dv-accent-dim);border:.5px solid var(--dv-accent-border)}
+          .dv-vc-list{display:flex;flex-wrap:wrap;gap:4px;margin-top:6px}
+          .dv-vc{font-family:'JetBrains Mono',monospace;font-size:9px;padding:3px 7px;border-radius:4px;background:var(--dv-accent-dim);color:var(--dv-accent);border:.5px solid var(--dv-accent-border)}
+          .dv-arrow-col{display:flex;align-items:center;justify-content:center;padding-top:40px}
+          .dv-arrow{font-size:20px;color:var(--dv-accent);opacity:.5;animation:dv-pulse 2s ease infinite}
+          .dv-funnel{background:var(--dv-card);border-radius:12px;padding:16px;border:.5px solid var(--dv-accent-border);text-align:center}
+          .dv-funnel-title{font-size:13px;font-weight:600;color:var(--dv-accent);margin-bottom:10px}
+          .dv-db{display:inline-flex;align-items:center;gap:6px;background:var(--dv-accent-dim);padding:6px 12px;border-radius:6px;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--dv-text)}
+          .dv-badge{font-family:'JetBrains Mono',monospace;font-size:8px;padding:2px 6px;border-radius:3px;background:rgba(0,212,255,0.2);color:var(--dv-accent);margin-top:8px;display:inline-block}
+          .dv-rejected{margin-top:10px;display:flex;flex-direction:column;gap:4px}
+          .dv-rej-item{font-size:10px;color:var(--dv-dim);text-decoration:line-through;opacity:.4;padding:2px 8px;background:rgba(255,82,82,0.06);border-radius:4px}
+          .dv-dots{display:flex;flex-direction:column;gap:8px}
+          .dv-dot-row{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--dv-card);border-radius:8px;border:.5px solid var(--dv-accent-border)}
+          .dv-dot{width:8px;height:8px;border-radius:50%;background:var(--dv-accent);box-shadow:0 0 8px rgba(0,212,255,0.6);flex-shrink:0}
+          .dv-dot-text{font-size:10px;color:var(--dv-text)}
+          @keyframes dv-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+          @keyframes dv-pulse{0%,100%{opacity:.3}50%{opacity:.7}}
+          @media(max-width:700px){.dv-grid{grid-template-columns:1fr;gap:20px}.dv-arrow-col{padding:0;transform:rotate(90deg)}}
+        </style>
+        <div class="dv-grid">
+          <div class="dv-col">
+            <div class="dv-section">Sources</div>
+            <div class="dv-card-group">
+              <div class="dv-card-group-title">Career Pages</div>
+              <div class="dv-squares"><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span><span class="dv-sq"></span></div>
+            </div>
+            <div class="dv-card-group">
+              <div class="dv-card-group-title">VC Boards</div>
+              <div class="dv-vc-list"><span class="dv-vc">a16z</span><span class="dv-vc">Greylock</span><span class="dv-vc">YC</span><span class="dv-vc">GC</span></div>
+            </div>
+          </div>
+          <div class="dv-arrow-col"><span class="dv-arrow">&rarr;</span></div>
+          <div class="dv-col">
+            <div class="dv-section">Delta Detection</div>
+            <div class="dv-funnel">
+              <div class="dv-funnel-title">Deduplication Filter</div>
+              <div class="dv-db"><svg width="16" height="18" viewBox="0 0 16 18" fill="none"><ellipse cx="8" cy="3" rx="7" ry="2.5" stroke="#00d4ff" stroke-width="1"/><path d="M1 3v12c0 1.38 3.13 2.5 7 2.5s7-1.12 7-2.5V3" stroke="#00d4ff" stroke-width="1"/><ellipse cx="8" cy="15" rx="7" ry="2.5" stroke="#00d4ff" stroke-width="1" opacity=".3"/></svg> job_listings</div>
+              <div class="dv-badge">UNIQUE(company_id, url)</div>
+              <div class="dv-rejected">
+                <div class="dv-rej-item">duplicate-url-a.html</div>
+                <div class="dv-rej-item">seen-yesterday.html</div>
+                <div class="dv-rej-item">already-tracked.html</div>
+              </div>
+            </div>
+          </div>
+          <div class="dv-arrow-col"><span class="dv-arrow">&rarr;</span></div>
+          <div class="dv-col">
+            <div class="dv-section">New Listings Only</div>
+            <div class="dv-dots">
+              <div class="dv-dot-row"><span class="dv-dot"></span><span class="dv-dot-text">Sr PM &mdash; HealthTech Co</span></div>
+              <div class="dv-dot-row"><span class="dv-dot"></span><span class="dv-dot-text">Product Lead &mdash; Fintech</span></div>
+              <div class="dv-dot-row"><span class="dv-dot"></span><span class="dv-dot-text">PM, Growth &mdash; Series B</span></div>
+              <div class="dv-dot-row"><span class="dv-dot"></span><span class="dv-dot-text">Staff PM &mdash; AI Platform</span></div>
+              <div class="dv-dot-row"><span class="dv-dot"></span><span class="dv-dot-text">PM, Care Mgmt &mdash; Payer</span></div>
+            </div>
+          </div>
         </div>
-        <div class="prompt-toggle" onclick="togglePrompt('discovery')">Show Prompt</div>
-      </div>
-      <div class="prompt-drawer" id="prompt-discovery">
-        <div class="prompt-drawer-header">
-          <span class="prompt-drawer-label">Image Generation Prompt</span>
-          <button class="prompt-copy-btn" onclick="copyPrompt('discovery')">Copy</button>
-        </div>
-        <div class="prompt-text">Create a polished dark-background (#0c0c1d) technical diagram showing a job discovery system.
-
-Left side: a grid of company logos/career page icons (50+) with small globe icons, labeled "Career Pages" and "VC Portfolio Boards."
-
-Center: a funnel/filter with the label "Delta Detection" — arrows flow from career pages through a database cylinder labeled "job_listings" with a badge "UNIQUE(company_id, url)." Show duplicate URLs bouncing off as red X marks.
-
-Right side: only new listings (glowing cyan nodes) pass through, labeled "New Listings Only."
-
-Visual treatment: cyan (#00d4ff) accent color, subtle grid background, data flowing left-to-right, rejected duplicates shown as faded/dimmed nodes.
-
-Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only — no photographs, no people.</div>
       </div>
     </div>
 
@@ -1125,30 +1557,80 @@ Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only 
     </div>
 
     <div class="visual-block">
-      <div class="image-slot has-image" id="img-scoring">
-        <img src="diagrams/scoring.png" alt="Scoring system visualization">
-        <div class="image-placeholder-content">
-          <div class="image-placeholder-icon">&#128202;</div>
-          <div class="image-placeholder-text">Dual scoring rubric visualization</div>
+      <div class="sv-root" id="img-scoring">
+        <style>
+          .sv-root{--sv-accent:#ff6b35;--sv-accent-dim:rgba(255,107,53,0.12);--sv-accent-border:rgba(255,107,53,0.25);--sv-bg:#0c0c1d;--sv-card:#12122a;--sv-border:rgba(255,255,255,0.08);--sv-text:#e8e6f0;--sv-dim:#6a6a8a;font-family:'Outfit',sans-serif;color:var(--sv-text);padding:32px 24px 28px;background:var(--sv-bg);border-radius:16px;border:1px solid var(--sv-border);width:100%;box-sizing:border-box}
+          .sv-root *{box-sizing:border-box;margin:0;padding:0}
+          .sv-grid{display:grid;grid-template-columns:1fr auto 1.2fr auto 1fr;gap:16px;align-items:start}
+          .sv-section{font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:var(--sv-dim);margin-bottom:8px}
+          .sv-col{display:flex;flex-direction:column;gap:8px;animation:sv-up .4s ease both}
+          .sv-col:nth-child(3){animation-delay:.15s}.sv-col:nth-child(5){animation-delay:.3s}
+          .sv-gate{background:var(--sv-card);border-radius:10px;padding:14px;border:.5px solid var(--sv-accent-border)}
+          .sv-gate-title{font-size:12px;font-weight:600;color:var(--sv-accent);margin-bottom:10px}
+          .sv-scale{position:relative;height:8px;background:rgba(255,255,255,0.06);border-radius:4px;overflow:hidden}
+          .sv-scale-fill{height:100%;border-radius:4px;background:linear-gradient(90deg,var(--sv-accent-dim),var(--sv-accent))}
+          .sv-scale-labels{display:flex;justify-content:space-between;font-family:'JetBrains Mono',monospace;font-size:8px;color:var(--sv-dim);margin-top:4px}
+          .sv-marker{position:absolute;top:-3px;width:2px;height:14px;background:var(--sv-accent);border-radius:1px}
+          .sv-marker-label{position:absolute;top:-16px;font-family:'JetBrains Mono',monospace;font-size:8px;color:var(--sv-accent);white-space:nowrap;transform:translateX(-50%)}
+          .sv-dimmed{margin-top:8px;display:flex;flex-direction:column;gap:3px}
+          .sv-dimmed-item{font-size:9px;color:var(--sv-dim);opacity:.35;padding:3px 8px;background:rgba(255,255,255,0.02);border-radius:3px}
+          .sv-bar-row{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+          .sv-bar-label{font-size:10px;color:var(--sv-text);width:100px;flex-shrink:0}
+          .sv-bar{flex:1;height:6px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden}
+          .sv-bar-fill{height:100%;border-radius:3px;background:var(--sv-accent)}
+          .sv-bar-pts{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--sv-accent);width:20px;text-align:right}
+          .sv-arrow-col{display:flex;align-items:center;justify-content:center;padding-top:40px}
+          .sv-arrow{font-size:20px;color:var(--sv-accent);opacity:.5;animation:sv-pulse 2s ease infinite}
+          .sv-thresholds{background:var(--sv-card);border-radius:10px;padding:14px;border:.5px solid var(--sv-border)}
+          .sv-thresh{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:.5px dashed rgba(255,255,255,0.06)}
+          .sv-thresh:last-child{border-bottom:none}
+          .sv-thresh-val{font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--sv-accent);width:28px}
+          .sv-thresh-info{display:flex;flex-direction:column}
+          .sv-thresh-name{font-size:11px;font-weight:600;color:var(--sv-text)}
+          .sv-thresh-desc{font-size:9px;color:var(--sv-dim)}
+          .sv-thresh-dots{display:flex;gap:3px;margin-left:auto}
+          .sv-tdot{width:6px;height:6px;border-radius:50%;background:var(--sv-accent)}
+          .sv-tdot.dim{opacity:.2}
+          @keyframes sv-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+          @keyframes sv-pulse{0%,100%{opacity:.3}50%{opacity:.7}}
+          @media(max-width:700px){.sv-grid{grid-template-columns:1fr;gap:20px}.sv-arrow-col{padding:0;transform:rotate(90deg)}}
+        </style>
+        <div class="sv-grid">
+          <div class="sv-col">
+            <div class="sv-section">Gate 1</div>
+            <div class="sv-gate">
+              <div class="sv-gate-title">Title Pre-Filter</div>
+              <div style="position:relative">
+                <div class="sv-scale"><div class="sv-scale-fill" style="width:50%"></div><div class="sv-marker" style="left:50%"><span class="sv-marker-label">50</span></div></div>
+                <div class="sv-scale-labels"><span>0</span><span>100</span></div>
+              </div>
+              <div class="sv-dimmed">
+                <div class="sv-dimmed-item">Marketing Coord &mdash; 22</div>
+                <div class="sv-dimmed-item">Sales Rep &mdash; 18</div>
+                <div class="sv-dimmed-item">Jr Analyst &mdash; 35</div>
+              </div>
+            </div>
+          </div>
+          <div class="sv-arrow-col"><span class="sv-arrow">&rarr;</span></div>
+          <div class="sv-col">
+            <div class="sv-section">Gate 2 &mdash; Corpus Fit</div>
+            <div class="sv-gate">
+              <div class="sv-bar-row"><span class="sv-bar-label">Skills Match</span><div class="sv-bar"><div class="sv-bar-fill" style="width:100%"></div></div><span class="sv-bar-pts">35</span></div>
+              <div class="sv-bar-row"><span class="sv-bar-label">Experience Level</span><div class="sv-bar"><div class="sv-bar-fill" style="width:71%"></div></div><span class="sv-bar-pts">25</span></div>
+              <div class="sv-bar-row"><span class="sv-bar-label">Domain Fit</span><div class="sv-bar"><div class="sv-bar-fill" style="width:71%"></div></div><span class="sv-bar-pts">25</span></div>
+              <div class="sv-bar-row"><span class="sv-bar-label">Location/Remote</span><div class="sv-bar"><div class="sv-bar-fill" style="width:43%"></div></div><span class="sv-bar-pts">15</span></div>
+            </div>
+          </div>
+          <div class="sv-arrow-col"><span class="sv-arrow">&rarr;</span></div>
+          <div class="sv-col">
+            <div class="sv-section">Thresholds</div>
+            <div class="sv-thresholds">
+              <div class="sv-thresh"><span class="sv-thresh-val">50</span><div class="sv-thresh-info"><span class="sv-thresh-name">title filter</span><span class="sv-thresh-desc">minimum to pass Gate 1</span></div><div class="sv-thresh-dots"><span class="sv-tdot"></span><span class="sv-tdot dim"></span><span class="sv-tdot dim"></span></div></div>
+              <div class="sv-thresh"><span class="sv-thresh-val">65</span><div class="sv-thresh-info"><span class="sv-thresh-name">/swarm auto</span><span class="sv-thresh-desc">semi-auto resume gen</span></div><div class="sv-thresh-dots"><span class="sv-tdot"></span><span class="sv-tdot"></span><span class="sv-tdot dim"></span></div></div>
+              <div class="sv-thresh"><span class="sv-thresh-val">70</span><div class="sv-thresh-info"><span class="sv-thresh-name">/pipeline batch</span><span class="sv-thresh-desc">reviewed batch queue</span></div><div class="sv-thresh-dots"><span class="sv-tdot"></span><span class="sv-tdot"></span><span class="sv-tdot"></span></div></div>
+            </div>
+          </div>
         </div>
-        <div class="prompt-toggle" onclick="togglePrompt('scoring')">Show Prompt</div>
-      </div>
-      <div class="prompt-drawer" id="prompt-scoring">
-        <div class="prompt-drawer-header">
-          <span class="prompt-drawer-label">Image Generation Prompt</span>
-          <button class="prompt-copy-btn" onclick="copyPrompt('scoring')">Copy</button>
-        </div>
-        <div class="prompt-text">Create a polished dark-background (#0c0c1d) technical diagram showing a dual-gate scoring system.
-
-Left side: a job listing document icon flowing into "Gate 1: Title Pre-Filter" shown as a horizontal bar at the 50-point mark on a 0-100 scale. Jobs below 50 are dimmed/rejected.
-
-Center: passing jobs flow into "Gate 2: Corpus Fit" — show four stacked horizontal bars representing Skills Match (35pts, tallest), Experience Level (25pts), Domain Fit (25pts), and Location/Remote (15pts, shortest). These combine into a single score.
-
-Right side: three threshold lines at 50 (labeled "title filter"), 65 (labeled "/swarm auto"), and 70 (labeled "/pipeline batch"). Jobs above each line glow brighter.
-
-Visual treatment: orange (#ff6b35) accent, scores displayed as filled progress bars, threshold lines as horizontal dashed rules.
-
-Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only — no photographs, no people.</div>
       </div>
     </div>
 
@@ -1221,32 +1703,88 @@ Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only 
     </div>
 
     <div class="visual-block">
-      <div class="image-slot has-image" id="img-resume">
-        <img src="diagrams/resume.png" alt="Resume generation pipeline">
-        <div class="image-placeholder-content">
-          <div class="image-placeholder-icon">&#128196;</div>
-          <div class="image-placeholder-text">Resume generation pipeline visualization</div>
+      <div class="rv-root" id="img-resume">
+        <style>
+          .rv-root{--rv-accent:#00bfa5;--rv-accent-dim:rgba(0,191,165,0.12);--rv-accent-border:rgba(0,191,165,0.25);--rv-red:#ff5252;--rv-red-dim:rgba(255,82,82,0.12);--rv-bg:#0c0c1d;--rv-card:#12122a;--rv-border:rgba(255,255,255,0.08);--rv-text:#e8e6f0;--rv-dim:#6a6a8a;font-family:'Outfit',sans-serif;color:var(--rv-text);padding:32px 24px 24px;background:var(--rv-bg);border-radius:16px;border:1px solid var(--rv-border);width:100%;box-sizing:border-box}
+          .rv-root *{box-sizing:border-box;margin:0;padding:0}
+          .rv-flow{display:grid;grid-template-columns:1fr 1fr auto 1fr 1fr;gap:14px;align-items:start}
+          .rv-section{font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:var(--rv-dim);margin-bottom:8px}
+          .rv-col{display:flex;flex-direction:column;gap:8px;animation:rv-up .4s ease both}
+          .rv-col:nth-child(2){animation-delay:.1s}.rv-col:nth-child(4){animation-delay:.2s}.rv-col:nth-child(5){animation-delay:.3s}
+          .rv-box{background:var(--rv-card);border-radius:10px;padding:14px;border:.5px solid var(--rv-border)}
+          .rv-jd{text-align:center;border-color:var(--rv-accent-border)}
+          .rv-jd-icon{font-size:24px;margin-bottom:6px}
+          .rv-jd-title{font-size:12px;font-weight:600;color:var(--rv-accent)}
+          .rv-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px;justify-content:center}
+          .rv-tag{font-family:'JetBrains Mono',monospace;font-size:8px;padding:2px 6px;border-radius:3px;background:var(--rv-accent-dim);color:var(--rv-accent)}
+          .rv-corpus-title{font-size:11px;font-weight:600;color:var(--rv-accent);margin-bottom:8px;text-align:center}
+          .rv-bullet{display:flex;justify-content:space-between;align-items:center;padding:3px 0;font-size:10px}
+          .rv-bullet-text{color:var(--rv-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+          .rv-score{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--rv-accent);margin-left:6px}
+          .rv-score.low{color:var(--rv-dim);opacity:.4}
+          .rv-gate-col{display:flex;align-items:center;justify-content:center}
+          .rv-gate{width:56px;height:56px;background:var(--rv-accent-dim);border:2px solid var(--rv-accent);transform:rotate(45deg);display:flex;align-items:center;justify-content:center;border-radius:6px}
+          .rv-gate-text{transform:rotate(-45deg);font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--rv-accent)}
+          .rv-template{text-align:center;border-color:var(--rv-accent-border)}
+          .rv-slots{display:flex;flex-direction:column;gap:3px;margin-top:8px}
+          .rv-slot{font-family:'JetBrains Mono',monospace;font-size:9px;padding:3px 8px;border-radius:3px;background:var(--rv-accent-dim);color:var(--rv-accent);text-align:left}
+          .rv-output{display:flex;flex-direction:column;gap:8px}
+          .rv-pdf{background:var(--rv-card);border-radius:10px;padding:12px;border:.5px solid var(--rv-accent-border);text-align:center}
+          .rv-pdf-title{font-size:11px;font-weight:600;color:var(--rv-accent)}
+          .rv-pdf-folder{font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--rv-dim);margin-top:4px}
+          .rv-drift{background:var(--rv-red-dim);border-radius:10px;padding:12px;border:.5px solid rgba(255,82,82,0.3);text-align:center}
+          .rv-drift-title{font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:600;color:var(--rv-red)}
+          .rv-drift-sub{font-size:9px;color:var(--rv-dim);margin-top:2px}
+          .rv-callout{margin-top:16px;padding:10px 16px;border-radius:8px;background:var(--rv-accent-dim);border:.5px solid var(--rv-accent-border);text-align:center;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--rv-accent);letter-spacing:.5px}
+          @keyframes rv-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+          @media(max-width:700px){.rv-flow{grid-template-columns:1fr;gap:16px}.rv-gate{width:40px;height:40px;margin:0 auto}}
+        </style>
+        <div class="rv-flow">
+          <div class="rv-col">
+            <div class="rv-section">JD Analysis</div>
+            <div class="rv-box rv-jd">
+              <div class="rv-jd-icon"><svg width="28" height="32" viewBox="0 0 28 32" fill="none"><rect x="2" y="1" width="24" height="30" rx="3" stroke="#00bfa5" stroke-width="1.2"/><line x1="7" y1="8" x2="21" y2="8" stroke="#00bfa5" stroke-width="1" opacity=".6"/><line x1="7" y1="12" x2="19" y2="12" stroke="#00bfa5" stroke-width=".7" opacity=".3"/><line x1="7" y1="16" x2="21" y2="16" stroke="#00bfa5" stroke-width=".7" opacity=".3"/><line x1="7" y1="20" x2="17" y2="20" stroke="#00bfa5" stroke-width=".7" opacity=".3"/></svg></div>
+              <div class="rv-jd-title">Job Description</div>
+              <div class="rv-tags"><span class="rv-tag">health-tech</span><span class="rv-tag">PM</span><span class="rv-tag">growth</span><span class="rv-tag">B2B</span><span class="rv-tag">SQL</span></div>
+            </div>
+          </div>
+          <div class="rv-col">
+            <div class="rv-section">Corpus</div>
+            <div class="rv-box">
+              <div class="rv-corpus-title">Scored Bullets</div>
+              <div class="rv-bullet"><span class="rv-bullet-text">Shipped provider matching algo</span><span class="rv-score">0.94</span></div>
+              <div class="rv-bullet"><span class="rv-bullet-text">Reduced churn 34% via model</span><span class="rv-score">0.88</span></div>
+              <div class="rv-bullet"><span class="rv-bullet-text">Built eligibility dashboard</span><span class="rv-score">0.82</span></div>
+              <div class="rv-bullet"><span class="rv-bullet-text">Drove adoption 12% &rarr; 89%</span><span class="rv-score">0.71</span></div>
+              <div class="rv-bullet"><span class="rv-bullet-text">Defined API contract spec</span><span class="rv-score low">0.35</span></div>
+              <div class="rv-bullet"><span class="rv-bullet-text">Negotiated vendor SLA</span><span class="rv-score low">0.22</span></div>
+            </div>
+          </div>
+          <div class="rv-gate-col rv-col">
+            <div class="rv-gate"><span class="rv-gate-text">85+</span></div>
+          </div>
+          <div class="rv-col">
+            <div class="rv-section">Template</div>
+            <div class="rv-box rv-template">
+              <svg width="28" height="32" viewBox="0 0 28 32" fill="none"><rect x="2" y="1" width="24" height="30" rx="3" stroke="#00bfa5" stroke-width="1.2"/><rect x="6" y="5" width="16" height="3" rx="1" fill="rgba(0,191,165,0.15)" stroke="#00bfa5" stroke-width=".5"/></svg>
+              <div style="font-size:11px;font-weight:600;color:var(--rv-accent);margin-top:6px">Google Docs</div>
+              <div class="rv-slots"><span class="rv-slot">Role 1 &mdash; 4 bullets</span><span class="rv-slot">Role 2 &mdash; 3 bullets</span><span class="rv-slot">Role 3 &mdash; 4 bullets</span><span class="rv-slot">Role 4 &mdash; 3 bullets</span><span class="rv-slot">Role 5 &mdash; 3 bullets</span><span class="rv-slot" style="opacity:.4">Role 6 &mdash; consulting</span></div>
+            </div>
+          </div>
+          <div class="rv-col rv-output">
+            <div class="rv-section">Output</div>
+            <div class="rv-pdf">
+              <svg width="24" height="28" viewBox="0 0 24 28" fill="none"><rect x="2" y="1" width="20" height="26" rx="2.5" stroke="#00bfa5" stroke-width="1"/><path d="M14 1v6h6" stroke="#00bfa5" stroke-width="1" fill="rgba(0,191,165,0.08)"/><text x="7" y="20" font-family="JetBrains Mono" font-size="6" fill="#00bfa5">PDF</text></svg>
+              <div class="rv-pdf-title">Tailored Resume</div>
+              <div class="rv-pdf-folder">YYYY-MM-DD/</div>
+            </div>
+            <div class="rv-drift">
+              <div class="rv-drift-title">drift_score = 0</div>
+              <div class="rv-drift-sub">Zero unverified claims</div>
+            </div>
+          </div>
         </div>
-        <div class="prompt-toggle" onclick="togglePrompt('resume')">Show Prompt</div>
-      </div>
-      <div class="prompt-drawer" id="prompt-resume">
-        <div class="prompt-drawer-header">
-          <span class="prompt-drawer-label">Image Generation Prompt</span>
-          <button class="prompt-copy-btn" onclick="copyPrompt('resume')">Copy</button>
-        </div>
-        <div class="prompt-text">Create a polished dark-background (#0c0c1d) technical diagram showing a resume generation pipeline.
-
-Left column: a "JD" document with extracted keywords flowing into a "Corpus" database cylinder containing bullet points. Show bullets being ranked/scored with small relevance numbers next to each.
-
-Center: a Google Docs template icon with 6 numbered role slots. Arrows show top-scoring bullets being placed into slots. A bold "85+" gate badge sits before the template, blocking low-scoring combinations.
-
-Right column: the assembled document exports to a PDF icon inside a folder labeled "YYYY-MM-DD/". Below it, a red validation gate labeled "drift_score = 0" with a lock icon.
-
-Bottom callout box: "Every bullet traceable to corpus. Zero fabrication enforced architecturally."
-
-Visual treatment: teal (#00bfa5) accent, the drift validation gate in red (#ff5252) to show it's a hard stop. Show the corpus-to-template flow as the primary visual narrative.
-
-Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only — no photographs, no people.</div>
+        <div class="rv-callout">Every bullet traceable to corpus</div>
       </div>
     </div>
 
@@ -1304,30 +1842,65 @@ Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only 
     </div>
 
     <div class="visual-block">
-      <div class="image-slot has-image" id="img-email">
-        <img src="diagrams/email.png" alt="Email tracking lifecycle">
-        <div class="image-placeholder-content">
-          <div class="image-placeholder-icon">&#9993;</div>
-          <div class="image-placeholder-text">Email pairing lifecycle visualization</div>
+      <div class="ev-root" id="img-email">
+        <style>
+          .ev-root{--ev-accent:#ff7043;--ev-accent-dim:rgba(255,112,67,0.12);--ev-accent-border:rgba(255,112,67,0.25);--ev-green:#00e676;--ev-green-dim:rgba(0,230,118,0.12);--ev-red:#ff5252;--ev-bg:#0c0c1d;--ev-card:#12122a;--ev-border:rgba(255,255,255,0.08);--ev-text:#e8e6f0;--ev-dim:#6a6a8a;font-family:'Outfit',sans-serif;color:var(--ev-text);padding:32px 24px 24px;background:var(--ev-bg);border-radius:16px;border:1px solid var(--ev-border);width:100%;box-sizing:border-box}
+          .ev-root *{box-sizing:border-box;margin:0;padding:0}
+          .ev-section{font-family:'JetBrains Mono',monospace;font-size:9px;font-weight:600;letter-spacing:2px;text-transform:uppercase;color:var(--ev-dim);margin-bottom:8px;text-align:center}
+          .ev-row{display:flex;justify-content:center;margin-bottom:12px;animation:ev-up .4s ease both}
+          .ev-row:nth-child(2){animation-delay:.1s}.ev-row:nth-child(3){animation-delay:.15s}.ev-row:nth-child(4){animation-delay:.2s}.ev-row:nth-child(5){animation-delay:.3s}
+          .ev-gmail{display:inline-flex;align-items:center;gap:10px;background:var(--ev-card);padding:12px 20px;border-radius:10px;border:.5px solid var(--ev-accent-border)}
+          .ev-gmail-label{font-size:14px;font-weight:600;color:var(--ev-accent)}
+          .ev-badge{font-family:'JetBrains Mono',monospace;font-size:8px;padding:3px 8px;border-radius:4px;background:var(--ev-green-dim);color:var(--ev-green);border:.5px solid rgba(0,230,118,0.25)}
+          .ev-chips{display:flex;flex-wrap:wrap;gap:6px;justify-content:center}
+          .ev-chip{font-family:'JetBrains Mono',monospace;font-size:9px;padding:4px 10px;border-radius:5px;background:var(--ev-accent-dim);color:var(--ev-accent);border:.5px solid var(--ev-accent-border)}
+          .ev-arrow-down{text-align:center;color:var(--ev-accent);opacity:.4;font-size:16px;margin:4px 0}
+          .ev-branches{display:grid;grid-template-columns:1fr auto 1fr;gap:16px;max-width:500px;margin:0 auto}
+          .ev-branch{background:var(--ev-card);border-radius:10px;padding:14px;text-align:center;border:.5px solid var(--ev-border)}
+          .ev-branch-title{font-size:12px;font-weight:600;margin-bottom:4px}
+          .ev-branch-sub{font-size:9px;color:var(--ev-dim)}
+          .ev-confirm .ev-branch-title{color:var(--ev-green)}
+          .ev-resolve .ev-branch-title{color:var(--ev-accent)}
+          .ev-center-box{display:flex;align-items:center;justify-content:center}
+          .ev-record{background:var(--ev-accent-dim);border:1.5px solid var(--ev-accent);border-radius:10px;padding:10px 16px;font-size:11px;font-weight:600;color:var(--ev-accent)}
+          .ev-status-flow{display:flex;flex-wrap:wrap;align-items:center;gap:4px;justify-content:center;padding:12px;background:var(--ev-card);border-radius:10px;border:.5px solid var(--ev-border);position:relative}
+          .ev-sn{font-family:'JetBrains Mono',monospace;font-size:9px;padding:4px 8px;border-radius:4px;background:rgba(255,112,67,0.08);color:var(--ev-text);border:.5px solid rgba(255,255,255,0.06)}
+          .ev-sn.active{background:var(--ev-accent-dim);color:var(--ev-accent);border-color:var(--ev-accent-border)}
+          .ev-sn.success{background:var(--ev-green-dim);color:var(--ev-green);border-color:rgba(0,230,118,0.25)}
+          .ev-sn.terminal{background:rgba(255,82,82,0.08);color:var(--ev-red);border-color:rgba(255,82,82,0.2)}
+          .ev-sa{color:var(--ev-dim);font-size:10px}
+          .ev-ghost{margin-top:8px;text-align:center;font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--ev-dim);border-top:.5px dashed rgba(255,255,255,0.06);padding-top:8px}
+          @keyframes ev-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+        </style>
+        <div class="ev-row"><div class="ev-section">Inbox Monitor</div></div>
+        <div class="ev-row"><div class="ev-gmail"><svg width="22" height="18" viewBox="0 0 22 18" fill="none"><rect x="1" y="1" width="20" height="16" rx="2" stroke="#ff7043" stroke-width="1.2"/><path d="M1 3l10 7 10-7" stroke="#ff7043" stroke-width="1" opacity=".6"/></svg><span class="ev-gmail-label">Gmail</span><span class="ev-badge">Read-Only OAuth</span></div></div>
+        <div class="ev-arrow-down">&darr;</div>
+        <div class="ev-row"><div class="ev-section">ATS Pattern Filter</div></div>
+        <div class="ev-row"><div class="ev-chips"><span class="ev-chip">greenhouse</span><span class="ev-chip">lever</span><span class="ev-chip">ashby</span><span class="ev-chip">smartrecruiters</span><span class="ev-chip">workday</span><span class="ev-chip">icims</span></div></div>
+        <div class="ev-arrow-down">&darr;</div>
+        <div class="ev-row">
+          <div class="ev-branches">
+            <div class="ev-branch ev-confirm"><div class="ev-branch-title">Confirmation</div><div class="ev-branch-sub">"received your application"</div></div>
+            <div class="ev-center-box"><div class="ev-record">Application Record</div></div>
+            <div class="ev-branch ev-resolve"><div class="ev-branch-title">Resolution</div><div class="ev-branch-sub">rejection / interview / offer</div></div>
+          </div>
         </div>
-        <div class="prompt-toggle" onclick="togglePrompt('email')">Show Prompt</div>
-      </div>
-      <div class="prompt-drawer" id="prompt-email">
-        <div class="prompt-drawer-header">
-          <span class="prompt-drawer-label">Image Generation Prompt</span>
-          <button class="prompt-copy-btn" onclick="copyPrompt('email')">Copy</button>
+        <div class="ev-arrow-down">&darr;</div>
+        <div class="ev-row"><div class="ev-section">Status Lifecycle</div></div>
+        <div class="ev-row" style="flex-direction:column;align-items:center;gap:0">
+          <div class="ev-status-flow">
+            <span class="ev-sn active">prospect</span><span class="ev-sa">&rarr;</span>
+            <span class="ev-sn active">applied</span><span class="ev-sa">&rarr;</span>
+            <span class="ev-sn">recruiter_screen</span><span class="ev-sa">&rarr;</span>
+            <span class="ev-sn">hiring_manager</span><span class="ev-sa">&rarr;</span>
+            <span class="ev-sn">interview</span><span class="ev-sa">&rarr;</span>
+            <span class="ev-sn">technical</span><span class="ev-sa">&rarr;</span>
+            <span class="ev-sn success">offer</span><span class="ev-sa">&rarr;</span>
+            <span class="ev-sn success">accepted</span>
+            <span style="margin-left:8px;display:flex;flex-direction:column;gap:3px"><span class="ev-sn terminal">rejected</span><span class="ev-sn terminal">withdrawn</span></span>
+          </div>
+          <div class="ev-ghost">14d no response &rarr; ghosted</div>
         </div>
-        <div class="prompt-text">Create a polished dark-background (#0c0c1d) technical diagram showing an email-based application tracking system.
-
-Top: a Gmail envelope icon with "Read-Only OAuth" badge. Arrows flow down through a filter labeled "ATS Domain Patterns" with small logos/text: greenhouse, lever, ashby, smartrecruiters, workday, icims.
-
-Middle: emails split into two streams — "Confirmation" (check mark, left) and "Resolution" (result icon, right). Both arrows converge on a central application record box. Show the pairing: one confirmation + one resolution per application.
-
-Bottom: a horizontal status flow showing: prospect → applied → recruiter_screen → hiring_manager → interview → technical → offer → accepted, with branch arrows going down to "rejected" and "withdrawn" in dimmer/red nodes. Show a dashed clock arrow from "applied" labeled ">14 days = ghosted."
-
-Visual treatment: coral (#ff7043) accent, email icons as envelope shapes, the ghost detection as a dashed/dotted timeout line.
-
-Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only — no photographs, no people.</div>
       </div>
     </div>
 
@@ -1385,30 +1958,82 @@ Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only 
     </div>
 
     <div class="visual-block">
-      <div class="image-slot has-image" id="img-pipeline">
-        <img src="diagrams/pipeline.png" alt="Three-tier pipeline">
-        <div class="image-placeholder-content">
-          <div class="image-placeholder-icon">&#9881;</div>
-          <div class="image-placeholder-text">Three-tier pipeline visualization</div>
+      <div class="pv-root" id="img-pipeline">
+        <style>
+          .pv-root{--pv-cyan:#00d4ff;--pv-orange:#ff6b35;--pv-green:#00e676;--pv-bg:#0c0c1d;--pv-card:#12122a;--pv-border:rgba(255,255,255,0.08);--pv-text:#e8e6f0;--pv-dim:#6a6a8a;font-family:'Outfit',sans-serif;color:var(--pv-text);padding:32px 24px 24px;background:var(--pv-bg);border-radius:16px;border:1px solid var(--pv-border);width:100%;box-sizing:border-box}
+          .pv-root *{box-sizing:border-box;margin:0;padding:0}
+          .pv-layout{display:grid;grid-template-columns:48px 1fr;gap:16px}
+          .pv-autonomy{display:flex;flex-direction:column;align-items:center;justify-content:space-between;padding:16px 0}
+          .pv-autonomy-label{font-family:'JetBrains Mono',monospace;font-size:8px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;writing-mode:vertical-rl;text-orientation:mixed;transform:rotate(180deg)}
+          .pv-autonomy-bar{flex:1;width:3px;border-radius:2px;margin:8px 0;background:linear-gradient(to bottom,var(--pv-cyan),var(--pv-orange),var(--pv-green))}
+          .pv-human{color:var(--pv-cyan)}.pv-machine{color:var(--pv-green)}
+          .pv-tiers{display:flex;flex-direction:column;gap:12px}
+          .pv-tier{background:var(--pv-card);border-radius:12px;padding:14px 16px;border-left:3px solid;animation:pv-up .4s ease both}
+          .pv-tier:nth-child(1){border-color:var(--pv-cyan);animation-delay:0s}
+          .pv-tier:nth-child(2){border-color:var(--pv-orange);animation-delay:.1s}
+          .pv-tier:nth-child(3){border-color:var(--pv-green);animation-delay:.2s}
+          .pv-tier-head{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+          .pv-tier-cmd{font-family:'JetBrains Mono',monospace;font-size:12px;font-weight:700}
+          .pv-tier-desc{font-size:11px;color:var(--pv-dim)}
+          .pv-tier-badge{font-family:'JetBrains Mono',monospace;font-size:8px;padding:3px 8px;border-radius:4px;margin-left:auto}
+          .pv-steps{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+          .pv-step{font-family:'JetBrains Mono',monospace;font-size:9px;padding:4px 8px;border-radius:4px;white-space:nowrap}
+          .pv-step-arrow{font-size:10px;opacity:.4}
+          .pv-t1 .pv-tier-cmd{color:var(--pv-cyan)}.pv-t1 .pv-step{background:rgba(0,212,255,0.08);color:var(--pv-cyan);border:.5px solid rgba(0,212,255,0.15)}
+          .pv-t1 .pv-step-arrow{color:var(--pv-cyan)}.pv-t1 .pv-tier-badge{background:rgba(0,212,255,0.12);color:var(--pv-cyan)}
+          .pv-t1 .pv-gate{background:rgba(0,212,255,0.2);border:1px solid var(--pv-cyan);transform:rotate(45deg);width:22px;height:22px;display:inline-flex;align-items:center;justify-content:center;border-radius:3px;margin:0 2px}
+          .pv-t1 .pv-gate-inner{transform:rotate(-45deg);font-size:7px;color:var(--pv-cyan)}
+          .pv-t2 .pv-tier-cmd{color:var(--pv-orange)}.pv-t2 .pv-step{background:rgba(255,107,53,0.08);color:var(--pv-orange);border:.5px solid rgba(255,107,53,0.15)}
+          .pv-t2 .pv-step-arrow{color:var(--pv-orange)}.pv-t2 .pv-tier-badge{background:rgba(255,107,53,0.12);color:var(--pv-orange)}
+          .pv-t3 .pv-tier-cmd{color:var(--pv-green)}.pv-t3 .pv-step{background:rgba(0,230,118,0.08);color:var(--pv-green);border:.5px solid rgba(0,230,118,0.15)}
+          .pv-t3 .pv-step-arrow{color:var(--pv-green)}.pv-t3 .pv-tier-badge{background:rgba(0,230,118,0.12);color:var(--pv-green)}
+          @keyframes pv-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+          @media(max-width:600px){.pv-layout{grid-template-columns:1fr}.pv-autonomy{display:none}}
+        </style>
+        <div class="pv-layout">
+          <div class="pv-autonomy">
+            <span class="pv-autonomy-label pv-human">Human</span>
+            <div class="pv-autonomy-bar"></div>
+            <span class="pv-autonomy-label pv-machine">Machine</span>
+          </div>
+          <div class="pv-tiers">
+            <div class="pv-tier pv-t1">
+              <div class="pv-tier-head"><span class="pv-tier-cmd">/pipeline</span><span class="pv-tier-desc">Interactive</span><span class="pv-tier-badge">1 approval gate</span></div>
+              <div class="pv-steps">
+                <span class="pv-step">Scrape</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Filter(50+)</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-t1"><span class="pv-gate"><span class="pv-gate-inner">OK</span></span></span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Score(70+)</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Resume</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Drift(=0)</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Brief</span>
+              </div>
+            </div>
+            <div class="pv-tier pv-t2">
+              <div class="pv-tier-head"><span class="pv-tier-cmd">/swarm</span><span class="pv-tier-desc">Semi-Auto</span><span class="pv-tier-badge">No approval gates</span></div>
+              <div class="pv-steps">
+                <span class="pv-step">Parallel Agents</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Batches(3-5)</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Delta Detect</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Score(65+)</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Auto-Resume</span>
+              </div>
+            </div>
+            <div class="pv-tier pv-t3">
+              <div class="pv-tier-head"><span class="pv-tier-cmd">/monitor</span><span class="pv-tier-desc">Headless</span><span class="pv-tier-badge">06:00 &amp; 12:00</span></div>
+              <div class="pv-steps">
+                <span class="pv-step">Email Sync</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Scrape</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Delta</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Filter</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Score</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Resume(cap:3)</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">JSON</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Slack</span>
+              </div>
+            </div>
+          </div>
         </div>
-        <div class="prompt-toggle" onclick="togglePrompt('pipeline')">Show Prompt</div>
-      </div>
-      <div class="prompt-drawer" id="prompt-pipeline">
-        <div class="prompt-drawer-header">
-          <span class="prompt-drawer-label">Image Generation Prompt</span>
-          <button class="prompt-copy-btn" onclick="copyPrompt('pipeline')">Copy</button>
-        </div>
-        <div class="prompt-text">Create a polished dark-background (#0c0c1d) infographic showing three horizontal pipeline lanes, stacked vertically, representing increasing automation levels.
-
-Top lane (cyan #00d4ff): labeled "/pipeline — Interactive Batch." Show 7 steps flowing left-to-right: Scrape → Title Filter (50+) → [diamond-shaped APPROVAL GATE] → Score (70+) → Resume Gen → Drift Check → Brief. The approval gate should be prominent with a human icon.
-
-Middle lane (orange #ff6b35): labeled "/swarm — Semi-Autonomous." Show parallel branches: 3-5 small agent icons labeled "subagents" feeding into a merge point → Delta Detect → Score (65+) → Auto-Resume. Badge: "No approval gates."
-
-Bottom lane (green #00e676): labeled "/monitor — Fully Headless." Show: Email Sync → Scrape → Delta → Filter → Score → Resume (with "cap: 3" badge) → JSON → Slack. Badge: "06:00 & 12:00 via LaunchAgent."
-
-Left side: a vertical gradient arrow labeled "AUTONOMY" pointing downward from "Human" to "Machine."
-
-Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only — no photographs, no people.</div>
       </div>
     </div>
 
@@ -1514,32 +2139,73 @@ Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only 
     </div>
 
     <div class="visual-block">
-      <div class="image-slot has-image" id="img-architecture">
-        <img src="diagrams/architecture.png" alt="Architecture stack">
-        <div class="image-placeholder-content">
-          <div class="image-placeholder-icon">&#9634;</div>
-          <div class="image-placeholder-text">Architecture stack visualization</div>
+      <div class="av-root" id="img-architecture">
+        <style>
+          .av-root{--av-purple:#bb86fc;--av-cyan:#00d4ff;--av-orange:#ff6b35;--av-bg:#0c0c1d;--av-card:#12122a;--av-border:rgba(255,255,255,0.08);--av-text:#e8e6f0;--av-dim:#6a6a8a;font-family:'Outfit',sans-serif;color:var(--av-text);padding:32px 24px 24px;background:var(--av-bg);border-radius:16px;border:1px solid var(--av-border);width:100%;box-sizing:border-box}
+          .av-root *{box-sizing:border-box;margin:0;padding:0}
+          .av-layer{background:var(--av-card);border-radius:12px;padding:16px 18px;border-left:3px solid;animation:av-up .4s ease both}
+          .av-layer:nth-child(1){border-color:var(--av-purple)}.av-layer:nth-child(3){border-color:var(--av-cyan);animation-delay:.15s}.av-layer:nth-child(5){border-color:var(--av-orange);animation-delay:.3s}
+          .av-layer-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:6px}
+          .av-layer-title{font-size:14px;font-weight:700}
+          .av-layer-count{font-family:'JetBrains Mono',monospace;font-size:9px;padding:3px 8px;border-radius:4px}
+          .av-chips{display:flex;flex-wrap:wrap;gap:5px}
+          .av-chip{display:flex;flex-direction:column;font-family:'JetBrains Mono',monospace;padding:5px 9px;border-radius:5px;border:.5px solid}
+          .av-chip-name{font-size:10px;font-weight:600}
+          .av-chip-sub{font-size:7px;font-weight:400;opacity:.6}
+          .av-p .av-layer-title{color:var(--av-purple)}.av-p .av-layer-count{background:rgba(187,134,252,0.12);color:var(--av-purple)}
+          .av-p .av-chip{background:rgba(187,134,252,0.08);border-color:rgba(187,134,252,0.2);color:var(--av-purple)}
+          .av-c .av-layer-title{color:var(--av-cyan)}.av-c .av-layer-count{background:rgba(0,212,255,0.12);color:var(--av-cyan)}
+          .av-c .av-chip{background:rgba(0,212,255,0.08);border-color:rgba(0,212,255,0.2);color:var(--av-cyan)}
+          .av-o .av-layer-title{color:var(--av-orange)}.av-o .av-layer-count{background:rgba(255,107,53,0.12);color:var(--av-orange)}
+          .av-o .av-chip{background:rgba(255,107,53,0.08);border-color:rgba(255,107,53,0.2);color:var(--av-orange)}
+          .av-arrow{text-align:center;padding:6px 0;font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--av-dim)}
+          @keyframes av-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+        </style>
+        <div class="av-layer av-p">
+          <div class="av-layer-head"><span class="av-layer-title">Claude Code Skills</span><span class="av-layer-count">13 prompt-driven skills</span></div>
+          <div class="av-chips">
+            <div class="av-chip"><span class="av-chip-name">/apply</span><span class="av-chip-sub">end-to-end</span></div>
+            <div class="av-chip"><span class="av-chip-name">/pipeline</span><span class="av-chip-sub">batch review</span></div>
+            <div class="av-chip"><span class="av-chip-name">/swarm</span><span class="av-chip-sub">parallel scan</span></div>
+            <div class="av-chip"><span class="av-chip-name">/monitor</span><span class="av-chip-sub">autonomous</span></div>
+            <div class="av-chip"><span class="av-chip-name">/interview</span><span class="av-chip-sub">prep</span></div>
+            <div class="av-chip"><span class="av-chip-name">/twc</span><span class="av-chip-sub">compliance</span></div>
+            <div class="av-chip"><span class="av-chip-name">/score</span><span class="av-chip-sub">job fit</span></div>
+            <div class="av-chip"><span class="av-chip-name">/fit</span><span class="av-chip-sub">resume eval</span></div>
+            <div class="av-chip"><span class="av-chip-name">/jobs</span><span class="av-chip-sub">discovery</span></div>
+            <div class="av-chip"><span class="av-chip-name">/greenhouse</span><span class="av-chip-sub">ATS</span></div>
+            <div class="av-chip"><span class="av-chip-name">/vc-boards</span><span class="av-chip-sub">portfolio</span></div>
+            <div class="av-chip"><span class="av-chip-name">/start-today</span><span class="av-chip-sub">daily kickoff</span></div>
+            <div class="av-chip"><span class="av-chip-name">/learn</span><span class="av-chip-sub">outcomes</span></div>
+          </div>
         </div>
-        <div class="prompt-toggle" onclick="togglePrompt('architecture')">Show Prompt</div>
-      </div>
-      <div class="prompt-drawer" id="prompt-architecture">
-        <div class="prompt-drawer-header">
-          <span class="prompt-drawer-label">Image Generation Prompt</span>
-          <button class="prompt-copy-btn" onclick="copyPrompt('architecture')">Copy</button>
+        <div class="av-arrow">&darr; orchestrate</div>
+        <div class="av-layer av-c">
+          <div class="av-layer-head"><span class="av-layer-title">Python CLI (jj)</span><span class="av-layer-count">11 sub-apps, 30+ commands</span></div>
+          <div class="av-chips">
+            <div class="av-chip"><span class="av-chip-name">corpus</span></div>
+            <div class="av-chip"><span class="av-chip-name">resume</span></div>
+            <div class="av-chip"><span class="av-chip-name">email</span></div>
+            <div class="av-chip"><span class="av-chip-name">greenhouse</span></div>
+            <div class="av-chip"><span class="av-chip-name">app</span></div>
+            <div class="av-chip"><span class="av-chip-name">gdocs</span></div>
+            <div class="av-chip"><span class="av-chip-name">worker</span></div>
+            <div class="av-chip"><span class="av-chip-name">investors</span></div>
+            <div class="av-chip"><span class="av-chip-name">monitor</span></div>
+            <div class="av-chip"><span class="av-chip-name">notify</span></div>
+            <div class="av-chip"><span class="av-chip-name">interests</span></div>
+          </div>
         </div>
-        <div class="prompt-text">Create a polished dark-background (#0c0c1d) technical architecture diagram with three stacked horizontal layers.
-
-Top layer (purple #bb86fc, largest): "Claude Code Skills" — show 13 rounded chips in a grid: /apply, /pipeline, /swarm, /monitor, /interview, /twc, /score, /fit, /jobs, /greenhouse, /vc-boards, /start-today, /learn. Each chip has a small description. Label: "13 prompt-driven skills."
-
-Arrow pointing down labeled "orchestrate"
-
-Middle layer (cyan #00d4ff): "Python CLI (jj)" — show 11 sub-app names in a row: corpus, resume, email, greenhouse, app, gdocs, worker, investors, monitor, notify, interests. Label: "11 Typer sub-apps, 30+ commands."
-
-Arrow pointing down labeled "execute"
-
-Bottom layer (orange #ff6b35, smallest): "Data Layer" — show four integration icons side by side: SQLite cylinder (24 tables), Gmail envelope (read-only), Google Docs document icon, Slack bell icon. Label: "Single DB + 3 external integrations."
-
-Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only — no photographs, no people.</div>
+        <div class="av-arrow">&darr; execute</div>
+        <div class="av-layer av-o">
+          <div class="av-layer-head"><span class="av-layer-title">Data Layer</span><span class="av-layer-count">Single DB + 3 integrations</span></div>
+          <div class="av-chips">
+            <div class="av-chip"><svg width="14" height="16" viewBox="0 0 14 16" fill="none" style="margin-bottom:2px"><ellipse cx="7" cy="3" rx="6" ry="2" stroke="#ff6b35" stroke-width=".8"/><path d="M1 3v10c0 1.1 2.69 2 6 2s6-.9 6-2V3" stroke="#ff6b35" stroke-width=".8"/></svg><span class="av-chip-name">SQLite</span><span class="av-chip-sub">24 tables</span></div>
+            <div class="av-chip"><svg width="14" height="12" viewBox="0 0 14 12" fill="none" style="margin-bottom:2px"><rect x="1" y="1" width="12" height="10" rx="1.5" stroke="#ff6b35" stroke-width=".8"/><path d="M1 3l6 4 6-4" stroke="#ff6b35" stroke-width=".7" opacity=".5"/></svg><span class="av-chip-name">Gmail</span><span class="av-chip-sub">read-only</span></div>
+            <div class="av-chip"><svg width="14" height="16" viewBox="0 0 14 16" fill="none" style="margin-bottom:2px"><rect x="2" y="1" width="10" height="14" rx="1.5" stroke="#ff6b35" stroke-width=".8"/><line x1="4.5" y1="5" x2="9.5" y2="5" stroke="#ff6b35" stroke-width=".5" opacity=".4"/><line x1="4.5" y1="7.5" x2="9.5" y2="7.5" stroke="#ff6b35" stroke-width=".5" opacity=".4"/></svg><span class="av-chip-name">Google Docs</span><span class="av-chip-sub">resume assembly</span></div>
+            <div class="av-chip"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="margin-bottom:2px"><path d="M7 1C4 1 1 3 1 6c0 2 1 3 2 4l-1 3 3-1c.7.3 1.3.5 2 .5 3 0 6-2 6-5.5S10 1 7 1z" stroke="#ff6b35" stroke-width=".8"/></svg><span class="av-chip-name">Slack</span><span class="av-chip-sub">notifications</span></div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -1607,38 +2273,98 @@ Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only 
     </div>
 
     <div class="visual-block">
-      <div class="image-slot has-image" id="img-schema">
-        <img src="diagrams/schema.png" alt="Database schema">
-        <div class="image-placeholder-content">
-          <div class="image-placeholder-icon">&#128451;</div>
-          <div class="image-placeholder-text">Database schema visualization</div>
+      <div class="dmv-root" id="img-schema">
+        <style>
+          .dmv-root{--dmv-purple:#bb86fc;--dmv-teal:#00bfa5;--dmv-coral:#ff7043;--dmv-cyan:#00d4ff;--dmv-green:#00e676;--dmv-gold:#ffd740;--dmv-bg:#0c0c1d;--dmv-card:#12122a;--dmv-border:rgba(255,255,255,0.08);--dmv-text:#e8e6f0;--dmv-dim:#6a6a8a;font-family:'Outfit',sans-serif;color:var(--dmv-text);padding:32px 24px 24px;background:var(--dmv-bg);border-radius:16px;border:1px solid var(--dmv-border);width:100%;box-sizing:border-box}
+          .dmv-root *{box-sizing:border-box;margin:0;padding:0}
+          .dmv-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+          .dmv-cluster{background:var(--dmv-card);border-radius:10px;padding:12px 14px;border-top:2px solid;animation:dmv-up .4s ease both}
+          .dmv-cluster:nth-child(2){animation-delay:.05s}.dmv-cluster:nth-child(3){animation-delay:.1s}.dmv-cluster:nth-child(4){animation-delay:.15s}.dmv-cluster:nth-child(5){animation-delay:.2s}.dmv-cluster:nth-child(6){animation-delay:.25s}
+          .dmv-cluster-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+          .dmv-cluster-name{font-size:12px;font-weight:700}
+          .dmv-cluster-count{font-family:'JetBrains Mono',monospace;font-size:9px;opacity:.6}
+          .dmv-tables{display:flex;flex-direction:column;gap:3px}
+          .dmv-table{font-family:'JetBrains Mono',monospace;font-size:10px;padding:4px 8px;border-radius:4px;background:rgba(255,255,255,0.03);border:.5px solid rgba(255,255,255,0.06);display:flex;align-items:center;gap:6px}
+          .dmv-table.hub{font-weight:600;border-left:2px solid}
+          .dmv-fk{font-size:10px;margin:2px 0 2px 12px;opacity:.4}
+          .dmv-unique{font-family:'JetBrains Mono',monospace;font-size:7px;padding:1px 5px;border-radius:3px;font-weight:600}
+          .dmv-c1{border-color:var(--dmv-purple)}.dmv-c1 .dmv-cluster-name{color:var(--dmv-purple)}.dmv-c1 .hub{border-color:var(--dmv-purple)}.dmv-c1 .dmv-table{color:var(--dmv-purple)}
+          .dmv-c2{border-color:var(--dmv-teal)}.dmv-c2 .dmv-cluster-name{color:var(--dmv-teal)}.dmv-c2 .hub{border-color:var(--dmv-teal)}.dmv-c2 .dmv-table{color:var(--dmv-teal)}
+          .dmv-c3{border-color:var(--dmv-coral)}.dmv-c3 .dmv-cluster-name{color:var(--dmv-coral)}.dmv-c3 .hub{border-color:var(--dmv-coral)}.dmv-c3 .dmv-table{color:var(--dmv-coral)}
+          .dmv-c4{border-color:var(--dmv-cyan)}.dmv-c4 .dmv-cluster-name{color:var(--dmv-cyan)}.dmv-c4 .hub{border-color:var(--dmv-cyan)}.dmv-c4 .dmv-table{color:var(--dmv-cyan)}
+          .dmv-c5{border-color:var(--dmv-green)}.dmv-c5 .dmv-cluster-name{color:var(--dmv-green)}.dmv-c5 .hub{border-color:var(--dmv-green)}.dmv-c5 .dmv-table{color:var(--dmv-green)}
+          .dmv-c6{border-color:var(--dmv-gold)}.dmv-c6 .dmv-cluster-name{color:var(--dmv-gold)}.dmv-c6 .hub{border-color:var(--dmv-gold)}.dmv-c6 .dmv-table{color:var(--dmv-gold)}
+          .dmv-fk-row{margin-top:14px;padding:10px 14px;background:var(--dmv-card);border-radius:8px;border:.5px solid var(--dmv-border);display:flex;flex-wrap:wrap;gap:10px;justify-content:center;font-family:'JetBrains Mono',monospace;font-size:9px;color:var(--dmv-dim);animation:dmv-up .4s ease .3s both}
+          .dmv-fk-item{display:flex;align-items:center;gap:4px}
+          .dmv-fk-arrow{color:var(--dmv-gold);font-weight:600}
+          @keyframes dmv-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+          @media(max-width:600px){.dmv-grid{grid-template-columns:1fr 1fr}}
+        </style>
+        <div class="dmv-grid">
+          <div class="dmv-cluster dmv-c1">
+            <div class="dmv-cluster-head"><span class="dmv-cluster-name">Corpus</span><span class="dmv-cluster-count">4 tables</span></div>
+            <div class="dmv-tables">
+              <div class="dmv-table hub">roles</div>
+              <div class="dmv-fk">&darr; FK</div>
+              <div class="dmv-table hub">entries</div>
+              <div class="dmv-table">skills</div>
+              <div class="dmv-table">education</div>
+            </div>
+          </div>
+          <div class="dmv-cluster dmv-c2">
+            <div class="dmv-cluster-head"><span class="dmv-cluster-name">Resume</span><span class="dmv-cluster-count">5 tables</span></div>
+            <div class="dmv-tables">
+              <div class="dmv-table hub">resumes</div>
+              <div class="dmv-table">resume_entries</div>
+              <div class="dmv-table">resume_sections</div>
+              <div class="dmv-table">corpus_suggestions</div>
+              <div class="dmv-table">jd_cache</div>
+            </div>
+          </div>
+          <div class="dmv-cluster dmv-c3">
+            <div class="dmv-cluster-head"><span class="dmv-cluster-name">Applications</span><span class="dmv-cluster-count">3 tables</span></div>
+            <div class="dmv-tables">
+              <div class="dmv-table hub">applications</div>
+              <div class="dmv-table">application_emails</div>
+              <div class="dmv-table">cover_letters</div>
+            </div>
+          </div>
+          <div class="dmv-cluster dmv-c4">
+            <div class="dmv-cluster-head"><span class="dmv-cluster-name">Discovery</span><span class="dmv-cluster-count">4 tables</span></div>
+            <div class="dmv-tables">
+              <div class="dmv-table hub">companies</div>
+              <div class="dmv-table hub">job_listings <span class="dmv-unique" style="background:rgba(0,212,255,0.15);color:var(--dmv-cyan)">UNIQUE</span></div>
+              <div class="dmv-table">investor_boards</div>
+              <div class="dmv-table">investor_board_jobs</div>
+            </div>
+          </div>
+          <div class="dmv-cluster dmv-c5">
+            <div class="dmv-cluster-head"><span class="dmv-cluster-name">Geography</span><span class="dmv-cluster-count">2 tables</span></div>
+            <div class="dmv-tables">
+              <div class="dmv-table">geo_areas</div>
+              <div class="dmv-table">geo_companies</div>
+            </div>
+          </div>
+          <div class="dmv-cluster dmv-c6">
+            <div class="dmv-cluster-head"><span class="dmv-cluster-name">System</span><span class="dmv-cluster-count">6 tables</span></div>
+            <div class="dmv-tables">
+              <div class="dmv-table">tasks</div>
+              <div class="dmv-table">events</div>
+              <div class="dmv-table">monitor_runs</div>
+              <div class="dmv-table">twc_payment_requests</div>
+              <div class="dmv-table">interview_sessions</div>
+              <div class="dmv-table">interests</div>
+            </div>
+          </div>
         </div>
-        <div class="prompt-toggle" onclick="togglePrompt('schema')">Show Prompt</div>
-      </div>
-      <div class="prompt-drawer" id="prompt-schema">
-        <div class="prompt-drawer-header">
-          <span class="prompt-drawer-label">Image Generation Prompt</span>
-          <button class="prompt-copy-btn" onclick="copyPrompt('schema')">Copy</button>
+        <div class="dmv-fk-row">
+          <div class="dmv-fk-item">roles <span class="dmv-fk-arrow">&rarr;</span> entries</div>
+          <div class="dmv-fk-item">resume_entries <span class="dmv-fk-arrow">&rarr;</span> entries</div>
+          <div class="dmv-fk-item">applications <span class="dmv-fk-arrow">&rarr;</span> resumes</div>
+          <div class="dmv-fk-item">applications <span class="dmv-fk-arrow">&rarr;</span> companies</div>
+          <div class="dmv-fk-item">job_listings <span class="dmv-fk-arrow">&rarr;</span> companies</div>
+          <div class="dmv-fk-item">geo_companies <span class="dmv-fk-arrow">&rarr;</span> companies</div>
         </div>
-        <div class="prompt-text">Create a polished dark-background (#0c0c1d) database schema diagram showing 24 tables grouped into 6 color-coded clusters.
-
-Arrange as a 3x2 grid of clusters:
-
-Top-left (purple #bb86fc): "Corpus" — roles → entries → skills, education. Show FK arrows from roles to entries.
-
-Top-center (teal #00bfa5): "Resume" — resumes → resume_entries, resume_sections, corpus_suggestions, jd_cache. Show FK from resume_entries to entries (cross-cluster arrow to Corpus).
-
-Top-right (coral #ff7043): "Applications" — applications (largest, central hub), application_emails, cover_letters. FK arrows to resumes (cross-cluster) and companies (cross-cluster).
-
-Bottom-left (cyan #00d4ff): "Discovery" — companies → job_listings (with "UNIQUE" badge), investor_boards → investor_board_jobs.
-
-Bottom-center (green #00e676): "Geography" — geo_areas, geo_companies.
-
-Bottom-right (gold #ffd740): "System" — tasks, events, monitor_runs, twc_payment_requests, interview_sessions, interests.
-
-Show "applications" as the largest node with the most cross-cluster FK connections. Highlight the UNIQUE constraint on job_listings as a special badge.
-
-Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only — no photographs, no people.</div>
       </div>
     </div>
 
@@ -1725,20 +2451,61 @@ function copyPrompt(id) {
   });
 }
 
-// Timeline active state on scroll
+// ═══ THEME TOGGLE ═══
+const toggle = document.getElementById('theme-toggle');
+const labels = document.querySelectorAll('.theme-switcher-label');
+
+function setTheme(theme) {
+  if (theme === 'dark') {
+    document.documentElement.setAttribute('data-theme', 'dark');
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+  labels.forEach(l => l.classList.toggle('active', l.dataset.themeVal === theme));
+  localStorage.setItem('jj-theme', theme);
+}
+
+// Init from localStorage or default to light
+const saved = localStorage.getItem('jj-theme') || 'light';
+setTheme(saved);
+
+toggle.addEventListener('click', () => {
+  const current = document.documentElement.getAttribute('data-theme');
+  setTheme(current === 'dark' ? 'light' : 'dark');
+});
+
+labels.forEach(l => l.addEventListener('click', () => setTheme(l.dataset.themeVal)));
+
+// ═══ SCROLL REVEAL ═══
+// Tag elements for reveal animation
+document.querySelectorAll('.chapter-header, .visual-block, .detail-grid, .detail-card-full, .rubric-pair, .callout, .tier-card, .schema-grid, .status-flow, .v-pipeline, .stack-layer, .stack-arrow-row, .footer-pills, .footer-tagline, .chapter-sep').forEach((el, i) => {
+  el.classList.add('reveal');
+});
+
+const revealObserver = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+    }
+  });
+}, { threshold: 0.08, rootMargin: '0px 0px -40px 0px' });
+
+document.querySelectorAll('.reveal').forEach(el => revealObserver.observe(el));
+
+// ═══ TIMELINE ═══
 const chapters = document.querySelectorAll('.chapter, .hero');
 const dots = document.querySelectorAll('.timeline-dot');
 
-const observer = new IntersectionObserver((entries) => {
+const timelineObserver = new IntersectionObserver((entries) => {
   entries.forEach(entry => {
     if (entry.isIntersecting) {
       const idx = Array.from(chapters).indexOf(entry.target);
       dots.forEach((d, i) => d.classList.toggle('active', i === idx));
     }
   });
-}, { threshold: 0.3 });
+}, { threshold: 0.25 });
 
-chapters.forEach(ch => observer.observe(ch));
+chapters.forEach(ch => timelineObserver.observe(ch));
 
 // Smooth scroll for timeline dots
 dots.forEach(dot => {
@@ -1747,6 +2514,16 @@ dots.forEach(dot => {
     const target = document.querySelector(dot.getAttribute('href'));
     if (target) target.scrollIntoView({ behavior: 'smooth' });
   });
+});
+
+// ═══ CHAPTER SEPARATORS ═══
+// Inject visual breaks between chapters
+document.querySelectorAll('.chapter + .chapter').forEach(ch => {
+  const sep = document.createElement('div');
+  sep.className = 'chapter-sep reveal';
+  sep.innerHTML = '<div class="chapter-sep-line"></div><div class="chapter-sep-dot"></div><div class="chapter-sep-line"></div>';
+  ch.parentNode.insertBefore(sep, ch);
+  revealObserver.observe(sep);
 });
 </script>
 </body>
