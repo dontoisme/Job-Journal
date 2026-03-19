@@ -1,0 +1,1753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Job Journal — The Journey</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;800;900&family=Instrument+Serif:ital@0;1&display=swap');
+
+  :root {
+    --bg: #0c0c1d;
+    --bg-card: #12122a;
+    --bg-surface: #1a1a35;
+    --cyan: #00d4ff;
+    --orange: #ff6b35;
+    --teal: #00bfa5;
+    --coral: #ff7043;
+    --purple: #bb86fc;
+    --green: #00e676;
+    --gold: #ffd740;
+    --red: #ff5252;
+    --text: #d8d8e8;
+    --text-dim: #6a6a8a;
+    --text-bright: #ffffff;
+    --border: rgba(255,255,255,0.06);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Outfit', sans-serif;
+    line-height: 1.6;
+    overflow-x: hidden;
+  }
+
+  /* ═══ AMBIENT BACKGROUND ═══ */
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background:
+      radial-gradient(ellipse 1200px 800px at 15% 5%, rgba(0,212,255,0.04) 0%, transparent 60%),
+      radial-gradient(ellipse 800px 1000px at 85% 25%, rgba(187,134,252,0.03) 0%, transparent 60%),
+      radial-gradient(ellipse 1000px 600px at 50% 55%, rgba(255,107,53,0.02) 0%, transparent 60%),
+      radial-gradient(ellipse 900px 700px at 20% 80%, rgba(0,230,118,0.03) 0%, transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* ═══ SCROLL TIMELINE ═══ */
+  .timeline {
+    position: fixed;
+    left: 32px;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    z-index: 100;
+  }
+
+  .timeline-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.15);
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+  }
+
+  .timeline-dot:hover,
+  .timeline-dot.active {
+    background: var(--cyan);
+    border-color: var(--cyan);
+    box-shadow: 0 0 12px rgba(0,212,255,0.4);
+  }
+
+  .timeline-dot:hover .timeline-label {
+    opacity: 1;
+    transform: translateX(0);
+  }
+
+  .timeline-label {
+    position: absolute;
+    left: 20px;
+    top: 50%;
+    transform: translateY(-50%) translateX(-5px);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--cyan);
+    white-space: nowrap;
+    opacity: 0;
+    transition: all 0.2s ease;
+    pointer-events: none;
+  }
+
+  .timeline-line {
+    width: 1px;
+    height: 20px;
+    background: rgba(255,255,255,0.06);
+    margin-left: 4.5px;
+  }
+
+  /* ═══ PAGE CONTAINER ═══ */
+  .page {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 0 40px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ═══ HERO ═══ */
+  .hero {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    padding: 80px 0;
+  }
+
+  .hero-overline {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: var(--cyan);
+    opacity: 0.7;
+    margin-bottom: 24px;
+  }
+
+  .hero h1 {
+    font-family: 'Instrument Serif', serif;
+    font-size: 72px;
+    font-weight: 400;
+    color: var(--text-bright);
+    line-height: 1.05;
+    margin-bottom: 20px;
+    letter-spacing: -2px;
+  }
+
+  .hero h1 em {
+    font-style: italic;
+    background: linear-gradient(135deg, var(--cyan), var(--purple));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .hero-sub {
+    font-size: 18px;
+    color: var(--text-dim);
+    max-width: 500px;
+    margin-bottom: 40px;
+    font-weight: 300;
+  }
+
+  .hero-stats {
+    display: flex;
+    gap: 32px;
+  }
+
+  .hero-stat {
+    text-align: center;
+  }
+
+  .hero-stat-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--text-bright);
+  }
+
+  .hero-stat-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-top: 4px;
+  }
+
+  .scroll-hint {
+    margin-top: 60px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    opacity: 0.3;
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  .scroll-hint span {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 0.2; }
+    50% { opacity: 0.5; }
+  }
+
+  /* ═══ CHAPTER ═══ */
+  .chapter {
+    padding: 100px 0;
+    position: relative;
+  }
+
+  .chapter-num {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 80px;
+    font-weight: 700;
+    opacity: 0.04;
+    position: absolute;
+    top: 80px;
+    right: 0;
+    line-height: 1;
+    user-select: none;
+  }
+
+  .chapter-header {
+    margin-bottom: 40px;
+  }
+
+  .chapter-overline {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  .chapter-overline.cyan { color: var(--cyan); }
+  .chapter-overline.orange { color: var(--orange); }
+  .chapter-overline.teal { color: var(--teal); }
+  .chapter-overline.coral { color: var(--coral); }
+  .chapter-overline.purple { color: var(--purple); }
+  .chapter-overline.green { color: var(--green); }
+  .chapter-overline.gold { color: var(--gold); }
+
+  .chapter-title {
+    font-family: 'Instrument Serif', serif;
+    font-size: 42px;
+    font-weight: 400;
+    color: var(--text-bright);
+    line-height: 1.15;
+    letter-spacing: -1px;
+    margin-bottom: 12px;
+  }
+
+  .chapter-lead {
+    font-size: 16px;
+    color: var(--text-dim);
+    max-width: 600px;
+    font-weight: 300;
+    line-height: 1.7;
+  }
+
+  /* ═══ IMAGE PLACEHOLDER ═══ */
+  .visual-block {
+    margin: 40px 0;
+    position: relative;
+  }
+
+  .image-slot {
+    width: 100%;
+    aspect-ratio: 16/9;
+    border-radius: 16px;
+    border: 2px dashed rgba(255,255,255,0.08);
+    background: var(--bg-card);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    position: relative;
+    overflow: hidden;
+    transition: border-color 0.3s ease;
+  }
+
+  .image-slot:hover {
+    border-color: rgba(255,255,255,0.15);
+  }
+
+  .image-slot img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 14px;
+    display: none;
+  }
+
+  .image-slot.has-image img {
+    display: block;
+  }
+
+  .image-slot.has-image .image-placeholder-content {
+    display: none;
+  }
+
+  .image-placeholder-content {
+    text-align: center;
+    padding: 20px;
+  }
+
+  .image-placeholder-icon {
+    font-size: 32px;
+    opacity: 0.15;
+    margin-bottom: 8px;
+  }
+
+  .image-placeholder-text {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    opacity: 0.5;
+  }
+
+  .prompt-toggle {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    padding: 6px 14px;
+    border-radius: 8px;
+    background: rgba(0,212,255,0.1);
+    border: 1px solid rgba(0,212,255,0.2);
+    color: var(--cyan);
+    cursor: pointer;
+    transition: all 0.2s ease;
+    z-index: 2;
+    user-select: none;
+  }
+
+  .prompt-toggle:hover {
+    background: rgba(0,212,255,0.2);
+    border-color: rgba(0,212,255,0.4);
+  }
+
+  .prompt-drawer {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.4s ease, padding 0.4s ease;
+    background: var(--bg-surface);
+    border-radius: 0 0 12px 12px;
+    border: 1px solid var(--border);
+    border-top: none;
+    margin-top: -14px;
+    position: relative;
+  }
+
+  .prompt-drawer.open {
+    max-height: 600px;
+    padding: 20px 24px;
+  }
+
+  .prompt-drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .prompt-drawer-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--text-dim);
+  }
+
+  .prompt-copy-btn {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    padding: 4px 12px;
+    border-radius: 6px;
+    background: rgba(0,230,118,0.1);
+    border: 1px solid rgba(0,230,118,0.2);
+    color: var(--green);
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .prompt-copy-btn:hover {
+    background: rgba(0,230,118,0.2);
+  }
+
+  .prompt-copy-btn.copied {
+    background: rgba(0,230,118,0.3);
+    color: var(--text-bright);
+  }
+
+  .prompt-text {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--text);
+    white-space: pre-wrap;
+    opacity: 0.8;
+  }
+
+  /* ═══ CONTENT BLOCKS ═══ */
+  .detail-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 32px 0;
+  }
+
+  .detail-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .detail-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+
+  .detail-card.cyan-top::before { background: linear-gradient(90deg, var(--cyan), transparent); }
+  .detail-card.orange-top::before { background: linear-gradient(90deg, var(--orange), transparent); }
+  .detail-card.green-top::before { background: linear-gradient(90deg, var(--green), transparent); }
+  .detail-card.teal-top::before { background: linear-gradient(90deg, var(--teal), transparent); }
+  .detail-card.coral-top::before { background: linear-gradient(90deg, var(--coral), transparent); }
+  .detail-card.purple-top::before { background: linear-gradient(90deg, var(--purple), transparent); }
+
+  .detail-card-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+  }
+
+  .detail-card-title.cyan { color: var(--cyan); }
+  .detail-card-title.orange { color: var(--orange); }
+  .detail-card-title.green { color: var(--green); }
+  .detail-card-title.teal { color: var(--teal); }
+  .detail-card-title.coral { color: var(--coral); }
+  .detail-card-title.purple { color: var(--purple); }
+
+  .detail-list {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .detail-list li {
+    font-size: 13px;
+    color: var(--text);
+    padding-left: 16px;
+    position: relative;
+  }
+
+  .detail-list li::before {
+    content: '›';
+    position: absolute;
+    left: 0;
+    color: var(--text-dim);
+    opacity: 0.5;
+  }
+
+  .detail-list code {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    background: rgba(255,255,255,0.05);
+    padding: 1px 6px;
+    border-radius: 3px;
+  }
+
+  /* ═══ FLOW STEPS (HORIZONTAL) ═══ */
+  .flow-h {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin: 16px 0;
+  }
+
+  .flow-h-step {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    padding: 6px 12px;
+    border-radius: 8px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--border);
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  .flow-h-step.gate {
+    background: rgba(255,82,82,0.1);
+    border-color: rgba(255,82,82,0.25);
+    color: #ff8a80;
+    font-weight: 600;
+  }
+
+  .flow-h-arrow {
+    color: var(--text-dim);
+    opacity: 0.3;
+    font-size: 14px;
+  }
+
+  /* ═══ VERTICAL PIPELINE ═══ */
+  .v-pipeline {
+    position: relative;
+    padding-left: 40px;
+    margin: 24px 0;
+  }
+
+  .v-pipeline::before {
+    content: '';
+    position: absolute;
+    left: 15px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: linear-gradient(180deg, var(--teal) 0%, var(--teal) 70%, var(--red) 85%, var(--red) 100%);
+    opacity: 0.3;
+    border-radius: 1px;
+  }
+
+  .v-step {
+    position: relative;
+    padding: 12px 0;
+  }
+
+  .v-step-dot {
+    position: absolute;
+    left: -29px;
+    top: 16px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--teal);
+    border: 2px solid var(--bg);
+  }
+
+  .v-step-dot.gate { background: var(--red); }
+
+  .v-step-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-bright);
+    margin-bottom: 4px;
+  }
+
+  .v-step-desc {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.6;
+  }
+
+  /* ═══ CALLOUT ═══ */
+  .callout {
+    padding: 20px 24px;
+    border-radius: 10px;
+    margin: 24px 0;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1.6;
+  }
+
+  .callout.teal {
+    background: rgba(0,191,165,0.06);
+    border: 1px solid rgba(0,191,165,0.15);
+    color: var(--teal);
+  }
+
+  .callout.purple {
+    background: rgba(187,134,252,0.06);
+    border: 1px solid rgba(187,134,252,0.15);
+    color: var(--purple);
+  }
+
+  .callout-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    opacity: 0.5;
+    display: block;
+    margin-bottom: 8px;
+  }
+
+  /* ═══ TIER CARDS ═══ */
+  .tier-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    margin: 16px 0;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .tier-card::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 4px;
+  }
+
+  .tier-card.cyan-left::before { background: var(--cyan); }
+  .tier-card.orange-left::before { background: var(--orange); }
+  .tier-card.green-left::before { background: var(--green); }
+
+  .tier-card-head {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+
+  .tier-cmd {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .tier-cmd.cyan { color: var(--cyan); }
+  .tier-cmd.orange { color: var(--orange); }
+  .tier-cmd.green { color: var(--green); }
+
+  .tier-desc {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text);
+  }
+
+  .tier-badges {
+    display: flex;
+    gap: 6px;
+    margin-left: auto;
+    flex-wrap: wrap;
+  }
+
+  .badge {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    padding: 3px 10px;
+    border-radius: 10px;
+    white-space: nowrap;
+  }
+
+  .badge.cyan { background: rgba(0,212,255,0.1); color: var(--cyan); border: 1px solid rgba(0,212,255,0.2); }
+  .badge.orange { background: rgba(255,107,53,0.1); color: var(--orange); border: 1px solid rgba(255,107,53,0.2); }
+  .badge.green { background: rgba(0,230,118,0.1); color: var(--green); border: 1px solid rgba(0,230,118,0.2); }
+
+  .tier-meta {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-top: 14px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .tier-meta span::before {
+    content: '› ';
+    opacity: 0.4;
+  }
+
+  /* ═══ SCHEMA GRID ═══ */
+  .schema-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin: 24px 0;
+  }
+
+  .schema-cluster {
+    padding: 16px;
+    border-radius: 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+  }
+
+  .schema-cluster-name {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+
+  .schema-cluster-name .count {
+    font-weight: 400;
+    opacity: 0.5;
+  }
+
+  .schema-table {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+    padding: 2px 0;
+  }
+
+  .schema-table.hub {
+    color: var(--text);
+    font-weight: 500;
+  }
+
+  /* ═══ RUBRIC ═══ */
+  .rubric-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin: 24px 0;
+  }
+
+  .rubric-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .rubric-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+
+  .rubric-card.orange-top::before { background: linear-gradient(90deg, var(--orange), transparent); }
+  .rubric-card.teal-top::before { background: linear-gradient(90deg, var(--teal), transparent); }
+
+  .rubric-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 14px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .rubric-total {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+  }
+
+  .rubric-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    font-size: 13px;
+  }
+
+  .rubric-row:last-child { border-bottom: none; }
+
+  .rubric-bar {
+    width: 50px;
+    height: 4px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 2px;
+    margin: 0 10px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .rubric-bar-fill { height: 100%; border-radius: 2px; }
+  .rubric-bar-fill.orange { background: var(--orange); }
+  .rubric-bar-fill.teal { background: var(--teal); }
+
+  .rubric-weight {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    min-width: 24px;
+    text-align: right;
+  }
+
+  .rubric-threshold {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    color: var(--text-dim);
+    text-align: center;
+  }
+
+  .rubric-threshold strong { color: var(--text-bright); }
+
+  /* ═══ STACK LAYERS ═══ */
+  .stack-layer {
+    padding: 24px;
+    border-radius: 12px;
+    margin: 8px 0;
+  }
+
+  .stack-layer.purple-bg {
+    background: linear-gradient(135deg, rgba(187,134,252,0.06), rgba(187,134,252,0.02));
+    border: 1px solid rgba(187,134,252,0.15);
+  }
+
+  .stack-layer.cyan-bg {
+    background: linear-gradient(135deg, rgba(0,212,255,0.06), rgba(0,212,255,0.02));
+    border: 1px solid rgba(0,212,255,0.15);
+  }
+
+  .stack-layer.orange-bg {
+    background: linear-gradient(135deg, rgba(255,107,53,0.06), rgba(255,107,53,0.02));
+    border: 1px solid rgba(255,107,53,0.15);
+  }
+
+  .stack-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    margin-bottom: 10px;
+  }
+
+  .stack-desc {
+    font-size: 13px;
+    color: var(--text);
+    margin-bottom: 12px;
+  }
+
+  .chip-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .chip {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+
+  .chip .sub { color: rgba(255,255,255,0.2); font-size: 9px; }
+
+  .stack-arrow-row {
+    text-align: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-dim);
+    opacity: 0.4;
+    padding: 2px 0;
+  }
+
+  /* ═══ STATUS FLOW ═══ */
+  .status-flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+    margin: 16px 0;
+  }
+
+  .status-node {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    padding: 4px 8px;
+    border-radius: 5px;
+    white-space: nowrap;
+  }
+
+  .status-node.active { background: rgba(255,112,67,0.1); border: 1px solid rgba(255,112,67,0.2); color: var(--coral); }
+  .status-node.success { background: rgba(0,230,118,0.1); border: 1px solid rgba(0,230,118,0.2); color: var(--green); }
+  .status-node.terminal { background: rgba(255,82,82,0.08); border: 1px solid rgba(255,82,82,0.15); color: #ff8a80; }
+
+  .status-arrow { color: var(--text-dim); opacity: 0.3; font-size: 11px; }
+
+  /* ═══ FOOTER ═══ */
+  .footer {
+    padding: 80px 0 60px;
+    text-align: center;
+    border-top: 1px solid var(--border);
+    margin-top: 40px;
+  }
+
+  .footer-pills {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+
+  .footer-pill {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    padding: 6px 16px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+
+  .footer-pill .num { font-weight: 700; color: var(--cyan); }
+
+  .footer-tagline {
+    font-family: 'Instrument Serif', serif;
+    font-size: 24px;
+    color: var(--text);
+    opacity: 0.4;
+    font-style: italic;
+  }
+
+  /* ═══ SECTION DIVIDER ═══ */
+  .divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border), transparent);
+    margin: 20px 0;
+  }
+
+  /* ═══ FULL WIDTH DETAIL CARD ═══ */
+  .detail-card-full {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 28px;
+    margin: 16px 0;
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══ TIMELINE NAV ═══ -->
+<nav class="timeline">
+  <a class="timeline-dot active" href="#hero"><span class="timeline-label">Start</span></a>
+  <div class="timeline-line"></div>
+  <a class="timeline-dot" href="#ch0"><span class="timeline-label">The Corpus</span></a>
+  <div class="timeline-line"></div>
+  <a class="timeline-dot" href="#ch1"><span class="timeline-label">Discovery</span></a>
+  <div class="timeline-line"></div>
+  <a class="timeline-dot" href="#ch2"><span class="timeline-label">Scoring</span></a>
+  <div class="timeline-line"></div>
+  <a class="timeline-dot" href="#ch3"><span class="timeline-label">Resume Gen</span></a>
+  <div class="timeline-line"></div>
+  <a class="timeline-dot" href="#ch4"><span class="timeline-label">Email Tracking</span></a>
+  <div class="timeline-line"></div>
+  <a class="timeline-dot" href="#ch5"><span class="timeline-label">3-Tier Pipeline</span></a>
+  <div class="timeline-line"></div>
+  <a class="timeline-dot" href="#ch6"><span class="timeline-label">Architecture</span></a>
+  <div class="timeline-line"></div>
+  <a class="timeline-dot" href="#ch7"><span class="timeline-label">Data Model</span></a>
+</nav>
+
+<div class="page">
+
+  <!-- ═══════════ HERO ═══════════ -->
+  <section class="hero" id="hero">
+    <div class="hero-overline">A solo build. A complete system.</div>
+    <h1>Job hunting is a full-time job.<br>So I <em>automated mine.</em></h1>
+    <p class="hero-sub">One product manager. No team. I built a system that finds open roles before I wake up, scores them against my real experience, generates tailored resumes, reads the responses, and sends me a Slack message with the results.</p>
+    <div class="hero-stats">
+      <div class="hero-stat"><div class="hero-stat-num">24</div><div class="hero-stat-label">Data Tables</div></div>
+      <div class="hero-stat"><div class="hero-stat-num">13</div><div class="hero-stat-label">AI Workflows</div></div>
+      <div class="hero-stat"><div class="hero-stat-num">30+</div><div class="hero-stat-label">Commands</div></div>
+      <div class="hero-stat"><div class="hero-stat-num">3</div><div class="hero-stat-label">Autonomy Tiers</div></div>
+    </div>
+    <div class="scroll-hint">
+      <span>Scroll to explore</span>
+      <div>&#8595;</div>
+    </div>
+  </section>
+
+  <!-- ═══════════ CH0: THE CORPUS ═══════════ -->
+  <section class="chapter" id="ch0">
+    <div class="chapter-num">00</div>
+    <div class="chapter-header">
+      <div class="chapter-overline purple">The Foundation &mdash; Building the Corpus</div>
+      <h2 class="chapter-title">Before the system can select,<br>it needs something real to select from.</h2>
+      <p class="chapter-lead">Most AI resume tools generate content on the fly &mdash; and you have no idea if what they wrote is accurate. This system takes a different approach: before anything else happens, you sit down with an AI interviewer that walks through your career role by role, mining real accomplishments, confirming the phrasing sounds like you, and building a verified library of resume bullets. That library &mdash; the corpus &mdash; is the single source of truth for every resume the system will ever create.</p>
+    </div>
+
+    <div class="visual-block">
+      <div class="image-slot" id="img-corpus">
+        <img src="" alt="Corpus building interview flow">
+        <div class="image-placeholder-content">
+          <div class="image-placeholder-icon">&#128483;</div>
+          <div class="image-placeholder-text">Interview &amp; corpus building visualization</div>
+        </div>
+        <div class="prompt-toggle" onclick="togglePrompt('corpus')">Show Prompt</div>
+      </div>
+      <div class="prompt-drawer" id="prompt-corpus">
+        <div class="prompt-drawer-header">
+          <span class="prompt-drawer-label">Image Generation Prompt</span>
+          <button class="prompt-copy-btn" onclick="copyPrompt('corpus')">Copy</button>
+        </div>
+        <div class="prompt-text">Create a polished dark-background (#0c0c1d) technical diagram showing a career interview process that builds a verified resume corpus.
+
+Left side: show a conversation between a person icon and an AI interviewer icon. Speech bubbles contain prompts like "What did you ship?", "What metrics did you move?", "What was broken that you fixed?" The AI responds with a drafted bullet point.
+
+Center: a large cylinder/database labeled "Corpus" with bullet points flowing into it. Each bullet has small tags attached (e.g., "shipping", "metrics", "growth"). Show 8-15 bullets per role slot. Above the corpus, show a voice profile card with "Avoids: leveraged, synergy" and "Prefers: shipped, built, drove."
+
+Right side: show the corpus connecting outward to three outputs: a resume document icon labeled "Resume Generation", a score gauge labeled "JD Scoring", and a validation shield labeled "Drift Check = 0". A badge reads "Single source of truth."
+
+Bottom: a progress bar showing "Role 1 ✓ Role 2 ✓ Role 3 ... Role N" with bullet counts per role (e.g., "12 bullets", "9 bullets", "14 bullets").
+
+Visual treatment: purple (#bb86fc) accent color, the corpus cylinder as the central hero element, conversation flow shown as a gentle arc from left to center.
+
+Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only — no photographs, no people.</div>
+      </div>
+    </div>
+
+    <div class="detail-grid">
+      <div class="detail-card purple-top">
+        <div class="detail-card-title purple">The Interview Process</div>
+        <ul class="detail-list">
+          <li>Guided conversation walks through each role in your career</li>
+          <li>Probes for specifics: "What did you ship?", "What metrics did you move?", "What was broken that you fixed?"</li>
+          <li>Drafts each bullet and confirms it sounds like you &mdash; not like a template</li>
+          <li>Captures voice preferences: words you use, words you avoid</li>
+          <li>Targets 8-15 verified bullets per role</li>
+        </ul>
+      </div>
+      <div class="detail-card purple-top">
+        <div class="detail-card-title purple">What Gets Built</div>
+        <ul class="detail-list">
+          <li>Roles with context: company, team, situation when you joined</li>
+          <li>Tagged accomplishment bullets with metrics and evidence</li>
+          <li>Skills linked to specific entries as proof</li>
+          <li>Personal interest hooks for cover letter openers</li>
+          <li>A voice profile that ensures every resume sounds like you</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout purple">
+      <span class="callout-label">Why This Matters</span>
+      The corpus is what makes the zero-fabrication guarantee possible. Every bullet in every resume traces back to a real conversation about real work. The system can only select &mdash; never invent.
+    </div>
+  </section>
+
+  <!-- ═══════════ CH1: DISCOVERY ═══════════ -->
+  <section class="chapter" id="ch1">
+    <div class="chapter-num">01</div>
+    <div class="chapter-header">
+      <div class="chapter-overline cyan">Chapter 1 &mdash; Discovery</div>
+      <h2 class="chapter-title">Most people check job boards.<br>This system checks career pages directly.</h2>
+      <p class="chapter-lead">Every day, the engine scans 50+ company career pages and VC portfolio boards for new openings. It remembers every job it has ever seen, so it only surfaces what is genuinely new. No duplicates, no noise &mdash; just fresh listings that were not there yesterday.</p>
+    </div>
+
+    <div class="visual-block">
+      <div class="image-slot has-image" id="img-discovery">
+        <img src="diagrams/discovery.png" alt="Discovery visualization">
+        <div class="image-placeholder-content">
+          <div class="image-placeholder-icon">&#128269;</div>
+          <div class="image-placeholder-text">Discovery flow visualization</div>
+        </div>
+        <div class="prompt-toggle" onclick="togglePrompt('discovery')">Show Prompt</div>
+      </div>
+      <div class="prompt-drawer" id="prompt-discovery">
+        <div class="prompt-drawer-header">
+          <span class="prompt-drawer-label">Image Generation Prompt</span>
+          <button class="prompt-copy-btn" onclick="copyPrompt('discovery')">Copy</button>
+        </div>
+        <div class="prompt-text">Create a polished dark-background (#0c0c1d) technical diagram showing a job discovery system.
+
+Left side: a grid of company logos/career page icons (50+) with small globe icons, labeled "Career Pages" and "VC Portfolio Boards."
+
+Center: a funnel/filter with the label "Delta Detection" — arrows flow from career pages through a database cylinder labeled "job_listings" with a badge "UNIQUE(company_id, url)." Show duplicate URLs bouncing off as red X marks.
+
+Right side: only new listings (glowing cyan nodes) pass through, labeled "New Listings Only."
+
+Visual treatment: cyan (#00d4ff) accent color, subtle grid background, data flowing left-to-right, rejected duplicates shown as faded/dimmed nodes.
+
+Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only — no photographs, no people.</div>
+      </div>
+    </div>
+
+    <div class="detail-grid">
+      <div class="detail-card cyan-top">
+        <div class="detail-card-title cyan">Where It Looks</div>
+        <ul class="detail-list">
+          <li>Direct career pages for 50+ target companies</li>
+          <li>VC portfolio boards (a16z, Greylock, YC, General Catalyst...)</li>
+          <li>Greenhouse applicant tracking portals</li>
+          <li>Investor talent networks</li>
+        </ul>
+      </div>
+      <div class="detail-card cyan-top">
+        <div class="detail-card-title cyan">Deduplication</div>
+        <ul class="detail-list">
+          <li>Every listing URL is stored with its company &mdash; duplicates are automatically rejected</li>
+          <li>Only new listings get scored &mdash; repeat scans skip everything already seen</li>
+          <li>Tracks when each company was last checked and how often</li>
+          <li>Runs are fast because they only process what has changed</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ CH2: SCORING ═══════════ -->
+  <section class="chapter" id="ch2">
+    <div class="chapter-num">02</div>
+    <div class="chapter-header">
+      <div class="chapter-overline orange">Chapter 2 &mdash; Scoring</div>
+      <h2 class="chapter-title">Every job scored 0&ndash;100.<br>No gut feelings. No wasted applications.</h2>
+      <p class="chapter-lead">People spend hours reading job descriptions and guessing if they are a fit. This system scores every listing against real work history in seconds. Two filters ensure only strong matches get through: a quick title check to weed out irrelevant roles, then a deep four-category analysis of the full job description. Only high-scoring jobs get resumes.</p>
+    </div>
+
+    <div class="visual-block">
+      <div class="image-slot has-image" id="img-scoring">
+        <img src="diagrams/scoring.png" alt="Scoring system visualization">
+        <div class="image-placeholder-content">
+          <div class="image-placeholder-icon">&#128202;</div>
+          <div class="image-placeholder-text">Dual scoring rubric visualization</div>
+        </div>
+        <div class="prompt-toggle" onclick="togglePrompt('scoring')">Show Prompt</div>
+      </div>
+      <div class="prompt-drawer" id="prompt-scoring">
+        <div class="prompt-drawer-header">
+          <span class="prompt-drawer-label">Image Generation Prompt</span>
+          <button class="prompt-copy-btn" onclick="copyPrompt('scoring')">Copy</button>
+        </div>
+        <div class="prompt-text">Create a polished dark-background (#0c0c1d) technical diagram showing a dual-gate scoring system.
+
+Left side: a job listing document icon flowing into "Gate 1: Title Pre-Filter" shown as a horizontal bar at the 50-point mark on a 0-100 scale. Jobs below 50 are dimmed/rejected.
+
+Center: passing jobs flow into "Gate 2: Corpus Fit" — show four stacked horizontal bars representing Skills Match (35pts, tallest), Experience Level (25pts), Domain Fit (25pts), and Location/Remote (15pts, shortest). These combine into a single score.
+
+Right side: three threshold lines at 50 (labeled "title filter"), 65 (labeled "/swarm auto"), and 70 (labeled "/pipeline batch"). Jobs above each line glow brighter.
+
+Visual treatment: orange (#ff6b35) accent, scores displayed as filled progress bars, threshold lines as horizontal dashed rules.
+
+Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only — no photographs, no people.</div>
+      </div>
+    </div>
+
+    <div class="rubric-pair">
+      <div class="rubric-card orange-top">
+        <div class="rubric-title">
+          <span style="color:var(--orange);">Job Fit Score</span>
+          <span class="rubric-total">100 pts</span>
+        </div>
+        <div class="rubric-row">
+          <span>Skills Match</span>
+          <div class="rubric-bar"><div class="rubric-bar-fill orange" style="width:100%"></div></div>
+          <span class="rubric-weight" style="color:var(--orange);">35</span>
+        </div>
+        <div class="rubric-row">
+          <span>Experience Level</span>
+          <div class="rubric-bar"><div class="rubric-bar-fill orange" style="width:71%"></div></div>
+          <span class="rubric-weight" style="color:var(--orange);">25</span>
+        </div>
+        <div class="rubric-row">
+          <span>Domain Fit</span>
+          <div class="rubric-bar"><div class="rubric-bar-fill orange" style="width:71%"></div></div>
+          <span class="rubric-weight" style="color:var(--orange);">25</span>
+        </div>
+        <div class="rubric-row">
+          <span>Location / Remote</span>
+          <div class="rubric-bar"><div class="rubric-bar-fill orange" style="width:43%"></div></div>
+          <span class="rubric-weight" style="color:var(--orange);">15</span>
+        </div>
+        <div class="rubric-threshold">Thresholds: <strong>50+</strong> quick filter &bull; <strong>65+</strong> auto-apply &bull; <strong>70+</strong> reviewed batch</div>
+      </div>
+
+      <div class="rubric-card teal-top">
+        <div class="rubric-title">
+          <span style="color:var(--teal);">Resume-JD Match</span>
+          <span class="rubric-total">100 pts</span>
+        </div>
+        <div class="rubric-row">
+          <span>Bullet Relevance</span>
+          <div class="rubric-bar"><div class="rubric-bar-fill teal" style="width:100%"></div></div>
+          <span class="rubric-weight" style="color:var(--teal);">35</span>
+        </div>
+        <div class="rubric-row">
+          <span>Summary Alignment</span>
+          <div class="rubric-bar"><div class="rubric-bar-fill teal" style="width:71%"></div></div>
+          <span class="rubric-weight" style="color:var(--teal);">25</span>
+        </div>
+        <div class="rubric-row">
+          <span>Skills Coverage</span>
+          <div class="rubric-bar"><div class="rubric-bar-fill teal" style="width:71%"></div></div>
+          <span class="rubric-weight" style="color:var(--teal);">25</span>
+        </div>
+        <div class="rubric-row">
+          <span>Keyword Density</span>
+          <div class="rubric-bar"><div class="rubric-bar-fill teal" style="width:43%"></div></div>
+          <span class="rubric-weight" style="color:var(--teal);">15</span>
+        </div>
+        <div class="rubric-threshold">Gate: <strong>85+</strong> required before any resume is created</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ CH3: RESUME GENERATION ═══════════ -->
+  <section class="chapter" id="ch3">
+    <div class="chapter-num">03</div>
+    <div class="chapter-header">
+      <div class="chapter-overline teal">Chapter 3 &mdash; Resume Generation</div>
+      <h2 class="chapter-title">AI writes most resumes.<br>This one only selects from real work.</h2>
+      <p class="chapter-lead">The hardest problem in AI-assisted job search is trust. Can you be sure the resume is accurate? This system solves it by refusing to write anything. Instead, it draws from a verified library of real accomplishments, ranks them for relevance against each job description, and assembles a tailored resume. A validation step blocks the entire document if any content cannot be traced back to the source library.</p>
+    </div>
+
+    <div class="visual-block">
+      <div class="image-slot has-image" id="img-resume">
+        <img src="diagrams/resume.png" alt="Resume generation pipeline">
+        <div class="image-placeholder-content">
+          <div class="image-placeholder-icon">&#128196;</div>
+          <div class="image-placeholder-text">Resume generation pipeline visualization</div>
+        </div>
+        <div class="prompt-toggle" onclick="togglePrompt('resume')">Show Prompt</div>
+      </div>
+      <div class="prompt-drawer" id="prompt-resume">
+        <div class="prompt-drawer-header">
+          <span class="prompt-drawer-label">Image Generation Prompt</span>
+          <button class="prompt-copy-btn" onclick="copyPrompt('resume')">Copy</button>
+        </div>
+        <div class="prompt-text">Create a polished dark-background (#0c0c1d) technical diagram showing a resume generation pipeline.
+
+Left column: a "JD" document with extracted keywords flowing into a "Corpus" database cylinder containing bullet points. Show bullets being ranked/scored with small relevance numbers next to each.
+
+Center: a Google Docs template icon with 6 numbered role slots. Arrows show top-scoring bullets being placed into slots. A bold "85+" gate badge sits before the template, blocking low-scoring combinations.
+
+Right column: the assembled document exports to a PDF icon inside a folder labeled "YYYY-MM-DD/". Below it, a red validation gate labeled "drift_score = 0" with a lock icon.
+
+Bottom callout box: "Every bullet traceable to corpus. Zero fabrication enforced architecturally."
+
+Visual treatment: teal (#00bfa5) accent, the drift validation gate in red (#ff5252) to show it's a hard stop. Show the corpus-to-template flow as the primary visual narrative.
+
+Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only — no photographs, no people.</div>
+      </div>
+    </div>
+
+    <div class="v-pipeline">
+      <div class="v-step">
+        <div class="v-step-dot"></div>
+        <div class="v-step-title">JD Analysis</div>
+        <div class="v-step-desc">Job description fetched &rarr; requirements, themes, and must-haves extracted automatically</div>
+      </div>
+      <div class="v-step">
+        <div class="v-step-dot"></div>
+        <div class="v-step-title">Bullet Scoring</div>
+        <div class="v-step-desc">Every accomplishment in the library is ranked for relevance against the job's requirements</div>
+      </div>
+      <div class="v-step">
+        <div class="v-step-dot"></div>
+        <div class="v-step-title">Job Fit Score</div>
+        <div class="v-step-desc">Skills(35) + Experience(25) + Domain(25) + Location(15) = 100pts</div>
+      </div>
+      <div class="v-step">
+        <div class="v-step-dot gate"></div>
+        <div class="v-step-title">Quality Gate &mdash; 85+ Required</div>
+        <div class="v-step-desc">Resume is scored against the job description across 4 dimensions. If the match is not strong enough, generation is blocked.</div>
+      </div>
+      <div class="v-step">
+        <div class="v-step-dot"></div>
+        <div class="v-step-title">Document Assembly</div>
+        <div class="v-step-desc">Template cloned &rarr; top-ranked bullets placed into 6 role slots &rarr; skills highlighted &rarr; empty sections removed</div>
+      </div>
+      <div class="v-step">
+        <div class="v-step-dot"></div>
+        <div class="v-step-title">PDF Export</div>
+        <div class="v-step-desc">Final resume exported as PDF, organized into daily folders automatically</div>
+      </div>
+      <div class="v-step">
+        <div class="v-step-dot gate"></div>
+        <div class="v-step-title">Drift Validation</div>
+        <div class="v-step-desc">Every bullet is checked against the source library. If anything cannot be traced back, the entire resume is blocked.</div>
+      </div>
+    </div>
+
+    <div class="callout teal">
+      <span class="callout-label">Core Principle</span>
+      Every line on every resume is real. Not generated. Not embellished. Selected from actual work history and validated before the document is created.
+    </div>
+  </section>
+
+  <!-- ═══════════ CH4: EMAIL TRACKING ═══════════ -->
+  <section class="chapter" id="ch4">
+    <div class="chapter-num">04</div>
+    <div class="chapter-header">
+      <div class="chapter-overline coral">Chapter 4 &mdash; Email Tracking</div>
+      <h2 class="chapter-title">You applied. Then what?<br>The system reads the response.</h2>
+      <p class="chapter-lead">After you apply, responses trickle in across days and weeks. This system monitors your inbox automatically, recognizing emails from hiring platforms like Greenhouse, Lever, Ashby, SmartRecruiters, Workday, and iCIMS. It knows the difference between a confirmation, a rejection, and an interview invite &mdash; and updates your application status accordingly. If a company confirms they received your application but goes silent for 14 days, the system flags it as ghosted.</p>
+    </div>
+
+    <div class="visual-block">
+      <div class="image-slot has-image" id="img-email">
+        <img src="diagrams/email.png" alt="Email tracking lifecycle">
+        <div class="image-placeholder-content">
+          <div class="image-placeholder-icon">&#9993;</div>
+          <div class="image-placeholder-text">Email pairing lifecycle visualization</div>
+        </div>
+        <div class="prompt-toggle" onclick="togglePrompt('email')">Show Prompt</div>
+      </div>
+      <div class="prompt-drawer" id="prompt-email">
+        <div class="prompt-drawer-header">
+          <span class="prompt-drawer-label">Image Generation Prompt</span>
+          <button class="prompt-copy-btn" onclick="copyPrompt('email')">Copy</button>
+        </div>
+        <div class="prompt-text">Create a polished dark-background (#0c0c1d) technical diagram showing an email-based application tracking system.
+
+Top: a Gmail envelope icon with "Read-Only OAuth" badge. Arrows flow down through a filter labeled "ATS Domain Patterns" with small logos/text: greenhouse, lever, ashby, smartrecruiters, workday, icims.
+
+Middle: emails split into two streams — "Confirmation" (check mark, left) and "Resolution" (result icon, right). Both arrows converge on a central application record box. Show the pairing: one confirmation + one resolution per application.
+
+Bottom: a horizontal status flow showing: prospect → applied → recruiter_screen → hiring_manager → interview → technical → offer → accepted, with branch arrows going down to "rejected" and "withdrawn" in dimmer/red nodes. Show a dashed clock arrow from "applied" labeled ">14 days = ghosted."
+
+Visual treatment: coral (#ff7043) accent, email icons as envelope shapes, the ghost detection as a dashed/dotted timeout line.
+
+Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only — no photographs, no people.</div>
+      </div>
+    </div>
+
+    <div class="detail-grid">
+      <div class="detail-card coral-top">
+        <div class="detail-card-title coral">How It Reads Email</div>
+        <ul class="detail-list">
+          <li>Recognizes emails from 6+ hiring platforms by domain pattern</li>
+          <li>Keyword matching distinguishes between a rejection and an interview invite</li>
+          <li>Confirmation signals: "received your application," "thank you for applying"</li>
+          <li>Resolution signals: rejection language, interview scheduling, offer keywords</li>
+        </ul>
+      </div>
+      <div class="detail-card coral-top">
+        <div class="detail-card-title coral">Automatic Status Updates</div>
+        <ul class="detail-list">
+          <li>Rejection email arrives &rarr; application marked as rejected</li>
+          <li>Interview invite arrives &rarr; application moved to interview stage</li>
+          <li>Confirmed but no response in 14 days &rarr; flagged as ghosted</li>
+          <li>Each application gets one confirmation and one resolution &mdash; clean lifecycle</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="status-flow">
+      <span class="status-node active">prospect</span>
+      <span class="status-arrow">&rarr;</span>
+      <span class="status-node active">applied</span>
+      <span class="status-arrow">&rarr;</span>
+      <span class="status-node active">recruiter_screen</span>
+      <span class="status-arrow">&rarr;</span>
+      <span class="status-node active">hiring_manager</span>
+      <span class="status-arrow">&rarr;</span>
+      <span class="status-node active">interview</span>
+      <span class="status-arrow">&rarr;</span>
+      <span class="status-node active">technical</span>
+      <span class="status-arrow">&rarr;</span>
+      <span class="status-node success">offer</span>
+      <span class="status-arrow">&rarr;</span>
+      <span class="status-node success">accepted</span>
+      <span style="margin-left:12px;display:flex;flex-direction:column;gap:4px;">
+        <span class="status-node terminal">rejected</span>
+        <span class="status-node terminal">withdrawn</span>
+      </span>
+    </div>
+  </section>
+
+  <!-- ═══════════ CH5: THREE-TIER PIPELINE ═══════════ -->
+  <section class="chapter" id="ch5">
+    <div class="chapter-num">05</div>
+    <div class="chapter-header">
+      <div class="chapter-overline green">Chapter 5 &mdash; Three-Tier Pipeline</div>
+      <h2 class="chapter-title">Choose your level of control.<br>Or let go entirely.</h2>
+      <p class="chapter-lead">Some days you want to review every listing yourself. Other days you want the system to handle everything while you sleep. Three pipeline tiers let you choose: hands-on review when you want it, parallel agents for daily sweeps, or a fully autonomous engine that runs at 6 AM and noon &mdash; finding jobs, generating resumes, and notifying you on Slack, all without touching a keyboard.</p>
+    </div>
+
+    <div class="visual-block">
+      <div class="image-slot has-image" id="img-pipeline">
+        <img src="diagrams/pipeline.png" alt="Three-tier pipeline">
+        <div class="image-placeholder-content">
+          <div class="image-placeholder-icon">&#9881;</div>
+          <div class="image-placeholder-text">Three-tier pipeline visualization</div>
+        </div>
+        <div class="prompt-toggle" onclick="togglePrompt('pipeline')">Show Prompt</div>
+      </div>
+      <div class="prompt-drawer" id="prompt-pipeline">
+        <div class="prompt-drawer-header">
+          <span class="prompt-drawer-label">Image Generation Prompt</span>
+          <button class="prompt-copy-btn" onclick="copyPrompt('pipeline')">Copy</button>
+        </div>
+        <div class="prompt-text">Create a polished dark-background (#0c0c1d) infographic showing three horizontal pipeline lanes, stacked vertically, representing increasing automation levels.
+
+Top lane (cyan #00d4ff): labeled "/pipeline — Interactive Batch." Show 7 steps flowing left-to-right: Scrape → Title Filter (50+) → [diamond-shaped APPROVAL GATE] → Score (70+) → Resume Gen → Drift Check → Brief. The approval gate should be prominent with a human icon.
+
+Middle lane (orange #ff6b35): labeled "/swarm — Semi-Autonomous." Show parallel branches: 3-5 small agent icons labeled "subagents" feeding into a merge point → Delta Detect → Score (65+) → Auto-Resume. Badge: "No approval gates."
+
+Bottom lane (green #00e676): labeled "/monitor — Fully Headless." Show: Email Sync → Scrape → Delta → Filter → Score → Resume (with "cap: 3" badge) → JSON → Slack. Badge: "06:00 & 12:00 via LaunchAgent."
+
+Left side: a vertical gradient arrow labeled "AUTONOMY" pointing downward from "Human" to "Machine."
+
+Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only — no photographs, no people.</div>
+      </div>
+    </div>
+
+    <div class="tier-card cyan-left">
+      <div class="tier-card-head">
+        <span class="tier-cmd cyan">/pipeline</span>
+        <span class="tier-desc">You review. System executes.</span>
+        <div class="tier-badges">
+          <span class="badge cyan">1 approval gate</span>
+          <span class="badge cyan">no resume cap</span>
+        </div>
+      </div>
+      <div class="flow-h">
+        <span class="flow-h-step">Scrape career pages</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Title pre-filter (50+)</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step gate">USER APPROVAL</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Corpus scoring (70+)</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Resume generation</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Drift validation (=0)</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Brief</span>
+      </div>
+      <div class="tier-meta">
+        <span>5-phase batch workflow</span>
+        <span>Full audit log of every decision</span>
+        <span>Tracks fit scores before and after resume tailoring</span>
+      </div>
+    </div>
+
+    <div class="tier-card orange-left">
+      <div class="tier-card-head">
+        <span class="tier-cmd orange">/swarm</span>
+        <span class="tier-desc">Parallel agents scan in the background.</span>
+        <div class="tier-badges">
+          <span class="badge orange">0 gates (monitoring)</span>
+          <span class="badge orange">parallel execution</span>
+        </div>
+      </div>
+      <div class="flow-h">
+        <span class="flow-h-step">Parallel subagents</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Batches of 3-5</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Find new listings</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Auto-score (65+)</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Auto-generate resumes</span>
+      </div>
+      <div class="tier-meta">
+        <span>Multiple agents scan companies simultaneously</span>
+        <span>Optional approval gate in discovery mode</span>
+      </div>
+    </div>
+
+    <div class="tier-card green-left">
+      <div class="tier-card-head">
+        <span class="tier-cmd green">/monitor</span>
+        <span class="tier-desc">Runs while you sleep.</span>
+        <div class="tier-badges">
+          <span class="badge green">zero interaction</span>
+          <span class="badge green">cap: 3 resumes/run</span>
+          <span class="badge green">~10-15 min</span>
+        </div>
+      </div>
+      <div class="flow-h">
+        <span class="flow-h-step">Email sync</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Scrape companies</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Find new listings</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Title filter (50+)</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Full JD scoring</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Resume gen</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Log results</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Slack notification</span>
+      </div>
+      <div class="tier-meta">
+        <span>Scheduled at 6 AM and noon, every day</span>
+        <span>Logs every run for full accountability</span>
+        <span>Handles failures gracefully &mdash; never crashes silently</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ CH6: ARCHITECTURE ═══════════ -->
+  <section class="chapter" id="ch6">
+    <div class="chapter-num">06</div>
+    <div class="chapter-header">
+      <div class="chapter-overline purple">Chapter 6 &mdash; Architecture</div>
+      <h2 class="chapter-title">Tell it what you need<br>in plain English. It handles the rest.</h2>
+      <p class="chapter-lead">The system is designed in three clean layers. At the top, 13 AI-powered workflows understand natural language instructions &mdash; "find me PM roles at health-tech companies" or "generate resumes for today's top matches." These translate into a complete toolkit of 30+ specialized commands. Everything flows down to a database that tracks every company, every application, and every email response.</p>
+    </div>
+
+    <div class="visual-block">
+      <div class="image-slot has-image" id="img-architecture">
+        <img src="diagrams/architecture.png" alt="Architecture stack">
+        <div class="image-placeholder-content">
+          <div class="image-placeholder-icon">&#9634;</div>
+          <div class="image-placeholder-text">Architecture stack visualization</div>
+        </div>
+        <div class="prompt-toggle" onclick="togglePrompt('architecture')">Show Prompt</div>
+      </div>
+      <div class="prompt-drawer" id="prompt-architecture">
+        <div class="prompt-drawer-header">
+          <span class="prompt-drawer-label">Image Generation Prompt</span>
+          <button class="prompt-copy-btn" onclick="copyPrompt('architecture')">Copy</button>
+        </div>
+        <div class="prompt-text">Create a polished dark-background (#0c0c1d) technical architecture diagram with three stacked horizontal layers.
+
+Top layer (purple #bb86fc, largest): "Claude Code Skills" — show 13 rounded chips in a grid: /apply, /pipeline, /swarm, /monitor, /interview, /twc, /score, /fit, /jobs, /greenhouse, /vc-boards, /start-today, /learn. Each chip has a small description. Label: "13 prompt-driven skills."
+
+Arrow pointing down labeled "orchestrate"
+
+Middle layer (cyan #00d4ff): "Python CLI (jj)" — show 11 sub-app names in a row: corpus, resume, email, greenhouse, app, gdocs, worker, investors, monitor, notify, interests. Label: "11 Typer sub-apps, 30+ commands."
+
+Arrow pointing down labeled "execute"
+
+Bottom layer (orange #ff6b35, smallest): "Data Layer" — show four integration icons side by side: SQLite cylinder (24 tables), Gmail envelope (read-only), Google Docs document icon, Slack bell icon. Label: "Single DB + 3 external integrations."
+
+Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only — no photographs, no people.</div>
+      </div>
+    </div>
+
+    <!-- Skills Layer -->
+    <div class="stack-layer purple-bg">
+      <div class="stack-label" style="color:var(--purple);">Layer 1 &mdash; AI Workflows</div>
+      <div class="stack-desc">13 AI-powered workflows that handle everything from finding jobs to generating resumes</div>
+      <div class="chip-grid">
+        <span class="chip">/apply <span class="sub">end-to-end application</span></span>
+        <span class="chip">/pipeline <span class="sub">batch review</span></span>
+        <span class="chip">/swarm <span class="sub">parallel scanning</span></span>
+        <span class="chip">/monitor <span class="sub">autonomous engine</span></span>
+        <span class="chip">/interview <span class="sub">prep & tracking</span></span>
+        <span class="chip">/twc <span class="sub">compliance tracking</span></span>
+        <span class="chip">/score <span class="sub">job fit analysis</span></span>
+        <span class="chip">/fit <span class="sub">resume evaluation</span></span>
+        <span class="chip">/jobs <span class="sub">role discovery</span></span>
+        <span class="chip">/greenhouse <span class="sub">ATS integration</span></span>
+        <span class="chip">/vc-boards <span class="sub">VC portfolio scan</span></span>
+        <span class="chip">/start-today <span class="sub">daily kickoff</span></span>
+        <span class="chip">/learn <span class="sub">outcome learning</span></span>
+      </div>
+    </div>
+    <div class="stack-arrow-row">&darr; orchestrate</div>
+
+    <!-- CLI Layer -->
+    <div class="stack-layer cyan-bg">
+      <div class="stack-label" style="color:var(--cyan);">Layer 2 &mdash; Career Management Toolkit</div>
+      <div class="stack-desc">A complete toolkit of 30+ commands across 11 modules</div>
+      <div style="display:flex;flex-direction:column;gap:3px;font-family:'JetBrains Mono',monospace;font-size:10px;">
+        <div><span style="color:var(--cyan);font-weight:600;">corpus</span> <span style="color:var(--text-dim);">sync, list, search, stats, suggestions, dismiss, edit</span></div>
+        <div><span style="color:var(--cyan);font-weight:600;">resume</span> <span style="color:var(--text-dim);">list, show, import, validate, entries</span></div>
+        <div><span style="color:var(--cyan);font-weight:600;">email</span> <span style="color:var(--text-dim);">setup, verify, updates, sync, learn, test, read, pair, report</span></div>
+        <div><span style="color:var(--cyan);font-weight:600;">greenhouse</span> <span style="color:var(--text-dim);">setup, poll, config</span></div>
+        <div><span style="color:var(--cyan);font-weight:600;">app</span> <span style="color:var(--text-dim);">status, list, update, create, delete</span></div>
+        <div><span style="color:var(--cyan);font-weight:600;">gdocs</span> <span style="color:var(--text-dim);">setup, generate, list</span></div>
+        <div><span style="color:var(--cyan);font-weight:600;">worker</span> <span style="color:var(--text-dim);">start, status, queue, run</span></div>
+        <div><span style="color:var(--cyan);font-weight:600;">investors</span> <span style="color:var(--text-dim);">list, add, check</span></div>
+        <div><span style="color:var(--cyan);font-weight:600;">monitor</span> <span style="color:var(--text-dim);">run, status, log</span></div>
+        <div><span style="color:var(--cyan);font-weight:600;">notify</span> <span style="color:var(--text-dim);">slack, status</span></div>
+        <div><span style="color:var(--cyan);font-weight:600;">interests</span> <span style="color:var(--text-dim);">add, list, edit</span></div>
+      </div>
+    </div>
+    <div class="stack-arrow-row">&darr; execute</div>
+
+    <!-- Data Layer -->
+    <div class="stack-layer orange-bg">
+      <div class="stack-label" style="color:var(--orange);">Layer 3 &mdash; Data + Integrations</div>
+      <div class="chip-grid">
+        <span class="chip" style="border-color:rgba(255,107,53,0.2);">SQLite <span class="sub">24-table database</span></span>
+        <span class="chip" style="border-color:rgba(255,107,53,0.2);">Gmail API <span class="sub">inbox monitoring</span></span>
+        <span class="chip" style="border-color:rgba(255,107,53,0.2);">Google Docs API <span class="sub">resume assembly</span></span>
+        <span class="chip" style="border-color:rgba(255,107,53,0.2);">Slack <span class="sub">notifications</span></span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ CH7: DATA MODEL ═══════════ -->
+  <section class="chapter" id="ch7">
+    <div class="chapter-num">07</div>
+    <div class="chapter-header">
+      <div class="chapter-overline gold">Chapter 7 &mdash; Data Model</div>
+      <h2 class="chapter-title">Every company. Every application.<br>Every response. All in one place.</h2>
+      <p class="chapter-lead">The entire job search lives in a single database &mdash; organized into six logical groups that cover the full lifecycle. From building your work history, to generating resumes, to tracking applications, to discovering new roles, to geographic targeting, to system operations. Nothing falls through the cracks because nothing lives outside the system.</p>
+    </div>
+
+    <div class="visual-block">
+      <div class="image-slot has-image" id="img-schema">
+        <img src="diagrams/schema.png" alt="Database schema">
+        <div class="image-placeholder-content">
+          <div class="image-placeholder-icon">&#128451;</div>
+          <div class="image-placeholder-text">Database schema visualization</div>
+        </div>
+        <div class="prompt-toggle" onclick="togglePrompt('schema')">Show Prompt</div>
+      </div>
+      <div class="prompt-drawer" id="prompt-schema">
+        <div class="prompt-drawer-header">
+          <span class="prompt-drawer-label">Image Generation Prompt</span>
+          <button class="prompt-copy-btn" onclick="copyPrompt('schema')">Copy</button>
+        </div>
+        <div class="prompt-text">Create a polished dark-background (#0c0c1d) database schema diagram showing 24 tables grouped into 6 color-coded clusters.
+
+Arrange as a 3x2 grid of clusters:
+
+Top-left (purple #bb86fc): "Corpus" — roles → entries → skills, education. Show FK arrows from roles to entries.
+
+Top-center (teal #00bfa5): "Resume" — resumes → resume_entries, resume_sections, corpus_suggestions, jd_cache. Show FK from resume_entries to entries (cross-cluster arrow to Corpus).
+
+Top-right (coral #ff7043): "Applications" — applications (largest, central hub), application_emails, cover_letters. FK arrows to resumes (cross-cluster) and companies (cross-cluster).
+
+Bottom-left (cyan #00d4ff): "Discovery" — companies → job_listings (with "UNIQUE" badge), investor_boards → investor_board_jobs.
+
+Bottom-center (green #00e676): "Geography" — geo_areas, geo_companies.
+
+Bottom-right (gold #ffd740): "System" — tasks, events, monitor_runs, twc_payment_requests, interview_sessions, interests.
+
+Show "applications" as the largest node with the most cross-cluster FK connections. Highlight the UNIQUE constraint on job_listings as a special badge.
+
+Style: dark background, modern sans-serif, premium tech aesthetic. Diagram only — no photographs, no people.</div>
+      </div>
+    </div>
+
+    <div class="schema-grid">
+      <div class="schema-cluster">
+        <div class="schema-cluster-name" style="color:var(--purple);">Corpus <span class="count">(4)</span></div>
+        <div class="schema-table hub">roles</div>
+        <div class="schema-table hub">entries</div>
+        <div class="schema-table">skills</div>
+        <div class="schema-table">education</div>
+      </div>
+      <div class="schema-cluster">
+        <div class="schema-cluster-name" style="color:var(--teal);">Resume <span class="count">(5)</span></div>
+        <div class="schema-table hub">resumes</div>
+        <div class="schema-table">resume_entries</div>
+        <div class="schema-table">resume_sections</div>
+        <div class="schema-table">corpus_suggestions</div>
+        <div class="schema-table">jd_cache</div>
+      </div>
+      <div class="schema-cluster">
+        <div class="schema-cluster-name" style="color:var(--coral);">Applications <span class="count">(3)</span></div>
+        <div class="schema-table hub">applications</div>
+        <div class="schema-table">application_emails</div>
+        <div class="schema-table">cover_letters</div>
+      </div>
+      <div class="schema-cluster">
+        <div class="schema-cluster-name" style="color:var(--cyan);">Discovery <span class="count">(4)</span></div>
+        <div class="schema-table hub">companies</div>
+        <div class="schema-table">job_listings <span style="color:var(--orange);font-size:9px;">UNIQUE</span></div>
+        <div class="schema-table">investor_boards</div>
+        <div class="schema-table">investor_board_jobs</div>
+      </div>
+      <div class="schema-cluster">
+        <div class="schema-cluster-name" style="color:var(--green);">Geography <span class="count">(2)</span></div>
+        <div class="schema-table">geo_areas</div>
+        <div class="schema-table">geo_companies</div>
+      </div>
+      <div class="schema-cluster">
+        <div class="schema-cluster-name" style="color:var(--gold);">System <span class="count">(6)</span></div>
+        <div class="schema-table">tasks</div>
+        <div class="schema-table">events</div>
+        <div class="schema-table">monitor_runs</div>
+        <div class="schema-table">twc_payment_requests</div>
+        <div class="schema-table">interview_sessions</div>
+        <div class="schema-table">interests</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ FOOTER ═══════════ -->
+  <footer class="footer">
+    <div class="footer-pills">
+      <span class="footer-pill"><span class="num">24</span> Data Tables</span>
+      <span class="footer-pill"><span class="num">13</span> AI Workflows</span>
+      <span class="footer-pill"><span class="num">30+</span> Commands</span>
+      <span class="footer-pill"><span class="num">3</span> Autonomy Tiers</span>
+      <span class="footer-pill"><span class="num">11</span> Modules</span>
+      <span class="footer-pill"><span class="num">6</span> Integrations</span>
+    </div>
+    <div class="footer-tagline">Built by one PM. Runs autonomously. Every bullet real.</div>
+  </footer>
+
+</div>
+
+<script>
+function togglePrompt(id) {
+  const drawer = document.getElementById('prompt-' + id);
+  drawer.classList.toggle('open');
+  const btn = drawer.previousElementSibling.querySelector('.prompt-toggle');
+  btn.textContent = drawer.classList.contains('open') ? 'Hide Prompt' : 'Show Prompt';
+}
+
+function copyPrompt(id) {
+  const drawer = document.getElementById('prompt-' + id);
+  const text = drawer.querySelector('.prompt-text').textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = drawer.querySelector('.prompt-copy-btn');
+    btn.textContent = 'Copied!';
+    btn.classList.add('copied');
+    setTimeout(() => {
+      btn.textContent = 'Copy';
+      btn.classList.remove('copied');
+    }, 2000);
+  });
+}
+
+// Timeline active state on scroll
+const chapters = document.querySelectorAll('.chapter, .hero');
+const dots = document.querySelectorAll('.timeline-dot');
+
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      const idx = Array.from(chapters).indexOf(entry.target);
+      dots.forEach((d, i) => d.classList.toggle('active', i === idx));
+    }
+  });
+}, { threshold: 0.3 });
+
+chapters.forEach(ch => observer.observe(ch));
+
+// Smooth scroll for timeline dots
+dots.forEach(dot => {
+  dot.addEventListener('click', (e) => {
+    e.preventDefault();
+    const target = document.querySelector(dot.getAttribute('href'));
+    if (target) target.scrollIntoView({ behavior: 'smooth' });
+  });
+});
+</script>
+</body>
+</html>
