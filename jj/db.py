@@ -403,6 +403,54 @@ CREATE TABLE IF NOT EXISTS monitor_runs (
     summary TEXT,                          -- JSON
     error_log TEXT                         -- JSON
 );
+
+-- Evaluation reports (structured scoring breakdowns)
+CREATE TABLE IF NOT EXISTS evaluation_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER NOT NULL REFERENCES applications(id),
+    report_type TEXT DEFAULT 'fit',        -- 'fit', 'deep_dive'
+    -- Scoring breakdown (4-category rubric)
+    skills_score INTEGER,
+    skills_max INTEGER DEFAULT 35,
+    skills_notes TEXT,
+    experience_score INTEGER,
+    experience_max INTEGER DEFAULT 25,
+    experience_notes TEXT,
+    domain_score INTEGER,
+    domain_max INTEGER DEFAULT 25,
+    domain_notes TEXT,
+    location_score INTEGER,
+    location_max INTEGER DEFAULT 15,
+    location_notes TEXT,
+    -- Extended analysis blocks
+    role_summary TEXT,                     -- Archetype + domain + seniority
+    match_analysis TEXT,                   -- Gap analysis + mitigation strategies
+    interview_prep TEXT,                   -- STAR stories mapped to JD requirements
+    comp_research TEXT,                    -- Salary data from WebSearch (nullable)
+    -- Metadata
+    jd_url TEXT,
+    jd_snapshot TEXT,                      -- Cache of JD text at evaluation time
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_eval_reports_app ON evaluation_reports(application_id);
+
+-- STAR+R story bank for interview prep
+CREATE TABLE IF NOT EXISTS stories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,                   -- Short label ("Scaled experimentation at ZenBusiness")
+    situation TEXT NOT NULL,
+    task TEXT NOT NULL,
+    action TEXT NOT NULL,
+    result TEXT NOT NULL,
+    reflection TEXT,                       -- The +R in STAR+R
+    source_entry_ids TEXT,                 -- JSON array of corpus entry IDs used
+    jd_requirements_matched TEXT,          -- JSON array of JD themes this story addresses
+    times_used INTEGER DEFAULT 0,
+    last_used_at TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_stories_requirements ON stories(jd_requirements_matched);
 """
 
 
@@ -656,6 +704,51 @@ def migrate_database() -> None:
             UNIQUE(investor_board_id, url)
         );
         CREATE INDEX IF NOT EXISTS idx_investor_board_jobs_board ON investor_board_jobs(investor_board_id, is_active);
+
+        -- Evaluation reports (structured scoring breakdowns)
+        CREATE TABLE IF NOT EXISTS evaluation_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            application_id INTEGER NOT NULL REFERENCES applications(id),
+            report_type TEXT DEFAULT 'fit',
+            skills_score INTEGER,
+            skills_max INTEGER DEFAULT 35,
+            skills_notes TEXT,
+            experience_score INTEGER,
+            experience_max INTEGER DEFAULT 25,
+            experience_notes TEXT,
+            domain_score INTEGER,
+            domain_max INTEGER DEFAULT 25,
+            domain_notes TEXT,
+            location_score INTEGER,
+            location_max INTEGER DEFAULT 15,
+            location_notes TEXT,
+            role_summary TEXT,
+            match_analysis TEXT,
+            interview_prep TEXT,
+            comp_research TEXT,
+            jd_url TEXT,
+            jd_snapshot TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_eval_reports_app ON evaluation_reports(application_id);
+
+        -- STAR+R story bank for interview prep
+        CREATE TABLE IF NOT EXISTS stories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            situation TEXT NOT NULL,
+            task TEXT NOT NULL,
+            action TEXT NOT NULL,
+            result TEXT NOT NULL,
+            reflection TEXT,
+            source_entry_ids TEXT,
+            jd_requirements_matched TEXT,
+            times_used INTEGER DEFAULT 0,
+            last_used_at TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_stories_requirements ON stories(jd_requirements_matched);
         """
         conn.executescript(new_tables_sql)
         conn.commit()
@@ -3297,7 +3390,7 @@ def score_title_fit(title: str, location: str = None) -> dict[str, Any]:
     total = seniority + role_type + loc_score
     return {
         "total": total,
-        "pass": total >= 50 and not is_international,
+        "pass": total >= 50 and not is_international and role_type >= 25,
         "seniority": {"score": seniority, "max": 40, "label": seniority_label},
         "role_type": {"score": role_type, "max": 30, "label": role_label},
         "location": {"score": loc_score, "max": 30, "label": loc_label},
@@ -4093,3 +4186,159 @@ def get_company_scrape_stats(company_id: int) -> dict[str, Any]:
             "avg_new_per_scrape": round(avg_new, 2),
             "failure_indicators": failure_indicators,
         }
+
+
+# Evaluation report operations
+
+def create_evaluation_report(application_id: int, **kwargs) -> int:
+    """Create a structured evaluation report for an application."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        fields = ["application_id"] + list(kwargs.keys())
+        placeholders = ", ".join(["?" for _ in fields])
+        field_names = ", ".join(fields)
+        values = [application_id] + list(kwargs.values())
+
+        cursor.execute(
+            f"INSERT INTO evaluation_reports ({field_names}) VALUES ({placeholders})",
+            values
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_evaluation_report(application_id: int) -> Optional[dict[str, Any]]:
+    """Get the most recent evaluation report for an application."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM evaluation_reports WHERE application_id = ? ORDER BY created_at DESC LIMIT 1",
+            (application_id,)
+        )
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+    return None
+
+
+def get_evaluation_reports(limit: int = 50) -> list[dict[str, Any]]:
+    """Get recent evaluation reports with application info."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """SELECT er.*, a.company, a.position, a.fit_score, a.status
+            FROM evaluation_reports er
+            JOIN applications a ON er.application_id = a.id
+            ORDER BY er.created_at DESC
+            LIMIT ?""",
+            (limit,)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+# Story bank operations
+
+def create_story(
+    title: str,
+    situation: str,
+    task: str,
+    action: str,
+    result: str,
+    reflection: Optional[str] = None,
+    source_entry_ids: Optional[list[int]] = None,
+    jd_requirements_matched: Optional[list[str]] = None,
+) -> int:
+    """Create a STAR+R story in the story bank."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """INSERT INTO stories
+            (title, situation, task, action, result, reflection, source_entry_ids, jd_requirements_matched)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                title,
+                situation,
+                task,
+                action,
+                result,
+                reflection,
+                json.dumps(source_entry_ids) if source_entry_ids else None,
+                json.dumps(jd_requirements_matched) if jd_requirements_matched else None,
+            )
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_stories(requirement_tags: Optional[list[str]] = None) -> list[dict[str, Any]]:
+    """Get stories, optionally filtered by JD requirement overlap."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        if requirement_tags:
+            # Match stories where any requirement tag overlaps
+            conditions = []
+            params = []
+            for tag in requirement_tags:
+                conditions.append("jd_requirements_matched LIKE ?")
+                params.append(f"%{tag}%")
+            where = " OR ".join(conditions)
+            cursor.execute(
+                f"SELECT * FROM stories WHERE {where} ORDER BY times_used ASC, created_at DESC",
+                params
+            )
+        else:
+            cursor.execute("SELECT * FROM stories ORDER BY times_used ASC, created_at DESC")
+
+        rows = [dict(row) for row in cursor.fetchall()]
+        # Deserialize JSON fields
+        for row in rows:
+            if row.get("source_entry_ids"):
+                row["source_entry_ids"] = json.loads(row["source_entry_ids"])
+            if row.get("jd_requirements_matched"):
+                row["jd_requirements_matched"] = json.loads(row["jd_requirements_matched"])
+        return rows
+
+
+def update_story(story_id: int, **kwargs) -> bool:
+    """Update story fields. Returns True if successful."""
+    if not kwargs:
+        return False
+
+    # Serialize JSON fields if present
+    for json_field in ("source_entry_ids", "jd_requirements_matched"):
+        if json_field in kwargs and isinstance(kwargs[json_field], list):
+            kwargs[json_field] = json.dumps(kwargs[json_field])
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        set_parts = [f"{key} = ?" for key in kwargs.keys()]
+        set_parts.append("updated_at = CURRENT_TIMESTAMP")
+        set_clause = ", ".join(set_parts)
+
+        values = list(kwargs.values()) + [story_id]
+
+        cursor.execute(
+            f"UPDATE stories SET {set_clause} WHERE id = ?",
+            values
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def increment_story_usage(story_id: int) -> bool:
+    """Increment times_used and update last_used_at for a story."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """UPDATE stories
+            SET times_used = times_used + 1,
+                last_used_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?""",
+            (story_id,)
+        )
+        conn.commit()
+        return cursor.rowcount > 0

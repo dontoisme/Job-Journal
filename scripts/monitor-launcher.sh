@@ -48,15 +48,31 @@ if [ -z "$JJ_PATH" ]; then
 fi
 echo "jj: $JJ_PATH"
 
-# Run the monitor skill via headless Claude Code
-# -p: non-interactive output mode (prints result, no TUI)
-# --allowedTools: restrict to only the tools the monitor needs
+# Step 1: Always run the fast API scan first (~30 seconds)
+# This hits Greenhouse, Lever, and Ashby APIs directly for quick discovery
 cd "$PROJECT_DIR"
-echo "Launching claude -p from $(pwd)..."
-claude -p "Run /monitor" \
-    --allowedTools "Bash,WebFetch,Read,Grep,Glob" \
-    2>&1
+echo "Running quick API scan..."
+jj monitor scan-apis 2>&1
+API_EXIT=$?
+echo "API scan exit: $API_EXIT"
 
-EXIT_CODE=$?
+# Step 2: Run full /monitor only at 6am and 6pm (deep scan with corpus scoring + resume gen)
+# At other hours, the quick API scan above is sufficient
+CURRENT_HOUR=$(date '+%H')
+if [ "$CURRENT_HOUR" = "06" ] || [ "$CURRENT_HOUR" = "18" ]; then
+    echo "Full monitor run (hour $CURRENT_HOUR)..."
+    # -p: non-interactive output mode (prints result, no TUI)
+    # --allowedTools: restrict to only the tools the monitor needs
+    claude -p "Run /monitor" \
+        --allowedTools "Bash,WebFetch,Read,Grep,Glob" \
+        2>&1
+    FULL_EXIT=$?
+    echo "Full monitor exit: $FULL_EXIT"
+else
+    echo "Skipping full monitor (hour $CURRENT_HOUR — only runs at 06 and 18)"
+    FULL_EXIT=0
+fi
+
+EXIT_CODE=$((API_EXIT > FULL_EXIT ? API_EXIT : FULL_EXIT))
 echo "=== Monitor complete: $(date '+%Y-%m-%d %H:%M:%S') (exit: $EXIT_CODE) ==="
 exit $EXIT_CODE

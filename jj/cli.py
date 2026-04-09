@@ -2911,21 +2911,52 @@ def monitor_install(
 @monitor_app.command("status")
 def monitor_status():
     """Show monitor status: LaunchAgent state, last run, config."""
+    import plistlib
     import subprocess
 
     plist_path = Path.home() / "Library" / "LaunchAgents" / "com.jj.monitor.plist"
 
     # Check LaunchAgent
     if plist_path.exists():
+        # Use `launchctl list | grep` for the tab-separated PID/exit/label format
         result = subprocess.run(
-            ["launchctl", "list", "com.jj.monitor"],
+            ["bash", "-c", "launchctl list | grep com.jj.monitor"],
             capture_output=True, text=True,
         )
-        if result.returncode == 0:
-            console.print("[green]LaunchAgent: loaded[/green]")
+        if result.returncode == 0 and result.stdout.strip():
+            parts = result.stdout.strip().split()
+            pid = parts[0] if len(parts) > 0 else "-"
+            exit_code = parts[1] if len(parts) > 1 else "?"
+            if pid != "-":
+                console.print(f"[green]LaunchAgent: running (PID {pid})[/green]")
+            else:
+                console.print(f"[green]LaunchAgent: loaded (idle, last exit: {exit_code})[/green]")
         else:
             console.print("[yellow]LaunchAgent: installed but not loaded[/yellow]")
             console.print("  Run: launchctl load ~/Library/LaunchAgents/com.jj.monitor.plist")
+
+        # Read schedule from actual plist
+        try:
+            with open(plist_path, "rb") as f:
+                plist = plistlib.load(f)
+            if "StartInterval" in plist:
+                interval_sec = plist["StartInterval"]
+                if interval_sec >= 3600:
+                    schedule_desc = f"Every {interval_sec // 3600}h"
+                else:
+                    schedule_desc = f"Every {interval_sec // 60}m"
+                console.print(f"Schedule: {schedule_desc} ({interval_sec}s)")
+            elif "StartCalendarInterval" in plist:
+                intervals = plist["StartCalendarInterval"]
+                if isinstance(intervals, list):
+                    times = [f"{d.get('Hour', 0)}:{d.get('Minute', 0):02d}" for d in intervals]
+                else:
+                    times = [f"{intervals.get('Hour', 0)}:{intervals.get('Minute', 0):02d}"]
+                console.print(f"Schedule: {', '.join(times)}")
+            else:
+                console.print("Schedule: [dim]unknown[/dim]")
+        except Exception:
+            console.print("Schedule: [dim]could not read plist[/dim]")
     else:
         console.print("[dim]LaunchAgent: not installed[/dim]")
         console.print("  Run: jj monitor install")
@@ -2933,22 +2964,30 @@ def monitor_status():
     # Show config
     config = load_config()
     monitor_config = config.get("monitor", {})
-    hours = monitor_config.get("schedule_hours", [6, 12])
     webhook = monitor_config.get("slack_webhook_url", "")
-    console.print(f"\nSchedule: {', '.join(str(h) + ':00' for h in hours)}")
     console.print(f"Slack webhook: {'configured' if webhook else '[red]not set[/red]'}")
 
-    # Last run
+    # API scanner stats
+    from jj.ats_scanner import get_api_scannable_companies
+    api_companies = get_api_scannable_companies()
+    console.print(f"API-scannable companies: {len(api_companies)} (Greenhouse/Lever/Ashby)")
+
+    # Last runs (show both api_scan and full)
     if JJ_HOME.exists():
-        from jj.db import get_latest_monitor_run, init_database
-        init_database()  # Ensure monitor_runs table exists
-        last_run = get_latest_monitor_run()
-        if last_run:
-            console.print(f"\nLast run: {last_run['started_at']}")
-            console.print(f"  Type: {last_run['run_type']}")
-            console.print(f"  Companies: {last_run['companies_checked']}, Boards: {last_run['boards_checked']}")
-            console.print(f"  New listings: {last_run['new_listings_found']}")
-            console.print(f"  Notified: {'yes' if last_run['notification_sent'] else 'no'}")
+        from jj.db import get_monitor_runs, init_database
+        init_database()
+        recent_runs = get_monitor_runs(limit=5)
+        if recent_runs:
+            console.print("\nRecent runs:")
+            for run in recent_runs:
+                run_type = run.get("run_type", "?")
+                started = run.get("started_at", "?")
+                new_found = run.get("new_listings_found", 0)
+                notified = "notified" if run.get("notification_sent") else ""
+                companies = run.get("companies_checked", 0)
+                style = "cyan" if run_type == "api_scan" else "green"
+                console.print(f"  [{style}]{run_type:10}[/{style}] {started}  "
+                              f"companies:{companies}  new:{new_found}  {notified}")
         else:
             console.print("\n[dim]No monitor runs yet.[/dim]")
 
@@ -2979,6 +3018,330 @@ def monitor_test_notify():
             console.print("Set it in ~/.job-journal/config.yaml under monitor.slack_webhook_url")
         else:
             console.print("[red]Notification failed. Check webhook URL and try again.[/red]")
+
+
+@monitor_app.command("seed-companies")
+def monitor_seed_companies():
+    """Seed target companies + investor boards for API scanning.
+
+    Adds ~150 companies (AI, health-tech, growth, dev tools, fintech, Austin)
+    and ~30 VC portfolio boards to the database with correct ATS URLs.
+
+    Example:
+        jj monitor seed-companies
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    from jj.db import init_database
+    init_database()
+
+    # Seed companies
+    from jj.target_companies_data import seed_target_companies
+    company_results = seed_target_companies()
+    console.print(
+        f"[green]Companies:[/green] {company_results['created']} new, "
+        f"{company_results['updated']} updated, {company_results['skipped']} unchanged"
+    )
+
+    # Also seed investor boards if not done yet
+    from jj.investor_boards_data import seed_investor_boards
+    board_results = seed_investor_boards()
+    console.print(
+        f"[green]VC boards:[/green] {board_results['created']} new, "
+        f"{board_results['skipped']} already existed"
+    )
+
+    # Report total scannable
+    from jj.ats_scanner import get_api_scannable_companies, get_api_scannable_boards
+    scannable_companies = len(get_api_scannable_companies())
+    scannable_boards = len(get_api_scannable_boards())
+    console.print(
+        f"\nTotal scannable: [bold]{scannable_companies}[/bold] companies + "
+        f"[bold]{scannable_boards}[/bold] VC boards"
+    )
+
+
+@monitor_app.command("scan-apis")
+def monitor_scan_apis(
+    notify: bool = typer.Option(True, "--notify/--no-notify", help="Send Slack notification"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show results without saving to DB"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all jobs found, not just new"),
+):
+    """Quick scan of ATS APIs (Greenhouse, Lever, Ashby) for new listings.
+
+    Hits public JSON APIs directly — no browser, no scraping. Runs dedup
+    against the job_listings table and title-filters new jobs. Much faster
+    than a full /monitor run (~30-60 seconds for 48 companies).
+    """
+    import time
+    from datetime import datetime
+
+    from rich.table import Table
+
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run: jj init[/red]")
+        raise typer.Exit(1)
+
+    from jj.ats_scanner import (
+        get_api_scannable_companies,
+        get_api_scannable_boards,
+        scan_all_api_companies,
+        scan_all_api_boards,
+    )
+    from jj.db import (
+        create_application,
+        create_monitor_run,
+        complete_monitor_run,
+        find_duplicate_application,
+        increment_investor_board_search,
+        increment_search_count,
+        init_database,
+        is_known_job,
+        record_investor_board_job,
+        record_job_listing,
+        score_title_fit,
+    )
+
+    init_database()
+
+    # Load companies
+    companies = get_api_scannable_companies()
+    boards = get_api_scannable_boards()
+
+    if not companies and not boards:
+        console.print("[yellow]No API-scannable companies or boards found.[/yellow]")
+        raise typer.Exit(0)
+
+    console.print(
+        f"Scanning [bold]{len(companies)}[/bold] companies + "
+        f"[bold]{len(boards)}[/bold] VC boards via ATS APIs..."
+    )
+    start = time.time()
+
+    # Create monitor run record
+    run_id = create_monitor_run(run_type="api_scan") if not dry_run else None
+
+    # --- Phase 1: Scan companies ---
+    new_jobs = []
+    skipped_known = 0
+    skipped_title = 0
+
+    if companies:
+        results = scan_all_api_companies(companies)
+        company_summary = results.pop("_summary", {})
+
+        for company_id, jobs in results.items():
+            if not isinstance(company_id, int):
+                continue
+            for job in jobs:
+                url = job.get("url", "")
+                if not url:
+                    continue
+
+                known = is_known_job(url)
+                if known:
+                    skipped_known += 1
+                    continue
+
+                if not dry_run:
+                    record_job_listing(
+                        company_id=company_id,
+                        url=url,
+                        title=job.get("title"),
+                        location=job.get("location"),
+                        ats_type=job.get("ats_type"),
+                    )
+
+                title_result = score_title_fit(job.get("title", ""), job.get("location"))
+                if not title_result.get("pass", False):
+                    skipped_title += 1
+                    continue
+
+                dup = find_duplicate_application(
+                    company=job.get("company_name", ""),
+                    position=job.get("title", ""),
+                    job_url=url,
+                )
+                if dup:
+                    continue
+
+                if not dry_run:
+                    create_application(
+                        company=job.get("company_name", ""),
+                        position=job.get("title", ""),
+                        job_url=url,
+                        location=job.get("location"),
+                        ats_type=job.get("ats_type"),
+                        fit_score=title_result.get("total", 0),
+                        status="prospect",
+                        notes=f"Title Fit: {title_result.get('total', 0)}. Via API scan.",
+                    )
+
+                new_jobs.append({
+                    "title": job.get("title", ""),
+                    "company": job.get("company_name", ""),
+                    "location": job.get("location", ""),
+                    "score": title_result.get("total", 0),
+                    "score_type": "Title Fit",
+                    "url": url,
+                })
+
+        if not dry_run:
+            for company in companies:
+                increment_search_count(company["id"])
+    else:
+        company_summary = {"companies_scanned": 0, "total_jobs_found": 0}
+
+    # --- Phase 2: Scan VC boards ---
+    boards_scanned = 0
+    if boards:
+        board_results = scan_all_api_boards(boards)
+        board_summary = board_results.pop("_summary", {})
+        boards_scanned = board_summary.get("boards_scanned", 0)
+
+        for board_id, jobs in board_results.items():
+            if not isinstance(board_id, int):
+                continue
+
+            # Find the board name for notes
+            board_name = ""
+            for b in boards:
+                if b.get("id") == board_id:
+                    board_name = b.get("name", "")
+                    break
+
+            for job in jobs:
+                url = job.get("url", "")
+                if not url:
+                    continue
+
+                # Record in investor_board_jobs table (tracks all board jobs)
+                if not dry_run:
+                    _job_id, is_new = record_investor_board_job(
+                        board_id=board_id,
+                        url=url,
+                        title=job.get("title"),
+                        company_name=job.get("company_name", ""),
+                        location=job.get("location"),
+                    )
+                    if not is_new:
+                        skipped_known += 1
+                        continue
+                else:
+                    # In dry-run, check via URL dedup
+                    if is_known_job(url):
+                        skipped_known += 1
+                        continue
+
+                title_result = score_title_fit(job.get("title", ""), job.get("location"))
+                if not title_result.get("pass", False):
+                    skipped_title += 1
+                    continue
+
+                company_name = job.get("company_name", "") or board_name
+                dup = find_duplicate_application(
+                    company=company_name,
+                    position=job.get("title", ""),
+                    job_url=url,
+                )
+                if dup:
+                    continue
+
+                if not dry_run:
+                    create_application(
+                        company=company_name,
+                        position=job.get("title", ""),
+                        job_url=url,
+                        location=job.get("location"),
+                        fit_score=title_result.get("total", 0),
+                        status="prospect",
+                        notes=f"Title Fit: {title_result.get('total', 0)}. Via VC board: {board_name}.",
+                    )
+
+                new_jobs.append({
+                    "title": job.get("title", ""),
+                    "company": company_name,
+                    "location": job.get("location", ""),
+                    "score": title_result.get("total", 0),
+                    "score_type": "Title Fit",
+                    "url": url,
+                })
+
+            if not dry_run:
+                increment_investor_board_search(board_id)
+    else:
+        board_summary = {"boards_scanned": 0, "total_jobs_found": 0}
+
+    elapsed = time.time() - start
+    console.print(
+        f"Scan complete in [bold]{elapsed:.1f}s[/bold] — "
+        f"{company_summary.get('total_jobs_found', 0)} company jobs + "
+        f"{board_summary.get('total_jobs_found', 0)} board jobs"
+    )
+
+    # Present results
+    console.print()
+    if new_jobs:
+        table = Table(title=f"New Listings ({len(new_jobs)})")
+        table.add_column("#", style="dim", width=3)
+        table.add_column("Score", justify="right", width=5)
+        table.add_column("Company", style="cyan")
+        table.add_column("Title")
+        table.add_column("Location", style="dim")
+
+        for i, job in enumerate(sorted(new_jobs, key=lambda j: j["score"], reverse=True), 1):
+            score_style = "green" if job["score"] >= 70 else "yellow" if job["score"] >= 50 else "dim"
+            table.add_row(str(i), f"[{score_style}]{job['score']}[/{score_style}]",
+                          job["company"], job["title"], job["location"])
+        console.print(table)
+    else:
+        console.print("[dim]No new matching listings found.[/dim]")
+
+    console.print(f"\n[dim]Known (skipped): {skipped_known} | Title-filtered: {skipped_title} | "
+                  f"New prospects: {len(new_jobs)}[/dim]")
+
+    # Send Slack notification
+    total_companies = company_summary.get("companies_scanned", 0)
+    if notify and new_jobs and not dry_run:
+        from jj.notifier import send_notification
+        notif_summary = {
+            "companies_checked": total_companies,
+            "boards_checked": boards_scanned,
+            "timestamp": datetime.now().strftime("%H:%M"),
+            "prospects_created": len(new_jobs),
+            "resumes_generated": 0,
+        }
+        success = send_notification(new_jobs, notif_summary)
+        if success:
+            console.print("[green]Slack notification sent.[/green]")
+        else:
+            console.print("[yellow]Slack notification failed (check webhook config).[/yellow]")
+
+    # Complete monitor run
+    if not dry_run and run_id:
+        import json
+        complete_monitor_run(
+            run_id=run_id,
+            companies_checked=total_companies,
+            boards_checked=boards_scanned,
+            new_listings_found=len(new_jobs),
+            notification_sent=bool(notify and new_jobs),
+            summary=json.dumps({
+                "type": "api_scan",
+                "elapsed_seconds": round(elapsed, 1),
+                "total_jobs_from_apis": company_summary.get("total_jobs_found", 0),
+                "total_jobs_from_boards": board_summary.get("total_jobs_found", 0),
+                "boards_probed": board_summary.get("boards_probed", 0),
+                "skipped_known": skipped_known,
+                "skipped_title": skipped_title,
+                "new_prospects": len(new_jobs),
+            }),
+        )
+
+    if dry_run:
+        console.print("\n[yellow]Dry run — nothing saved to database.[/yellow]")
 
 
 @monitor_app.command("install-email-sync")
@@ -3065,6 +3428,154 @@ def monitor_install_email_sync(
     else:
         console.print(f"[red]launchctl load failed: {result.stderr}[/red]")
         raise typer.Exit(1)
+
+
+@monitor_app.command("bot-run")
+def monitor_bot_run():
+    """Run the Slack Socket Mode bot in the foreground.
+
+    Used by the LaunchAgent launcher and for interactive debugging.
+    Requires `slack_bot_token` + `slack_app_token` in ~/.job-journal/config.yaml.
+    Install slack_sdk first: pip install -e '.[slack]'
+    """
+    from jj.slack_bot import run_bot
+    raise typer.Exit(run_bot())
+
+
+@monitor_app.command("install-bot")
+def monitor_install_bot(
+    uninstall: bool = typer.Option(False, "--uninstall", help="Remove the Slack bot LaunchAgent"),
+):
+    """Install (or uninstall) the Slack bot as a keep-alive LaunchAgent.
+
+    The bot runs as a daemon, restarting on crash (but not on clean exit).
+    Requires slack_bot_token + slack_app_token in ~/.job-journal/config.yaml.
+    """
+    import subprocess
+
+    plist_dir = Path.home() / "Library" / "LaunchAgents"
+    plist_path = plist_dir / "com.jj.slack-bot.plist"
+    log_dir = JJ_HOME / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    if uninstall:
+        if plist_path.exists():
+            subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+            plist_path.unlink()
+            console.print("[green]Slack bot LaunchAgent removed.[/green]")
+        else:
+            console.print("[yellow]Slack bot LaunchAgent not installed.[/yellow]")
+        return
+
+    import shutil
+    jj_path = shutil.which("jj")
+    if not jj_path:
+        console.print("[red]'jj' not found in PATH.[/red]")
+        raise typer.Exit(1)
+
+    claude_path = shutil.which("claude")
+    if not claude_path:
+        console.print("[red]'claude' not found in PATH — bot needs it to spawn /score runs.[/red]")
+        raise typer.Exit(1)
+
+    project_dir = Path(__file__).resolve().parent.parent
+    launcher_path = project_dir / "scripts" / "slack-bot-launcher.sh"
+    if not launcher_path.exists():
+        console.print(f"[red]Launcher script not found: {launcher_path}[/red]")
+        raise typer.Exit(1)
+
+    # Validate config has tokens BEFORE writing the plist
+    cfg = load_config().get("monitor", {}) or {}
+    missing = []
+    if not cfg.get("slack_bot_token"):
+        missing.append("slack_bot_token (xoxb-...)")
+    if not cfg.get("slack_app_token"):
+        missing.append("slack_app_token (xapp-...)")
+    if missing:
+        console.print(f"[red]Missing in ~/.job-journal/config.yaml monitor section:[/red]")
+        for m in missing:
+            console.print(f"  - {m}")
+        console.print("See docs/slack-bot-setup.md for how to create the Slack app.")
+        raise typer.Exit(1)
+
+    if not cfg.get("slack_authorized_users"):
+        console.print(
+            "[yellow]Warning: slack_authorized_users is empty. "
+            "Anyone in the channel will be able to click [Score] buttons.[/yellow]"
+        )
+
+    plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jj.slack-bot</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{launcher_path}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>StandardOutPath</key>
+    <string>{log_dir}/slack-bot.log</string>
+    <key>StandardErrorPath</key>
+    <string>{log_dir}/slack-bot.log</string>
+    <key>WorkingDirectory</key>
+    <string>{project_dir}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{Path(claude_path).parent}:{Path(jj_path).parent}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
+"""
+
+    plist_dir.mkdir(parents=True, exist_ok=True)
+    if plist_path.exists():
+        subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+    plist_path.write_text(plist_content)
+    result = subprocess.run(["launchctl", "load", str(plist_path)], capture_output=True, text=True)
+
+    if result.returncode == 0:
+        console.print("[green]Slack bot LaunchAgent installed (KeepAlive=true).[/green]")
+        console.print(f"  Log:   {log_dir}/slack-bot.log")
+        console.print(f"  Plist: {plist_path}")
+        console.print("  Tail:  jj monitor bot-log -f")
+    else:
+        console.print(f"[red]launchctl load failed: {result.stderr}[/red]")
+        raise typer.Exit(1)
+
+
+@monitor_app.command("bot-log")
+def monitor_bot_log(
+    lines: int = typer.Option(50, "--lines", "-n", help="Number of recent lines to show"),
+    follow: bool = typer.Option(False, "--follow", "-f", help="Follow the log (tail -f)"),
+):
+    """Show recent Slack bot log output."""
+    log_file = JJ_HOME / "logs" / "slack-bot.log"
+    if not log_file.exists():
+        console.print("[dim]No bot log found yet. Run 'jj monitor install-bot' first.[/dim]")
+        return
+    if follow:
+        import subprocess
+        try:
+            subprocess.run(["tail", "-f", str(log_file)])
+        except KeyboardInterrupt:
+            pass
+        return
+    content = log_file.read_text()
+    for line in content.strip().split("\n")[-lines:]:
+        console.print(line)
 
 
 @monitor_app.command("stats")

@@ -88,6 +88,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "check_interval_hours": 12,
         "notify_threshold": 50,
         "slack_webhook_url": "",
+        # Socket Mode bot for interactive [Score] buttons
+        "slack_bot_token": "",          # xoxb-... Bot User OAuth Token
+        "slack_app_token": "",          # xapp-... App-Level Token (connections:write)
+        "slack_default_channel": "",    # C0123... channel where notifications post
+        "slack_authorized_users": [],   # Slack user IDs allowed to click buttons; empty = no restriction
     },
 }
 
