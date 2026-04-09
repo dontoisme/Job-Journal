@@ -48,6 +48,21 @@ ACTION_ID = "score_job"
 WORKER_POLL_INTERVAL = 1.0
 ALLOWED_TOOLS = "Bash,WebFetch,Read,Grep,Glob"
 
+# --- Log verb prefixes (Rich markup) ---
+# Primary events — designed to pop visually:
+V_SPAWN  = "[bold cyan]▶ SPAWN[/bold cyan]"   # subprocess kicked off
+V_DONE   = "[bold green]✓ DONE [/bold green]"  # subprocess returned success
+V_FAIL   = "[bold red]✗ FAIL [/bold red]"      # subprocess returned failure
+V_READY  = "[bold green]◉ READY[/bold green]"  # bot connected + listening
+# Secondary events — lower contrast:
+V_CLICK  = "[cyan]· CLICK[/cyan]"
+V_QUEUE  = "[cyan]· QUEUE[/cyan]"
+V_SKIP   = "[yellow]· SKIP [/yellow]"          # already scored, pre-check hit
+V_DENY   = "[red]⚠ DENY [/red]"                # unauthorized user
+V_STOP   = "[dim]◯ STOP [/dim]"                # shutdown signal / worker exit
+V_NOTE   = "[dim]·[/dim]"                       # informational / bookkeeping
+V_WARN   = "[bold yellow]⚠ WARN [/bold yellow]"
+
 
 # --- Worker queue + shutdown flag ---
 _job_queue: "queue.Queue[dict]" = queue.Queue()
@@ -87,7 +102,17 @@ def _post_ephemeral(web: WebClient, *, channel: str, user: str, text: str) -> No
 # =============================================================================
 
 def _lookup_application_by_url(url: str) -> Optional[dict[str, Any]]:
-    """Fetch the latest application row matching `job_url`."""
+    """Fetch the latest application row matching `job_url`, including
+    whether it has a full /score run against it.
+
+    Adds a derived field `has_full_score` (bool). We detect this by the
+    `notes` prefix rather than the `evaluation_reports` table because
+    the committed /score skill writes notes like "Fit: 82% (Strong Fit).
+    ..." but does NOT write to evaluation_reports — that's in a WIP
+    version of the skill. A bare `notes` starting with "Title Fit:"
+    means the row is just the hourly scan's title pre-filter and the
+    button should actually run /score.
+    """
     from jj.db import get_connection, init_database
 
     init_database()
@@ -98,7 +123,15 @@ def _lookup_application_by_url(url: str) -> Optional[dict[str, Any]]:
             "ORDER BY created_at DESC LIMIT 1",
             (url,),
         ).fetchone()
-        return dict(row) if row else None
+        if not row:
+            return None
+        app = dict(row)
+        notes = (app.get("notes") or "").strip()
+        # "Title Fit: N ..." = bare title pre-filter from scan-apis.
+        # "Fit: N% ..." = real corpus run from /score.
+        # Empty / unknown = treat as not fully scored.
+        app["has_full_score"] = bool(notes) and not notes.startswith("Title Fit:")
+        return app
 
 
 def _verdict_from_score(score: Optional[int]) -> str:
@@ -130,7 +163,7 @@ def _run_score_subprocess(url: str) -> tuple[int, str, str]:
         "--allowedTools",
         ALLOWED_TOOLS,
     ]
-    logger.info("Spawning: %s", " ".join(cmd))
+    logger.info("%s /score %s", V_SPAWN, url)
     try:
         proc = subprocess.run(
             cmd,
@@ -140,7 +173,7 @@ def _run_score_subprocess(url: str) -> tuple[int, str, str]:
         )
         return proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired:
-        logger.error("Score subprocess timed out after %ds", SCORE_TIMEOUT_SEC)
+        logger.error("%s timeout after %ds", V_FAIL, SCORE_TIMEOUT_SEC)
         return 124, "", f"Timed out after {SCORE_TIMEOUT_SEC}s"
     except Exception as e:
         logger.exception("Subprocess launch failed")
@@ -170,14 +203,15 @@ def _format_result_message(
     company = app.get("company", "?")
     position = app.get("position", "?")
     app_id = app.get("id")
-    dash = f"http://localhost:8000/applications/{app_id}" if app_id else None
+    # Link to the per-prospect detail page
+    dash = f"http://localhost:8000/prospects/{app_id}" if app_id else None
 
     line = (
         f":white_check_mark: Scored: *{position}* @ *{company}* — "
         f"Fit: *{score}* ({verdict})"
     )
     if dash:
-        line += f" — <{dash}|View report>"
+        line += f" — <{dash}|View details>"
     return line
 
 
@@ -186,7 +220,7 @@ def _format_result_message(
 # =============================================================================
 
 def _worker_loop(web: WebClient) -> None:
-    logger.info("Score worker started")
+    logger.info("%s Score worker started", V_NOTE)
     while not _shutdown.is_set():
         try:
             job = _job_queue.get(timeout=WORKER_POLL_INTERVAL)
@@ -197,16 +231,26 @@ def _worker_loop(web: WebClient) -> None:
             channel = job["channel"]
             thread_ts = job.get("thread_ts")
 
-            logger.info("Worker picked up: %s", url)
             t0 = time.time()
             rc, stdout, stderr = _run_score_subprocess(url)
             elapsed = int(time.time() - t0)
-            logger.info(
-                "Score finished in %ds (rc=%d, stdout=%d bytes, stderr=%d bytes)",
-                elapsed, rc, len(stdout), len(stderr),
-            )
 
             app = _lookup_application_by_url(url) if rc == 0 else None
+
+            if rc == 0 and app is not None:
+                score = app.get("fit_score")
+                verdict = _verdict_from_score(score)
+                company = app.get("company", "?")
+                position = app.get("position", "?")
+                logger.info(
+                    "%s %3ds  %s @ %s → Fit:%s (%s)",
+                    V_DONE, elapsed, position, company, score, verdict,
+                )
+            elif rc == 124:
+                logger.warning("%s %3ds  timeout  %s", V_FAIL, elapsed, url)
+            else:
+                logger.warning("%s %3ds  rc=%d  %s", V_FAIL, elapsed, rc, url)
+
             text = _format_result_message(url, app, rc, stderr)
             _post_message(web, channel=channel, thread_ts=thread_ts, text=text)
         except Exception as e:
@@ -222,7 +266,7 @@ def _worker_loop(web: WebClient) -> None:
                 pass
         finally:
             _job_queue.task_done()
-    logger.info("Score worker exiting")
+    logger.info("%s Score worker exiting", V_STOP)
 
 
 # =============================================================================
@@ -259,9 +303,11 @@ def _on_block_actions(web: WebClient, req: SocketModeRequest, authorized_users: 
             logger.warning("Bad action payload: %s", json.dumps(payload)[:300])
             continue
 
+        logger.info("%s user=%s  %s", V_CLICK, user, url)
+
         # 1) Authorization check
         if authorized_users and user not in authorized_users:
-            logger.info("Unauthorized click by %s on %s", user, url)
+            logger.info("%s user=%s not in allowlist", V_DENY, user)
             _post_ephemeral(
                 web,
                 channel=channel,
@@ -270,21 +316,29 @@ def _on_block_actions(web: WebClient, req: SocketModeRequest, authorized_users: 
             )
             continue
 
-        # 2) Already-scored pre-check (skip subprocess if we already have a score)
+        # 2) Already-scored pre-check — only skip if a full /score run
+        #    has actually been done (i.e., an evaluation_reports row
+        #    exists). A bare fit_score from the hourly scan's title
+        #    pre-filter is NOT enough — the button should still run
+        #    /score to produce the real 4-category corpus evaluation.
         existing = _lookup_application_by_url(url)
-        if existing and existing.get("fit_score") is not None:
-            score = existing["fit_score"]
+        if existing and existing.get("has_full_score"):
+            score = existing.get("fit_score")
             verdict = _verdict_from_score(score)
             company = existing.get("company", "?")
             position = existing.get("position", "?")
             app_id = existing.get("id")
-            dash = f"http://localhost:8000/applications/{app_id}" if app_id else None
+            dash = f"http://localhost:8000/prospects/{app_id}" if app_id else None
+            logger.info(
+                "%s corpus-scored: %s @ %s → Fit:%s (%s)",
+                V_SKIP, position, company, score, verdict,
+            )
             text = (
-                f":repeat: Already scored: *{position}* @ *{company}* — "
+                f":repeat: Already corpus-scored: *{position}* @ *{company}* — "
                 f"Fit: *{score}* ({verdict})"
             )
             if dash:
-                text += f" — <{dash}|View report>"
+                text += f" — <{dash}|View details>"
             _post_message(web, channel=channel, thread_ts=thread_ts, text=text)
             continue
 
@@ -312,10 +366,7 @@ def _on_block_actions(web: WebClient, req: SocketModeRequest, authorized_users: 
             "thread_ts": thread_ts,
             "user": user,
         })
-        logger.info(
-            "Enqueued score job: %s (qsize=%d, user=%s)",
-            url, _job_queue.qsize(), user,
-        )
+        logger.info("%s qsize=%d  %s", V_QUEUE, _job_queue.qsize(), url)
 
 
 # =============================================================================
@@ -341,13 +392,56 @@ def _make_listener(web: WebClient, authorized_users: list[str]):
     return _listener
 
 
-def run_bot() -> int:
-    """Main entrypoint. Blocks until SIGTERM/SIGINT."""
+def _setup_logging() -> None:
+    """Configure logging with Rich color formatter.
+
+    Uses `force_terminal=True` so ANSI codes are written even when stdout
+    is redirected to a file (LaunchAgent's StandardOutPath). Tailing the
+    log file with `tail -f` will render the colors correctly.
+    """
+    try:
+        from rich.console import Console
+        from rich.logging import RichHandler
+    except ImportError:
+        # Fall back to plain logging if rich isn't available
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+            stream=sys.stdout,
+        )
+        return
+
+    # force_terminal=True → ANSI codes even when stdout is a file
+    # width=200 → don't wrap long lines (URLs etc.)
+    console = Console(
+        file=sys.stdout,
+        force_terminal=True,
+        color_system="truecolor",
+        width=200,
+        soft_wrap=True,
+    )
+    handler = RichHandler(
+        console=console,
+        show_path=False,
+        show_level=False,
+        show_time=True,
+        markup=True,
+        rich_tracebacks=True,
+        omit_repeated_times=False,
+    )
     logging.basicConfig(
         level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        stream=sys.stdout,
+        format="%(message)s",
+        datefmt="[%H:%M:%S]",
+        handlers=[handler],
     )
+    # Quiet slack_sdk's chatty socket_mode logs unless something's wrong
+    logging.getLogger("slack_sdk.socket_mode.builtin.client").setLevel(logging.WARNING)
+
+
+def run_bot() -> int:
+    """Main entrypoint. Blocks until SIGTERM/SIGINT."""
+    _setup_logging()
 
     cfg = load_config().get("monitor", {}) or {}
     bot_token = cfg.get("slack_bot_token") or os.environ.get("SLACK_BOT_TOKEN", "")
@@ -372,9 +466,9 @@ def run_bot() -> int:
         return 2
 
     if authorized_users:
-        logger.info("Authorization allowlist: %s", authorized_users)
+        logger.info("%s Allowlist: %s", V_NOTE, authorized_users)
     else:
-        logger.warning("No slack_authorized_users configured — ANY channel member can click [Score]")
+        logger.warning("%s No allowlist — any channel member can click [Score]", V_WARN)
 
     web = WebClient(token=bot_token)
     sm = SocketModeClient(app_token=app_token, web_client=web)
@@ -391,7 +485,7 @@ def run_bot() -> int:
 
     # Signal handlers for clean shutdown (via launchctl unload or Ctrl-C)
     def _handle_signal(signum, _frame):
-        logger.info("Signal %d received, shutting down", signum)
+        logger.info("%s signal %d received", V_STOP, signum)
         _shutdown.set()
         try:
             sm.disconnect()
@@ -401,18 +495,18 @@ def run_bot() -> int:
     signal.signal(signal.SIGTERM, _handle_signal)
     signal.signal(signal.SIGINT, _handle_signal)
 
-    logger.info("Connecting Socket Mode…")
+    logger.info("%s Connecting Socket Mode…", V_NOTE)
     try:
         sm.connect()
     except Exception:
         logger.exception("Socket Mode connect failed")
         return 1
-    logger.info("Bot ready. Waiting for interactions.")
+    logger.info("%s Listening for [Score] button clicks", V_READY)
 
     # Block main thread; SocketModeClient runs its own internal threads
     while not _shutdown.is_set():
         time.sleep(1.0)
 
     worker.join(timeout=5.0)
-    logger.info("Bot shutdown complete")
+    logger.info("%s Bot shutdown complete", V_STOP)
     return 0

@@ -1,0 +1,235 @@
+{% extends "base.html" %}
+
+{% block title %}{{ prospect.company }} — {{ prospect.position }} | Job Journal{% endblock %}
+{% block page_title %}Prospect{% endblock %}
+
+{% block page_actions %}
+<div style="display: flex; gap: 0.5rem;">
+    <a href="/prospects" class="btn btn-sm">← All Prospects</a>
+    {% if prospect.job_url %}
+    <a href="{{ prospect.job_url }}" target="_blank" class="btn btn-sm btn-primary">Open JD ↗</a>
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block content %}
+
+{% set si = prospect.score_info or {} %}
+{% set is_scored = si.is_scored %}
+
+<!-- Header -->
+<div class="card" style="margin-bottom: 1rem;">
+    <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem;">
+        <div>
+            <div style="font-size: 1.5rem; font-weight: 700;">{{ prospect.company }}</div>
+            <div style="color: var(--text-secondary); font-size: 1.1rem; margin-top: 0.25rem;">{{ prospect.position }}</div>
+            <div class="prospect-meta" style="margin-top: 0.5rem;">
+                {{ prospect.location or 'Remote' }}
+                {% if prospect.ats_type %} · {{ prospect.ats_type }}{% endif %}
+                {% if prospect.salary_range %} · {{ prospect.salary_range }}{% endif %}
+            </div>
+            <div class="prospect-meta">
+                Status: <span class="badge badge-muted">{{ prospect.status }}</span>
+                {% if prospect.created_at %} · Added {{ prospect.created_at[:16] }}{% endif %}
+                {% if prospect.updated_at and prospect.updated_at != prospect.created_at %}
+                 · Updated {{ prospect.updated_at[:16] }}
+                {% endif %}
+            </div>
+        </div>
+        <div style="text-align: right;">
+            {% set score = (si.total or prospect.fit_score or 0)|int %}
+            <div class="score-big {% if is_scored %}{% if score >= 80 %}score-strong{% elif score >= 65 %}score-good{% elif score >= 50 %}score-moderate{% else %}score-stretch{% endif %}{% else %}{% endif %}" style="{% if not is_scored %}color: var(--text-muted);{% endif %}">
+                {{ score }}
+            </div>
+            <div class="score-big-label">
+                {% if is_scored %}Corpus Fit{% else %}Title Fit (pre-filter){% endif %}
+            </div>
+            {% if is_scored and si.verdict %}
+            <div style="margin-top: 0.25rem; font-size: 0.9rem;">{{ si.verdict }}</div>
+            {% endif %}
+            {% if si.archetype %}
+            <div style="margin-top: 0.25rem;">
+                <span class="badge badge-accent">{{ si.archetype }}</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if not is_scored %}
+    <div style="margin-top: 1rem; padding: 0.75rem; background: var(--bg-secondary); border-left: 3px solid var(--warning); border-radius: 4px;">
+        <strong>⚠️ Not yet corpus-scored.</strong>
+        This is just the hourly monitor's title pre-filter — it hasn't been evaluated against your corpus yet.
+        Click the [Score] button in your Slack notification, or run
+        <code>/score {{ prospect.job_url }}</code> in Claude Code to generate a full evaluation.
+    </div>
+    {% endif %}
+</div>
+
+<div class="prospect-detail-grid">
+    <!-- Left: score breakdown -->
+    <div>
+        {% if is_scored and (si.breakdown or evaluation_report) %}
+        <div class="card">
+            <h2 style="margin-top: 0;">Score Breakdown</h2>
+
+            {% set bd = si.breakdown %}
+            {% if evaluation_report %}
+            {# Prefer the structured evaluation_reports row if it exists #}
+            {% set bd = {
+                'skills':     {'score': evaluation_report.skills_score,     'max': evaluation_report.skills_max or 35,    'weight_pct': 35, 'notes': evaluation_report.skills_notes},
+                'experience': {'score': evaluation_report.experience_score, 'max': evaluation_report.experience_max or 25, 'weight_pct': 25, 'notes': evaluation_report.experience_notes},
+                'domain':     {'score': evaluation_report.domain_score,     'max': evaluation_report.domain_max or 25,    'weight_pct': 25, 'notes': evaluation_report.domain_notes},
+                'location':   {'score': evaluation_report.location_score,   'max': evaluation_report.location_max or 15,  'weight_pct': 15, 'notes': evaluation_report.location_notes},
+            } %}
+            {% endif %}
+
+            {% for key, label in [('skills', 'Skills Match'), ('experience', 'Experience Level'), ('domain', 'Domain Fit'), ('location', 'Location / Remote')] %}
+            {% set row = bd[key] %}
+            <div class="score-breakdown-row">
+                <div class="label">
+                    <span>{{ label }} <span style="color: var(--text-muted); font-size: 0.75rem;">(weight {{ row.weight_pct }}%)</span></span>
+                    <span><strong>{{ row.score }}</strong> / {{ row.max }}</span>
+                </div>
+                <div class="score-breakdown-bar">
+                    <div class="score-breakdown-bar-fill" style="width: {{ ((row.score / row.max) * 100)|round }}%; background: {% if (row.score / row.max) >= 0.8 %}var(--success){% elif (row.score / row.max) >= 0.6 %}var(--accent){% elif (row.score / row.max) >= 0.4 %}var(--warning){% else %}var(--danger){% endif %};"></div>
+                </div>
+                {% if row.notes %}
+                <div style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 0.25rem;">{{ row.notes }}</div>
+                {% endif %}
+            </div>
+            {% endfor %}
+
+            {% if si.source %}
+            <div style="margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); font-size: 0.85rem; color: var(--text-secondary); font-style: italic;">
+                {{ si.source }}
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if evaluation_report and (evaluation_report.role_summary or evaluation_report.match_analysis or evaluation_report.interview_prep) %}
+        <div class="card" style="margin-top: 1rem;">
+            <h2 style="margin-top: 0;">Analysis</h2>
+            {% if evaluation_report.role_summary %}
+            <h3>Role Summary</h3>
+            <div style="white-space: pre-wrap;">{{ evaluation_report.role_summary }}</div>
+            {% endif %}
+            {% if evaluation_report.match_analysis %}
+            <h3>Match Analysis</h3>
+            <div style="white-space: pre-wrap;">{{ evaluation_report.match_analysis }}</div>
+            {% endif %}
+            {% if evaluation_report.interview_prep %}
+            <h3>Interview Prep</h3>
+            <div style="white-space: pre-wrap;">{{ evaluation_report.interview_prep }}</div>
+            {% endif %}
+            {% if evaluation_report.comp_research %}
+            <h3>Comp Research</h3>
+            <div style="white-space: pre-wrap;">{{ evaluation_report.comp_research }}</div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- Raw notes -->
+        {% if prospect.notes %}
+        <div class="card" style="margin-top: 1rem;">
+            <h3 style="margin-top: 0;">Raw notes</h3>
+            <pre style="white-space: pre-wrap; font-size: 0.8rem; color: var(--text-secondary); margin: 0;">{{ prospect.notes }}</pre>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Right: resume + actions sidebar -->
+    <div>
+        <div class="card">
+            <h3 style="margin-top: 0;">Resume</h3>
+            {% if prospect.resume_filename %}
+            <div style="margin-bottom: 0.5rem;">
+                <strong>{{ prospect.resume_filename }}</strong>
+            </div>
+            <div class="prospect-meta">
+                {% if prospect.resume_variant %}Variant: <span class="badge badge-accent">{{ prospect.resume_variant }}</span><br>{% endif %}
+                {% if prospect.resume_rj_score %}Resume-JD match: <strong>{{ prospect.resume_rj_score }}%</strong><br>{% endif %}
+                {% if prospect.resume_created_at %}Generated: {{ prospect.resume_created_at[:16] }}{% endif %}
+            </div>
+            {% if prospect.resume_filepath %}
+            <a href="file://{{ prospect.resume_filepath }}" class="btn btn-sm btn-primary" style="margin-top: 0.75rem;">
+                Open Resume
+            </a>
+            {% endif %}
+            {% else %}
+            <div style="color: var(--text-muted); font-style: italic; font-size: 0.9rem;">
+                No tailored resume yet.
+            </div>
+            {% if is_scored %}
+            <div style="margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-secondary);">
+                Run <code>/apply {{ prospect.job_url or '<url>' }}</code> in Claude Code to generate one.
+            </div>
+            {% endif %}
+            {% endif %}
+        </div>
+
+        <div class="card" style="margin-top: 1rem;">
+            <h3 style="margin-top: 0;">Actions</h3>
+            {% if prospect.status == 'prospect' %}
+            <button class="btn btn-success" style="width: 100%; margin-bottom: 0.5rem;" onclick="markApplied({{ prospect.id }}, this)">
+                Mark Applied
+            </button>
+            <button class="btn" style="width: 100%; opacity: 0.7;" onclick="archiveProspect({{ prospect.id }}, this)">
+                Archive
+            </button>
+            {% else %}
+            <div style="color: var(--text-muted); font-style: italic; font-size: 0.9rem;">
+                Status is <strong>{{ prospect.status }}</strong> — no quick actions.
+            </div>
+            {% endif %}
+        </div>
+
+        {% if prospect.email_confirmed or prospect.latest_update_type %}
+        <div class="card" style="margin-top: 1rem;">
+            <h3 style="margin-top: 0;">Email</h3>
+            {% if prospect.email_confirmed %}
+            <div>✓ Application confirmed{% if prospect.confirmed_at %} on {{ prospect.confirmed_at[:10] }}{% endif %}</div>
+            {% endif %}
+            {% if prospect.latest_update_type %}
+            <div class="prospect-meta">
+                Latest: <strong>{{ prospect.latest_update_type }}</strong>
+                {% if prospect.latest_update_at %} ({{ prospect.latest_update_at[:10] }}){% endif %}
+            </div>
+            {% if prospect.latest_update_subject %}
+            <div class="prospect-meta" style="font-style: italic;">{{ prospect.latest_update_subject }}</div>
+            {% endif %}
+            {% endif %}
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+async function markApplied(id, btn) {
+    btn.disabled = true;
+    btn.textContent = '...';
+    const resp = await fetch(`/api/prospects/${id}/applied`, {method: 'POST'});
+    if (resp.ok) {
+        btn.textContent = 'Applied!';
+        setTimeout(() => { window.location.href = '/prospects'; }, 600);
+    } else {
+        btn.disabled = false;
+        btn.textContent = 'Mark Applied';
+    }
+}
+
+async function archiveProspect(id, btn) {
+    btn.disabled = true;
+    btn.textContent = '...';
+    const resp = await fetch(`/api/prospects/${id}/archive`, {method: 'POST'});
+    if (resp.ok) {
+        btn.textContent = 'Archived';
+        setTimeout(() => { window.location.href = '/prospects'; }, 600);
+    } else {
+        btn.disabled = false;
+        btn.textContent = 'Archive';
+    }
+}
+</script>
+
+{% endblock %}

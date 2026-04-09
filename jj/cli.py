@@ -3561,7 +3561,12 @@ def monitor_bot_log(
     lines: int = typer.Option(50, "--lines", "-n", help="Number of recent lines to show"),
     follow: bool = typer.Option(False, "--follow", "-f", help="Follow the log (tail -f)"),
 ):
-    """Show recent Slack bot log output."""
+    """Show recent Slack bot log output.
+
+    The bot writes ANSI color codes to the log file, so we pass lines
+    through stdout unmodified (via typer.echo) rather than re-parsing
+    them with Rich.
+    """
     log_file = JJ_HOME / "logs" / "slack-bot.log"
     if not log_file.exists():
         console.print("[dim]No bot log found yet. Run 'jj monitor install-bot' first.[/dim]")
@@ -3574,8 +3579,131 @@ def monitor_bot_log(
             pass
         return
     content = log_file.read_text()
+    # typer.echo passes ANSI codes through to the terminal unchanged
     for line in content.strip().split("\n")[-lines:]:
-        console.print(line)
+        typer.echo(line)
+
+
+@monitor_app.command("install-dashboard")
+def monitor_install_dashboard(
+    uninstall: bool = typer.Option(False, "--uninstall", help="Remove the dashboard LaunchAgent"),
+):
+    """Install (or uninstall) the web dashboard as a keep-alive LaunchAgent.
+
+    Runs `jj serve --no-open` as a daemon so http://localhost:8000 is
+    always reachable (survives reboots, restarts on crash). Uses the same
+    KeepAlive pattern as the Slack bot LaunchAgent — not a scheduled task.
+    """
+    import subprocess
+
+    plist_dir = Path.home() / "Library" / "LaunchAgents"
+    plist_path = plist_dir / "com.jj.dashboard.plist"
+    log_dir = JJ_HOME / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    if uninstall:
+        if plist_path.exists():
+            subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+            plist_path.unlink()
+            console.print("[green]Dashboard LaunchAgent removed.[/green]")
+        else:
+            console.print("[yellow]Dashboard LaunchAgent not installed.[/yellow]")
+        return
+
+    import shutil
+    jj_path = shutil.which("jj")
+    if not jj_path:
+        console.print("[red]'jj' not found in PATH.[/red]")
+        raise typer.Exit(1)
+
+    # Verify fastapi / uvicorn are importable before writing the plist
+    try:
+        import fastapi  # noqa: F401
+        import uvicorn  # noqa: F401
+    except ImportError:
+        console.print("[red]Web dependencies not installed.[/red]")
+        console.print("Install with: [cyan]pip install -e '.[web]'[/cyan]")
+        raise typer.Exit(1)
+
+    project_dir = Path(__file__).resolve().parent.parent
+    launcher_path = project_dir / "scripts" / "dashboard-launcher.sh"
+    if not launcher_path.exists():
+        console.print(f"[red]Launcher script not found: {launcher_path}[/red]")
+        raise typer.Exit(1)
+
+    plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jj.dashboard</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{launcher_path}</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>StandardOutPath</key>
+    <string>{log_dir}/dashboard.log</string>
+    <key>StandardErrorPath</key>
+    <string>{log_dir}/dashboard.log</string>
+    <key>WorkingDirectory</key>
+    <string>{project_dir}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{Path(jj_path).parent}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
+"""
+
+    plist_dir.mkdir(parents=True, exist_ok=True)
+    if plist_path.exists():
+        subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+    plist_path.write_text(plist_content)
+    result = subprocess.run(["launchctl", "load", str(plist_path)], capture_output=True, text=True)
+
+    if result.returncode == 0:
+        console.print("[green]Dashboard LaunchAgent installed (KeepAlive=true).[/green]")
+        console.print(f"  URL:   http://localhost:8000")
+        console.print(f"  Log:   {log_dir}/dashboard.log")
+        console.print(f"  Plist: {plist_path}")
+        console.print("  Tail:  jj monitor dashboard-log -f")
+    else:
+        console.print(f"[red]launchctl load failed: {result.stderr}[/red]")
+        raise typer.Exit(1)
+
+
+@monitor_app.command("dashboard-log")
+def monitor_dashboard_log(
+    lines: int = typer.Option(50, "--lines", "-n", help="Number of recent lines to show"),
+    follow: bool = typer.Option(False, "--follow", "-f", help="Follow the log (tail -f)"),
+):
+    """Show recent dashboard log output."""
+    log_file = JJ_HOME / "logs" / "dashboard.log"
+    if not log_file.exists():
+        console.print("[dim]No dashboard log found yet. Run 'jj monitor install-dashboard' first.[/dim]")
+        return
+    if follow:
+        import subprocess
+        try:
+            subprocess.run(["tail", "-f", str(log_file)])
+        except KeyboardInterrupt:
+            pass
+        return
+    content = log_file.read_text()
+    for line in content.strip().split("\n")[-lines:]:
+        typer.echo(line)
 
 
 @monitor_app.command("stats")

@@ -134,11 +134,107 @@ templates.env.filters["relative_date"] = format_relative_date
 # Helper functions
 # --------------------------------------------------------------------------
 
+# Precompiled regexes for parsing application.notes
+_RE_TITLE_NOTES = re.compile(r"^Title Fit:\s*(\d+)\.\s*(.*)$", re.IGNORECASE)
+_RE_CORPUS_NOTES = re.compile(
+    r"^Fit:\s*(\d+)%?\s*\(([^)]+)\)\.\s*"
+    r"(?:Archetype:\s*([^.]+)\.\s*)?"  # optional — added by WIP /score
+    r"Skills:\s*(\d+)/(\d+),\s*"
+    r"Exp(?:erience)?:\s*(\d+)/(\d+),\s*"
+    r"Domain:\s*(\d+)/(\d+),\s*"
+    r"Location:\s*(\d+)/(\d+)\.\s*"
+    r"(.*)$",
+    re.IGNORECASE,
+)
+
+
+def classify_score(notes: str, fit_score: int | None) -> dict:
+    """Parse an application.notes field into structured score info.
+
+    Returns a dict with:
+      - score_type: 'title' | 'corpus' | 'unknown'
+      - total: int | None        (the numeric fit score)
+      - verdict: str | None      ('Strong Fit' / 'Good Fit' / 'Moderate' / 'Stretch')
+      - source: str | None       (e.g., 'Via API scan.')
+      - archetype: str | None    (only for corpus, only if /score-WIP wrote it)
+      - breakdown: dict | None   (only for corpus — skills/experience/domain/location)
+      - is_scored: bool          (True if a real /score run has been done)
+
+    Title-only rows (from the hourly scan-apis monitor) have notes like:
+        "Title Fit: 100. Via API scan."
+    Corpus-scored rows (from /score) have notes like:
+        "Fit: 82% (Strong Fit). Skills: 30/35, Exp: 23/25, Domain: 22/25, Location: 10/15. ..."
+    """
+    result = {
+        "score_type": "unknown",
+        "total": fit_score,
+        "verdict": None,
+        "source": None,
+        "archetype": None,
+        "breakdown": None,
+        "is_scored": False,
+    }
+    if not notes:
+        return result
+
+    notes_text = notes.strip()
+
+    m = _RE_CORPUS_NOTES.match(notes_text)
+    if m:
+        total = int(m.group(1))
+        verdict = m.group(2).strip()
+        archetype = m.group(3).strip() if m.group(3) else None
+        skills = (int(m.group(4)), int(m.group(5)))
+        experience = (int(m.group(6)), int(m.group(7)))
+        domain = (int(m.group(8)), int(m.group(9)))
+        location = (int(m.group(10)), int(m.group(11)))
+        source = m.group(12).strip() or None
+        result.update({
+            "score_type": "corpus",
+            "total": total,
+            "verdict": verdict,
+            "archetype": archetype,
+            "breakdown": {
+                "skills":     {"score": skills[0],     "max": skills[1],     "weight_pct": 35},
+                "experience": {"score": experience[0], "max": experience[1], "weight_pct": 25},
+                "domain":     {"score": domain[0],     "max": domain[1],     "weight_pct": 25},
+                "location":   {"score": location[0],   "max": location[1],   "weight_pct": 15},
+            },
+            "source": source,
+            "is_scored": True,
+        })
+        return result
+
+    m = _RE_TITLE_NOTES.match(notes_text)
+    if m:
+        total = int(m.group(1))
+        source = m.group(2).strip() or None
+        result.update({
+            "score_type": "title",
+            "total": total,
+            "source": source,
+            "is_scored": False,
+        })
+        return result
+
+    # Unknown format — treat as scored if notes is non-empty and doesn't
+    # start with "Title Fit:" (matches the bot's own heuristic)
+    result["is_scored"] = not notes_text.startswith("Title Fit:")
+    return result
+
+
 def get_prospects_from_db(unapplied_only=False, include_stale=False):
     """Get prospects from applications table (status='prospect').
 
-    Prospects older than 7 days without action are considered stale.
-    By default, stale prospects are hidden from the view.
+    Sorted by most recently updated first so the latest /score run
+    surfaces at the top. Each row is decorated with:
+      - classify_score() results (score_type, verdict, breakdown, ...)
+      - resume info (resume_filename, resume_variant, resume_rj_score) via
+        LEFT JOIN to the resumes table when applications.resume_id is set
+
+    The 'archived' filter corresponds to status='stale'. The 'all' filter
+    returns active prospects only (no time cutoff — we want the latest
+    corpus-scored item to show even if the original title-fit row is old).
     """
     import sqlite3
     if not DB_PATH.exists():
@@ -148,20 +244,25 @@ def get_prospects_from_db(unapplied_only=False, include_stale=False):
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
 
+    base_query = """
+        SELECT
+            a.*,
+            r.filename    AS resume_filename,
+            r.filepath    AS resume_filepath,
+            r.variant     AS resume_variant,
+            r.rj_score    AS resume_rj_score,
+            r.created_at  AS resume_created_at
+        FROM applications a
+        LEFT JOIN resumes r ON a.resume_id = r.id
+        WHERE a.status {status_filter}
+        ORDER BY COALESCE(a.updated_at, a.created_at) DESC
+    """
     if include_stale:
-        cursor.execute("""
-            SELECT * FROM applications
-            WHERE status IN ('prospect', 'stale')
-            ORDER BY fit_score DESC
-        """)
+        query = base_query.format(status_filter="IN ('prospect', 'stale')")
     else:
-        cursor.execute("""
-            SELECT * FROM applications
-            WHERE status = 'prospect'
-              AND created_at >= datetime('now', '-7 days')
-            ORDER BY fit_score DESC
-        """)
+        query = base_query.format(status_filter="= 'prospect'")
 
+    cursor.execute(query)
     rows = []
     for row in cursor.fetchall():
         r = dict(row)
@@ -169,19 +270,30 @@ def get_prospects_from_db(unapplied_only=False, include_stale=False):
         r['role'] = r.get('position', '')
         r['date_added'] = r.get('created_at', '')
         r['url'] = r.get('job_url', '')
+        # Attach structured score info so templates can render Title vs Corpus
+        r['score_info'] = classify_score(r.get('notes', ''), r.get('fit_score'))
         rows.append(r)
 
     # Also include legacy prospects table if it exists
+    # (legacy schema uses date_added/date_applied instead of created_at/updated_at)
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='prospects'")
     if cursor.fetchone():
-        cursor.execute("SELECT * FROM prospects ORDER BY fit_score DESC")
+        cursor.execute("SELECT * FROM prospects ORDER BY date_added DESC")
         for row in cursor.fetchall():
             r = dict(row)
-            # Legacy prospects already have the right field names
+            r['score_info'] = classify_score(r.get('notes', ''), r.get('fit_score'))
             rows.append(r)
 
-    # Sort merged list by fit_score descending
-    rows.sort(key=lambda x: x.get('fit_score') or 0, reverse=True)
+    # Re-sort merged list by most recent timestamp (updated_at for the
+    # main applications table, date_added for legacy prospects)
+    def _sort_key(x: dict) -> str:
+        return (
+            x.get('updated_at')
+            or x.get('created_at')
+            or x.get('date_added')
+            or ''
+        )
+    rows.sort(key=_sort_key, reverse=True)
 
     conn.close()
     return rows
@@ -588,6 +700,69 @@ async def email_activity_page(request: Request, days: int = 30):
         "total_count": len(feed),
         "days_param": days,
     })
+
+
+@app.get("/prospects/{app_id}", response_class=HTMLResponse)
+async def prospect_detail_page(request: Request, app_id: int):
+    """Per-prospect detail page with score breakdown, resume info, JD link."""
+    import sqlite3
+    if not DB_PATH.exists():
+        return templates.TemplateResponse(
+            "404.html", {"request": request}, status_code=404
+        )
+
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    row = conn.execute(
+        """
+        SELECT
+            a.*,
+            r.filename   AS resume_filename,
+            r.filepath   AS resume_filepath,
+            r.variant    AS resume_variant,
+            r.rj_score   AS resume_rj_score,
+            r.jd_url     AS resume_jd_url,
+            r.created_at AS resume_created_at
+        FROM applications a
+        LEFT JOIN resumes r ON a.resume_id = r.id
+        WHERE a.id = ?
+        """,
+        (app_id,),
+    ).fetchone()
+
+    if not row:
+        conn.close()
+        return templates.TemplateResponse(
+            "404.html", {"request": request}, status_code=404
+        )
+
+    prospect = dict(row)
+    prospect["score_info"] = classify_score(
+        prospect.get("notes", ""), prospect.get("fit_score")
+    )
+
+    # If the WIP /score has written an evaluation_reports row, prefer it
+    # over the notes-parsed breakdown (it's the source of truth).
+    report_row = conn.execute(
+        """
+        SELECT * FROM evaluation_reports
+        WHERE application_id = ?
+        ORDER BY created_at DESC LIMIT 1
+        """,
+        (app_id,),
+    ).fetchone()
+    conn.close()
+
+    evaluation_report = dict(report_row) if report_row else None
+
+    return templates.TemplateResponse(
+        "prospect_detail.html",
+        {
+            "request": request,
+            "prospect": prospect,
+            "evaluation_report": evaluation_report,
+        },
+    )
 
 
 @app.get("/prospects", response_class=HTMLResponse)

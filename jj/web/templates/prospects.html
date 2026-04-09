@@ -28,35 +28,81 @@
 {% if prospects %}
 <div class="prospects-list">
     {% for prospect in prospects %}
-    <div class="prospect-card">
+    {% set si = prospect.score_info or {} %}
+    {% set score = (si.total or prospect.fit_score or 0)|int %}
+    {% set is_scored = si.is_scored %}
+    <div class="prospect-card {% if is_scored %}prospect-card-scored{% endif %}">
         <div class="prospect-info">
-            <div class="prospect-company">{{ prospect.company }}</div>
+            <div class="prospect-company">
+                {% if prospect.id %}
+                <a href="/prospects/{{ prospect.id }}" style="color: inherit; text-decoration: none;">{{ prospect.company }}</a>
+                {% else %}
+                {{ prospect.company }}
+                {% endif %}
+            </div>
             <div class="prospect-role">{{ prospect.role }}</div>
             <div class="prospect-meta">
                 {{ prospect.location or 'Remote' }}
                 {% if prospect.ats_type %} · {{ prospect.ats_type }}{% endif %}
-                {% if prospect.date_added %}
+                {% if prospect.updated_at %}
+                <span class="date-added">· Updated {{ prospect.updated_at[:10] }}</span>
+                {% elif prospect.date_added %}
                 <span class="date-added">· Added {{ prospect.date_added[:10] }}</span>
+                {% endif %}
+                {% if prospect.resume_filename %}
+                 ·
+                {% if prospect.resume_filepath %}
+                <a href="file://{{ prospect.resume_filepath }}" style="color: var(--success);">📄 Resume ({{ prospect.resume_variant or 'default' }}{% if prospect.resume_rj_score %}, {{ prospect.resume_rj_score }}%{% endif %})</a>
+                {% else %}
+                <span style="color: var(--success);">📄 Resume ready</span>
+                {% endif %}
                 {% endif %}
             </div>
             {% if prospect.salary_range %}
             <div class="prospect-meta">{{ prospect.salary_range }}</div>
             {% endif %}
-            {% if prospect.notes %}
-            <div class="prospect-meta" style="margin-top: 0.25rem; font-style: italic;">{{ prospect.notes }}</div>
+            {% if not is_scored %}
+            <div class="prospect-meta" style="margin-top: 0.25rem;">
+                <span class="badge badge-muted" style="font-size: 0.7rem;">needs /score</span>
+                <span style="color: var(--text-muted); font-style: italic; font-size: 0.8rem;">{{ si.source or prospect.notes }}</span>
+            </div>
+            {% else %}
+            <div class="prospect-meta" style="margin-top: 0.25rem; font-style: italic; font-size: 0.8rem; color: var(--text-secondary);">
+                {% if si.breakdown %}
+                Skills {{ si.breakdown.skills.score }}/{{ si.breakdown.skills.max }} ·
+                Exp {{ si.breakdown.experience.score }}/{{ si.breakdown.experience.max }} ·
+                Domain {{ si.breakdown.domain.score }}/{{ si.breakdown.domain.max }} ·
+                Location {{ si.breakdown.location.score }}/{{ si.breakdown.location.max }}
+                {% if si.source %} · {{ si.source }}{% endif %}
+                {% else %}
+                {{ prospect.notes }}
+                {% endif %}
+            </div>
             {% endif %}
         </div>
         <div class="prospect-score">
-            {% set score = prospect.fit_score|int %}
-            <div class="score-value {% if score >= 80 %}score-strong{% elif score >= 70 %}score-good{% elif score >= 60 %}score-moderate{% else %}score-stretch{% endif %}">
-                {{ score }}%
+            {% if is_scored %}
+            <div class="score-value {% if score >= 80 %}score-strong{% elif score >= 65 %}score-good{% elif score >= 50 %}score-moderate{% else %}score-stretch{% endif %}">
+                {{ score }}
             </div>
-            <div class="score-label">
-                {% if score >= 80 %}Strong Fit{% elif score >= 70 %}Good Fit{% elif score >= 60 %}Moderate{% else %}Stretch{% endif %}
+            <div class="score-label" style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);">Corpus Fit</div>
+            <div class="score-label">{{ si.verdict or '—' }}</div>
+            {% else %}
+            <div class="score-value" style="color: var(--text-muted); font-size: 1.6rem;">
+                {{ score }}
             </div>
+            <div class="score-label" style="font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted);">Title Fit</div>
+            <div class="score-label" style="color: var(--text-muted);">pre-filter only</div>
+            {% endif %}
+
+            {% if prospect.id %}
+            <a href="/prospects/{{ prospect.id }}" class="btn btn-sm btn-primary" style="margin-top: 0.5rem;">
+                Details →
+            </a>
+            {% endif %}
             {% if prospect.url %}
-            <a href="{{ prospect.url }}" target="_blank" class="btn btn-sm btn-primary" style="margin-top: 0.5rem;">
-                View Job →
+            <a href="{{ prospect.url }}" target="_blank" class="btn btn-sm" style="margin-top: 0.25rem; opacity: 0.75;">
+                JD ↗
             </a>
             {% endif %}
             {% if show != 'archived' and prospect.id %}
