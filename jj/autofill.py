@@ -322,7 +322,7 @@ INTEREST_TEMPLATES: dict[str, str] = {
 
     "growth": """I'm drawn to {company}'s growth trajectory and product-led approach. At ZenBusiness, I built self-serve acquisition funnels driving 8% conversion lift (~1,500 new customers/day) and scaled experimentation velocity 250%. I love the intersection of product and growth.""",
 
-    "default": """I'm excited about this opportunity at {company}. With 12+ years in product management spanning B2B SaaS, health-tech, and AI, I bring a track record of shipping products that drive measurable business outcomes. I'd love to bring this experience to your team.""",
+    "default": """I'm excited about this opportunity at {company}. As a product leader who has built platforms from 0-to-1 and scaled growth infrastructure across health-tech, enterprise SaaS, and AI, I'd bring both the technical depth and product instinct this role demands. I'd love to discuss how my experience maps to your team's goals.""",
 }
 
 

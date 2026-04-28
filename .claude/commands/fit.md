@@ -74,29 +74,80 @@ Score the standard resume against the JD using the **Resume-JD Match rubric** (1
 
 Record the score as `rj_before`.
 
-### Step 4: Compose Custom Summary
+### Step 3b: Generate Evaluation Report
+
+After scoring the standard resume, generate a structured evaluation report:
+
+1. **Detect archetype:** Classify the JD against `config.variants` keyword lists (growth, ai-agentic, health-tech, consumer, general). Pick the best-matching variant.
+
+2. **Generate 3-block report:**
+   - Block 1 (Role Summary): Detected archetype, domain, seniority, remote policy, TL;DR
+   - Block 2 (Match Analysis): Each JD requirement mapped to corpus entries. Gaps with mitigation strategies — is each gap a hard blocker or nice-to-have? What's the mitigation?
+   - Block 3 (Interview Prep): 3-5 STAR+R stories mapped to key JD requirements
+
+3. **Save the report** (after the application record exists — if creating a new one in Step 9, save then; if updating an existing one, save immediately):
+
+   ```python
+   from jj.db import create_evaluation_report
+
+   report_id = create_evaluation_report(
+       application_id=app_id,
+       report_type="fit",
+       skills_score=summary_score,
+       skills_notes="Summary alignment assessment",
+       experience_score=skills_score,
+       experience_notes="Skills coverage assessment",
+       domain_score=bullet_score,
+       domain_notes="Bullet relevance assessment",
+       location_score=keyword_score,
+       location_notes="Keyword density assessment",
+       role_summary=role_summary_text,
+       match_analysis=match_analysis_text,
+       interview_prep=interview_prep_text,
+       jd_url=url,
+       jd_snapshot=jd_text,
+   )
+   ```
+
+4. **Save STAR+R stories to the story bank** (deduplicate by `source_entry_ids`):
+
+   ```python
+   from jj.db import create_story, get_stories
+
+   existing_stories = get_stories()
+   for story in generated_stories:
+       is_dup = any(s.get("source_entry_ids") == story["source_entry_ids"] for s in existing_stories if s.get("source_entry_ids"))
+       if not is_dup:
+           create_story(
+               title=story["title"], situation=story["situation"],
+               task=story["task"], action=story["action"],
+               result=story["result"], reflection=story["reflection"],
+               source_entry_ids=story.get("source_entry_ids"),
+               jd_requirements_matched=story.get("requirements_matched"),
+           )
+   ```
+
+Present the evaluation report inline with the scoring, before the before/after comparison in Step 8.
+
+### Step 4: Compose Custom Summary (Identity-First)
 
 **This is the one place where composition (not just selection) is allowed.**
 
-Read the available summary variants from `~/.job-journal/profile.yaml`:
+Compose a custom 3-4 sentence summary using the **Identity-First framework**:
 
-```python
-from jj.config import load_profile
-profile = load_profile()
-summaries = profile.get('summaries', {})
-```
+**Structure: Identity → Evidence → Differentiation**
 
-Compose a custom 2-3 sentence summary that:
-1. **Leads with the JD's primary theme** (growth, platform, AI, health-tech, etc.)
-2. **Includes 2-3 specific proof points** that exist in the corpus (metrics, achievements)
-3. **Mirrors the JD's language** where natural (e.g., if JD says "experimentation velocity" and corpus says the same, use it)
-4. **Stays honest** — only reference experiences, skills, and metrics actually present in the corpus
+1. **Identity line** — What the candidate IS, anchored to a specific corpus achievement that maps to the JD's primary need. Not "Growth PM with 12+ years" but "Growth PM who scaled experimentation velocity 250%."
+2. **Evidence line** — 1-2 metrics from corpus proving the identity claim.
+3. **Differentiation line** — The compound advantage that separates this candidate from others with similar experience.
+
+**Banned phrases:** "12+ years" (or any "X+ years"), "proven track record", "results-driven", "passionate", "deep experience in", "thrives in", "combines"
 
 **Rules:**
-- Keep it to 2-3 sentences, single paragraph
+- Keep to 3-4 sentences, single paragraph. Periods, not em-dashes.
 - Do NOT invent metrics, titles, or experiences not in the corpus
-- Do NOT use the JD's exact phrasing if it describes something the user hasn't done
 - USE the JD's terminology when it describes something the user HAS done
+- See `~/.job-apply/resume/base.md` SUMMARY section for theme-specific examples
 
 Present the custom summary to the user before generating. Show what changed vs the default.
 

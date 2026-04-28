@@ -145,8 +145,10 @@ Present your suggestion with reasoning. Ask the user to confirm or override.
 - When in doubt, OMIT — never guess or infer
 
 **Only exception — Summary paragraph:**
-- The Summary may be composed fresh to match the JD
-- But it must ONLY reference experiences, skills, and themes present in corpus
+- The Summary may be composed fresh to match the JD using the Identity-First framework
+- Structure: Identity → Evidence → Differentiation
+- Banned: "12+ years," "proven track record," "results-driven," "passionate," "deep experience in"
+- Must ONLY reference experiences, skills, and themes present in corpus
 - No invented specifics
 
 **If corpus lacks sufficient bullets for a role:**
@@ -158,7 +160,7 @@ Present your suggestion with reasoning. Ask the user to confirm or override.
 1. Read the profile data from `~/.job-journal/profile.yaml`
 2. Read the corpus from `~/.job-journal/corpus.md`
 3. Generate a tailored resume by:
-   - Writing a custom Summary paragraph matched to the JD (3-4 sentences)
+   - Composing an Identity-First summary paragraph matched to the JD (3-4 sentences)
    - Selecting and reordering Skills categories to match JD keywords
    - Selecting the most relevant bullets for each role based on tags
    - Reordering Experience bullets to lead with the most relevant

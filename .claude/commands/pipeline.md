@@ -196,12 +196,15 @@ corpus = CORPUS_PATH.read_text()
 
 If corpus doesn't exist, stop: "No corpus found. Run `/interview` first to build your professional story."
 
-### 2b. Score Each Job
+### 2b. Detect Archetype & Score Each Job
 
 For each new job from Phase 1:
 
 1. Use **WebFetch** to fetch the full job description from the job URL
-2. Score fit (0-100) using the 4-category rubric:
+
+2. **Detect archetype:** Classify the JD against `config.variants` keyword lists (growth, ai-agentic, health-tech, consumer, general). Pick the variant with the highest keyword overlap. This determines how scoring notes are framed and which resume variant is auto-selected in Phase 3.
+
+3. Score fit (0-100) using the 4-category rubric:
 
 | Category | Weight | What to Evaluate |
 |----------|--------|------------------|
@@ -210,7 +213,7 @@ For each new job from Phase 1:
 | **Domain Fit** | 25 pts | Domain tag overlap (AI, growth, health-tech, platform, consumer) |
 | **Location/Remote** | 15 pts | Location compatibility with profile preferences |
 
-3. Assign verdict:
+4. Assign verdict:
 
 | Score | Verdict |
 |-------|---------|
@@ -219,7 +222,50 @@ For each new job from Phase 1:
 | 50-64 | Moderate Fit |
 | <50 | Stretch |
 
-4. Write detailed reasoning for each category (score, max, notes).
+5. Write detailed reasoning for each category (score, max, notes). Frame notes through the detected archetype — e.g., for `ai-agentic`, specifically assess orchestration, agent framework, and LLM experience in the skills assessment.
+
+6. **For jobs scoring 65+**, generate additional analysis:
+
+   **Comp research:** If salary not known from JD, use WebSearch for `"{company} {position} salary glassdoor levels.fyi"`. Store in `salary_range`.
+
+   **Evaluation report:** Generate a structured 3-block report:
+   - Block 1 (Role Summary): Archetype, domain, seniority, remote policy, TL;DR
+   - Block 2 (Match Analysis): JD requirements mapped to corpus entries, gaps with mitigation strategies
+   - Block 3 (Interview Prep): 3-5 STAR+R stories mapped to key JD requirements
+
+   Save the report:
+   ```python
+   from jj.db import create_evaluation_report
+   create_evaluation_report(
+       application_id=app_id,
+       report_type="fit",
+       skills_score=skills_score, skills_notes=skills_notes,
+       experience_score=exp_score, experience_notes=exp_notes,
+       domain_score=domain_score, domain_notes=domain_notes,
+       location_score=loc_score, location_notes=loc_notes,
+       role_summary=role_summary_text,
+       match_analysis=match_analysis_text,
+       interview_prep=interview_prep_text,
+       comp_research=comp_research_text,
+       jd_url=url, jd_snapshot=jd_text,
+   )
+   ```
+
+   **Story bank:** Save new STAR+R stories (deduplicate by `source_entry_ids`):
+   ```python
+   from jj.db import create_story, get_stories
+   existing = get_stories()
+   for story in generated_stories:
+       is_dup = any(s.get("source_entry_ids") == story["source_entry_ids"] for s in existing if s.get("source_entry_ids"))
+       if not is_dup:
+           create_story(
+               title=story["title"], situation=story["situation"],
+               task=story["task"], action=story["action"],
+               result=story["result"], reflection=story["reflection"],
+               source_entry_ids=story.get("source_entry_ids"),
+               jd_requirements_matched=story.get("requirements_matched"),
+           )
+   ```
 
 ### 2c. Deduplicate Before Inserting
 
@@ -250,11 +296,11 @@ app_id = create_application(
     ats_type=job["ats_type"],
     fit_score=score,
     status="prospect",
-    notes=reasoning_summary,
+    notes=f"Fit: {score}% ({verdict}). Archetype: {archetype}. {reasoning_summary}",
 )
 ```
 
-Record the `app_id` for later updates.
+Record the `app_id` for later updates. **Note:** Evaluation reports and story bank entries (from Step 2b item 6) are generated after this insert, since they need the `app_id`.
 
 ### 2e. Write Scored Results
 
@@ -338,7 +384,9 @@ For each job scoring at or above the threshold (default 70+):
 
 ### 3a. Select Resume Variant
 
-Read `~/.job-journal/config.yaml` for variant definitions. Match JD keywords against variant keyword lists:
+Use the **archetype detected in Phase 2b** as the resume variant. The archetype was already determined during scoring by matching JD keywords against `config.variants`. No need to re-classify — just use the stored archetype value.
+
+If for some reason the archetype wasn't stored, fall back to keyword matching:
 
 | Variant | Match Keywords |
 |---------|---------------|
@@ -348,8 +396,6 @@ Read `~/.job-journal/config.yaml` for variant definitions. Match JD keywords aga
 | consumer | B2C, marketplace, e-commerce, consumer |
 | general | (fallback if no strong keyword match) |
 
-Select the variant with the highest keyword overlap with the JD.
-
 ### 3b. Tailor Content
 
 Following the same process as `/apply` Step 3:
@@ -358,7 +404,7 @@ Following the same process as `/apply` Step 3:
 2. **SELECT, don't COMPOSE** -- choose existing bullets VERBATIM from corpus
 3. Reorder bullets to lead with JD-relevant content at each role
 4. Select skill categories matching JD emphasis, reorder to lead with strongest matches
-5. Compose a targeted summary paragraph (the ONLY content that may be freshly written, but must reference only experiences/skills present in corpus)
+5. Compose a targeted summary paragraph using the Identity-First framework (Identity → Evidence → Differentiation). This is the ONLY content that may be freshly written, and must reference only experiences/skills present in corpus. Never use "12+ years," "proven track record," or category-label openings. See base.md SUMMARY section for structure and examples.
 
 **Content Integrity Rules (CRITICAL):**
 - Do NOT paraphrase, combine, merge, or rewrite bullets
@@ -541,6 +587,8 @@ X resumes generated from Y jobs scored across Z companies.
 **JD:** [Full job posting](https://job-url-here)
 **Resume:** [Google Doc](https://docs.google.com/document/d/XXX/edit) | [PDF](filename.pdf)
 
+**Archetype:** [detected archetype from Phase 2b]
+
 **Why this is a good fit:**
 - [2-3 bullet summary of why the corpus aligns with this JD]
 - [E.g., "Direct multi-agent AI orchestration experience matches core requirement"]
@@ -549,6 +597,10 @@ X resumes generated from Y jobs scored across Z companies.
 **Key JD requirements matched:**
 - [Requirement from JD] → [Matching corpus experience]
 - [Requirement from JD] → [Matching corpus experience]
+
+**Top Gaps:** [from evaluation report match_analysis, if report was generated]
+
+**Interview Stories:** [1-2 line summary of STAR+R stories from evaluation report, if generated]
 
 ---
 

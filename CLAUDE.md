@@ -86,19 +86,87 @@ When the user asks to find job emails not yet in Job Journal:
 6. Create new application records for genuine activity; update existing ones for status changes
 
 ### Resume Generation
-- Resumes are generated via Google Docs template + PDF export, NOT pandoc/docx
-- Use `generate_resume_from_corpus()` from `jj/google_docs.py` — this is the single method for both `/apply` and `/pipeline`
-- The Google Docs template has 6 role slots: Roles 1-5 are the main experience body, Role 6 sits under a `{{SECTION_CONSULTING}}` header
-- **`custom_skills` parameter must be `dict[str, list[str]]`** — display names mapped to **lists** of skill strings, NOT comma-separated strings. Passing a string instead of a list causes `", ".join()` to iterate over characters, producing `G, r, o, w, t, h` instead of `Growth Strategy, Growth Loops`. Correct: `{"Growth & Experimentation:": ["Growth Strategy", "Growth Loops"]}`. Wrong: `{"Growth & Experimentation:": "Growth Strategy, Growth Loops"}`
-- **Consulting block rule:** The template's consulting section (Role 6) covers TWO consulting roles: "AI Health-Tech Startup" AND "Clearhead / Accenture Interactive". When the AI Health-Tech role is included in the main experience body (Roles 1-5), the entire consulting section stays empty — do NOT include Clearhead/Accenture as a separate role either. These two roles only appear in the consulting block when they're NOT in the main body. When generating resumes with `role_bullets`, do NOT pass Clearhead/Accenture if AI Health-Tech is already in the main roles. Enforced in `build_replacement_dict()` in `google_docs.py`
-- Old `~/.job-apply/` path and pandoc workflow are deprecated — do not reference them
+- Resumes are generated via `generate_resume_programmatic()` from `jj/google_docs.py` — builds the Google Doc from scratch using insertText + formatting APIs (no template)
+- This is the single method for both `/apply` and `/pipeline`
+- **Three-tier mode system:**
+  - **Disciplined** (default): Compose summary fresh, reorder/filter skills. Bullet changes via SWAP/CUT/PROMOTE/DEMOTE against corpus only. Uses `mode="strict"` for DB validation.
+  - **Strict** (`--strict`): Corpus bullets verbatim, no operations. Uses `mode="strict"`.
+  - **Freeform** (`--freeform`): Full rewrite, escape hatch. Uses `mode="optimized"`. Only when corpus framing can't serve the JD.
+- **Integrity audit is a Python-layer gate** (`_pre_export_audit()` in google_docs.py). The function refuses to generate a PDF if any check fails: duplicate companies, SpareFoot/IBM in main Experience, non-corpus bullets (strict mode), em-dashes, missing Projects, graduation year present.
+- **`custom_skills` parameter must be `dict[str, list[str]]`** — display names mapped to **lists** of skill strings, NOT comma-separated strings.
+- Old template-based generation and `~/.job-apply/` pandoc workflow are deprecated
+
+### Resume Conventions
+- **Summary:** Identity-First framework (Identity → Evidence → Differentiation). No category labels.
+- **Banned phrases:** "12+ years," "proven track record," "results-driven," "passionate," "deep experience in"
+- **No em-dashes** anywhere in resume content. Periods, semicolons, or commas.
+- **No graduation year** in education
+- **All bullets** must trace verbatim to corpus (disciplined/strict modes; enforced by DB lookup)
+- **No duplicate company names** in the document
+- **SpareFoot and IBM** appear ONLY in Earlier Experience, never in main Experience
+- **Projects section** must be present (auto-included from corpus DB)
+- **Earlier Experience** loaded from `profile.yaml` `earlier_roles`
+- **Role dates** must exactly match base.md corpus dates
+- **GitHub URL:** github.com/dontoisme
 
 ### Things NOT to Do
-- Don't generate resume bullets — select from corpus
+- Don't invent facts, metrics, or company names not in base.md
+- Don't use em-dashes in resume content
+- Don't rewrite bullet text in disciplined mode — use SWAP/CUT/PROMOTE/DEMOTE only
+- Don't use `--freeform` unless corpus framing genuinely can't serve the JD
+- Don't bypass the integrity audit — it's a code-layer gate, not a suggestion
 - Don't commit `.job-journal/` contents, credentials, or tokens
 - Don't assume Gmail auth works from Claude Code — it needs a browser
 - Don't use bare `except:` clauses — catch specific exceptions
 - Don't add emoji to output unless the user requests it
 - Don't pass `source=` to `create_application()` — column doesn't exist
 - Don't count ZipRecruiter job alerts, LinkedIn listings, or newsletter emails as job activity — only actual applications, interviews, and responses count
-- Don't pass strings to `custom_skills` in `generate_resume_from_corpus()` — values must be `list[str]`, not `str`
+- Don't pass strings to `custom_skills` in `generate_resume_programmatic()` — values must be `list[str]`, not `str`
+
+
+<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:ca08a54f -->
+## Beads Issue Tracker
+
+This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
+
+### Quick Reference
+
+```bash
+bd ready              # Find available work
+bd show <id>          # View issue details
+bd update <id> --claim  # Claim work
+bd close <id>         # Complete work
+```
+
+### Rules
+
+- Use `bd` for ALL task tracking — do NOT use TodoWrite, TaskCreate, or markdown TODO lists
+- Run `bd prime` for detailed command reference and session close protocol
+- Use `bd remember` for persistent knowledge — do NOT use MEMORY.md files
+
+## Session Completion
+
+**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+
+**MANDATORY WORKFLOW:**
+
+1. **File issues for remaining work** - Create issues for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Close finished work, update in-progress items
+4. **PUSH TO REMOTE** - This is MANDATORY:
+   ```bash
+   git pull --rebase
+   bd dolt push
+   git push
+   git status  # MUST show "up to date with origin"
+   ```
+5. **Clean up** - Clear stashes, prune remote branches
+6. **Verify** - All changes committed AND pushed
+7. **Hand off** - Provide context for next session
+
+**CRITICAL RULES:**
+- Work is NOT complete until `git push` succeeds
+- NEVER stop before pushing - that leaves work stranded locally
+- NEVER say "ready to push when you are" - YOU must push
+- If push fails, resolve and retry until it succeeds
+<!-- END BEADS INTEGRATION -->

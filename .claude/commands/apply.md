@@ -6,8 +6,49 @@ Guide users through job applications with fit assessment and resume tailoring.
 
 ```
 /apply <job_url>
+/apply <job_url> --strict
 /apply https://job-boards.greenhouse.io/company/jobs/123
 ```
+
+## Resume Generation Modes
+
+| Mode | Flag | Python `mode=` | Behavior |
+|------|------|----------------|----------|
+| **Disciplined** (default) | _(none)_ | `"strict"` | Compose summary fresh. Reorder/filter skills. Bullet changes limited to SWAP/CUT/PROMOTE/DEMOTE against corpus. DB-validated output. |
+| **Strict** | `--strict` | `"strict"` | Corpus bullets verbatim, no operations of any kind. |
+| **Freeform** | `--freeform` | `"optimized"` | Full rewrite (old behavior). Only when corpus framing genuinely can't serve the JD. All facts must still trace to base.md. |
+
+**When to use freeform:** Only when a specific JD requires framing that SWAP operations can't achieve (e.g., healthcare experience described in fintech terms, or corpus has the right facts but wrong emphasis that reordering can't fix). Never use freeform as the default.
+
+### Disciplined Mode (Default)
+
+**Composed fresh (Claude writes):**
+- Summary paragraph — Identity-First framework, all facts from base.md
+
+**Reordered and filtered (not composed):**
+- Skills section — categories selected and reordered for JD; items from base.md only
+
+**Mechanical operations only (for bullets):**
+
+| Operation | Syntax | Constraint |
+|-----------|--------|------------|
+| **SWAP** | `SWAP <current> FOR <corpus_bullet>` | Both must exist in corpus for the same role |
+| **CUT** | `CUT <bullet>` | Role must retain 2+ bullets after cut |
+| **PROMOTE** | `PROMOTE <bullet> to position N` | Within same role only |
+| **DEMOTE** | `DEMOTE <bullet> to position N` | Within same role only |
+
+If CUT would drop a role below 2 bullets, use SWAP instead (replace the weak bullet with a stronger corpus alternative).
+
+**Claude must NOT in disciplined mode:**
+- Rewrite, paraphrase, merge, or rephrase any bullet text
+- Add words, metrics, or details not in the corpus bullet
+- Move bullets between roles
+- Make any change that doesn't fit SWAP/CUT/PROMOTE/DEMOTE
+
+**Auto-included sections:**
+- Projects — from corpus DB (roles with "project" in company name)
+- Earlier Experience — from `profile.yaml` `earlier_roles`
+- Education — no graduation year
 
 ## Workflow
 
@@ -179,39 +220,84 @@ Before generating a tailored resume, score the **standard resume** against the J
 
 #### Content Integrity Rules (CRITICAL)
 
-**SELECT, don't COMPOSE:**
-- Choose existing bullets from corpus.md VERBATIM
-- Do NOT paraphrase, combine, merge, or rewrite bullets
-- Do NOT add details not explicitly present in the source:
-  - No client/company names unless stated in corpus
-  - No metrics/numbers unless stated in corpus
-  - No technologies unless stated in corpus
-- When in doubt, OMIT — never guess or infer
+**All modes:**
+- No em-dashes anywhere in the resume. Periods, semicolons, or commas.
+- Role dates must exactly match base.md corpus dates
+- No invented specifics (metrics, company names, technologies)
+- GitHub URL: github.com/dontoisme
+- No graduation year in education
+- SpareFoot and IBM appear ONLY in Earlier Experience, never in main Experience
 
-**Only exception — Summary paragraph:**
-- The Summary may be composed fresh to match the JD
-- But it must ONLY reference experiences, skills, and themes present in corpus
+**Disciplined mode (additional):**
+- Every bullet must be exact corpus text (enforced by `mode="strict"` DB lookup)
+- Bullet changes stated explicitly as SWAP/CUT/PROMOTE/DEMOTE before generation
+- If a change doesn't fit these operations, present it to the user for manual review
+
+**Freeform mode (additional):**
+- Rewording to mirror JD language is allowed; combining same-role bullets allowed
+- All facts/metrics/company names must trace to base.md
+- Integrity audit check: every bullet's metrics, employer, dates, and technologies trace to a corpus source (rewording allowed, factual claims must match)
+
+**Summary exception (all modes):**
+- The Summary may be composed fresh using the Identity-First framework
+- Must ONLY reference experiences, skills, and themes present in corpus
 - No invented specifics
 
-**If corpus lacks sufficient bullets for a role:**
-- Use what exists; do not fabricate alternatives
-- Note to user: "Limited bullet options for [role] — consider adding more via /interview"
+#### Summary Composition (Identity-First)
 
-#### Generation Process
+Structure: **Identity → Evidence → Differentiation**
 
-1. Read the profile data from `~/.job-journal/profile.yaml`
-2. Read the corpus from `~/.job-journal/corpus.md`
-3. Generate a tailored resume by:
-   - Writing a custom Summary paragraph matched to the JD (3-4 sentences)
-   - Selecting and reordering Skills categories to match JD keywords
-   - Selecting the most relevant bullets for each role based on tags
-   - Reordering Experience bullets to lead with the most relevant
-4. Present key changes to the user:
-   - "Summary: Emphasized X, Y, Z"
-   - "Skills: Led with [category], added [keywords]"
-   - "Experience: Prioritized bullets about [theme]"
-5. **Source Verification** — Show which bullets were selected
-6. Wait for user approval. If they request changes, iterate.
+1. **Identity line** — Open with what the candidate IS, anchored to a specific corpus achievement that maps to the JD's primary need. Not "Growth PM with 12+ years" but "Growth PM who scaled experimentation velocity 250%."
+2. **Evidence line** — 1-2 metrics from corpus proving the identity claim.
+3. **Differentiation line** — The compound advantage that separates this candidate from others with similar experience.
+
+**Banned phrases:** "12+ years" (or any "X+ years"), "proven track record", "results-driven", "passionate", "deep experience in", "thrives in", "combines"
+
+**Format:** Periods (not em-dashes). Max 3-4 sentences. All facts from base.md. See base.md SUMMARY section for theme-specific examples.
+
+#### Generation Process (Disciplined Mode)
+
+1. Read profile.yaml (includes `earlier_roles`) and base.md
+2. Call `assemble_template_data(jd_text=jd_text)` for JD-ranked bullet selection
+3. **Compose:** Summary (Identity-First). **Reorder/filter:** Skills for JD.
+4. **Review auto-ranked bullets.** State operations per role:
+   ```
+   ## Bullet Operations
+   **ZenBusiness:**
+   - SWAP "Owned product roadmap..." FOR "Built new self-serve acquisition funnels..."
+   - PROMOTE "Integrated AI capabilities (Velo)..." to position 2
+   - CUT "Balanced short-term growth improvements..."
+   **Mattermost:** (no changes)
+   ```
+   Use "(no changes)" shorthand when auto-ranked selection is acceptable.
+5. Present changelist + summary + skills for user approval
+6. Build `role_bullets` dict with final corpus bullet text
+7. Call `generate_resume_programmatic(mode="strict", ...)`
+8. **Integrity audit runs automatically in Python.** If it fails, fix and retry. The function will not produce a PDF until all checks pass.
+
+#### Calling the Generator
+
+```python
+from jj.google_docs import generate_resume_programmatic
+
+result = generate_resume_programmatic(
+    company=company,
+    position=position,
+    variant="custom",
+    mode="strict",             # disciplined mode: DB-validated corpus bullets
+    custom_summary=summary,    # Identity-First composed summary
+    custom_skills=skills,      # dict[str, list[str]] — display name -> skill list
+    role_bullets=bullets,      # dict[str, list[str]] — company -> verbatim corpus bullets
+    earlier_roles=earlier,     # list[dict] — from profile.yaml earlier_roles
+    max_roles=6,
+    max_bullets_per_role=6,
+    jd_text=jd_text,
+    output_dir=output_dir,
+)
+
+# For freeform mode (--freeform):
+# mode="optimized" — bullets used verbatim from caller, no DB validation
+```
 
 ### Step 3b: Score Tailored Resume (BEFORE Document Generation)
 
@@ -299,15 +385,36 @@ Tell the user both the Google Doc URL and the PDF path.
 
 If the job posting has custom questions (e.g., "Why do you want to work at X?"):
 
-1. Draft an answer for each question (3-4 sentences, ~100-150 words)
-2. Use context from:
+1. **Check the story bank** for relevant STAR+R stories:
+   ```python
+   from jj.db import get_stories, increment_story_usage
+
+   # Extract key themes/requirements from JD
+   jd_themes = [...]  # e.g., ["leadership", "growth", "experimentation"]
+
+   relevant_stories = get_stories(requirement_tags=jd_themes)
+   ```
+
+2. Draft an answer for each question (3-4 sentences, ~100-150 words)
+3. Use context from:
+   - **STAR+R stories from the story bank** (prefer these — they're pre-structured and validated)
    - The job description
    - The user's corpus
    - Company research if needed
-3. Present each Q&A for approval
-4. Allow inline editing: "change X to Y" or "make it shorter"
+4. When using a story from the bank, note which one and increment its usage:
+   ```python
+   increment_story_usage(story_id)
+   ```
+5. Present each Q&A for approval. If a story bank story was used, show which one:
+   ```
+   **Q: Tell us about a time you scaled a process.**
+   A: [Answer incorporating STAR+R story #3: "Scaled experimentation velocity at ZenBusiness"]
+   ```
+6. Allow inline editing: "change X to Y" or "make it shorter"
 
 **Always pause on salary questions** — ask the user what to put.
+
+**For behavioral questions specifically**, present the relevant STAR+R story in full before drafting the answer, so the user can decide which details to include.
 
 ### Step 5b: Generate Cover Letter (if applicable)
 

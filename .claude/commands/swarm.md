@@ -303,7 +303,7 @@ Following the same process as `/apply` Step 3:
 2. **SELECT, don't COMPOSE** -- choose existing bullets VERBATIM from corpus
 3. Reorder bullets to lead with JD-relevant content at each role
 4. Select skill categories matching JD emphasis
-5. Compose a targeted summary paragraph (the ONLY freshly written content, must reference only corpus experiences/skills)
+5. Compose a targeted summary paragraph using the Identity-First framework (Identity → Evidence → Differentiation). The ONLY freshly written content; must reference only corpus experiences/skills. Never use "12+ years," "proven track record," or category-label openings. See base.md SUMMARY section for structure and examples.
 
 **Content Integrity Rules (CRITICAL):**
 - Do NOT paraphrase, combine, merge, or rewrite bullets

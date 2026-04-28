@@ -6,7 +6,7 @@ This module provides:
 - replace_text(): Make text replacements in a document
 - export_pdf(): Export document as PDF
 - generate_resume_gdocs(): High-level convenience function
-- generate_resume_from_corpus(): Generate resume from corpus database
+- generate_resume_programmatic(): Generate ATS-friendly resume (no template)
 """
 
 import io
@@ -543,221 +543,6 @@ def _bold_skill_categories(client: "GoogleDocsClient", doc_id: str) -> int:
     return len(requests)
 
 
-def generate_resume_from_corpus(
-    company: str,
-    position: str,
-    variant: str = "general",
-    custom_summary: Optional[str] = None,
-    skill_categories: Optional[list[str]] = None,
-    custom_skills: Optional[dict[str, list[str]]] = None,
-    role_bullets: Optional[dict[str, list[str]]] = None,
-    max_roles: int = 5,
-    max_bullets_per_role: int = 6,
-    template_id: Optional[str] = None,
-    output_dir: Optional[Path] = None,
-    auto_open: bool = True,
-    keep_google_doc: bool = True,
-) -> ResumeGenerationResult:
-    """Generate a resume from corpus data using Google Docs.
-
-    This is the main entry point for corpus-based resume generation. It:
-    1. Assembles data from the corpus database
-    2. Builds replacement dictionary for all placeholders
-    3. Copies the template, replaces text, exports PDF
-    4. Tracks usage in the database (resumes + resume_entries tables)
-    5. Increments times_used on selected entries
-
-    Args:
-        company: Target company name
-        position: Target position title
-        variant: Summary variant to use (e.g., "growth", "ai-agentic")
-        custom_summary: Custom summary text (overrides variant summary if provided)
-        skill_categories: Ordered list of skill category keys to include (e.g.,
-                         ["product-management", "technical", "leadership"]).
-                         If None, uses all categories in default order.
-        custom_skills: Custom skills section. Dict mapping display names to skill
-                      lists, bypassing DB skills entirely. Example:
-                      {"AI & Orchestration": ["Agentic AI", "Multi-Agent Systems"]}
-        role_bullets: Custom bullet selection per role. Dict mapping company name
-                     to ordered list of bullet texts. Each bullet is matched against
-                     corpus entries by prefix. Overrides auto-selection for matched
-                     roles. Example: {"ZenBusiness, Inc.": ["Integrated AI...", ...]}
-        max_roles: Maximum number of roles to include
-        max_bullets_per_role: Maximum bullets per role
-        template_id: Google Docs template ID (uses config default if not provided)
-        output_dir: Directory for PDF output (uses config default if not provided)
-        auto_open: Whether to open the PDF after generation
-        keep_google_doc: Whether to keep the Google Doc (vs delete after PDF export)
-
-    Returns:
-        ResumeGenerationResult with details of the operation
-    """
-    from jj.db import (
-        create_resume,
-        create_resume_entry,
-        create_resume_section,
-        get_connection,
-        increment_entry_usage,
-    )
-
-    # Get config defaults
-    config = get_gdocs_config()
-
-    if template_id is None:
-        template_id = config.get("template_id")
-        if not template_id:
-            return ResumeGenerationResult(
-                success=False,
-                error="No template ID configured. Set with: jj gdocs config --template-id YOUR_ID"
-            )
-
-    if output_dir is None:
-        output_dir_str = config.get("pdf_output_dir", "~/Documents/Resumes")
-        output_dir = Path(output_dir_str).expanduser()
-
-    # Assemble data from corpus
-    try:
-        data = assemble_template_data(
-            variant=variant,
-            max_roles=max_roles,
-            max_bullets_per_role=max_bullets_per_role,
-        )
-    except Exception as e:
-        return ResumeGenerationResult(success=False, error=f"Error assembling corpus data: {e}")
-
-    # Override bullets per role if custom selection provided
-    if role_bullets:
-        with get_connection() as conn:
-            for role in data.roles:
-                if role.company not in role_bullets:
-                    continue
-                custom_texts = role_bullets[role.company]
-                new_bullets = []
-                new_entry_ids = []
-                for bullet_text in custom_texts:
-                    # Match by prefix (first 60 chars) against entries for this role
-                    prefix = bullet_text[:60]
-                    row = conn.execute(
-                        "SELECT id, text FROM entries WHERE text LIKE ? AND role_id = ?",
-                        (prefix + "%", role.role_id),
-                    ).fetchone()
-                    if row:
-                        new_bullets.append(row["text"])
-                        new_entry_ids.append(row["id"])
-                role.bullets = new_bullets
-                role.entry_ids = new_entry_ids
-
-    # Build replacement dictionary
-    replacements = build_replacement_dict(data, company, position, skill_categories, custom_skills)
-
-    # Override summary if custom_summary provided
-    if custom_summary:
-        replacements["{{SUMMARY}}"] = custom_summary
-        replacements["{{summary}}"] = custom_summary
-
-    # Get name from profile for document naming
-    name_data = data.profile.get("name", {})
-    full_name = f"{name_data.get('first', '')} {name_data.get('last', '')}".strip() or "Resume"
-
-    # Build document title
-    timestamp = datetime.now().strftime("%Y%m%d")
-    doc_title = f"{full_name} - {position} - {company} - {timestamp}"
-
-    # Build filename for PDF
-    pdf_filename = f"{full_name} - {position} - {company} - Resume.pdf"
-    pdf_path = output_dir / pdf_filename
-
-    try:
-        client = GoogleDocsClient()
-        client.authenticate()
-
-        # Copy template
-        doc_id = client.copy_template(template_id, doc_title)
-        doc_url = client.get_document_url(doc_id)
-
-        # Make replacements
-        replacements_made = client.replace_text(doc_id, replacements)
-
-        # Flatten multi-column sections to single-column (ATS can't parse columns)
-        client.flatten_column_sections(doc_id)
-
-        # Flatten any tables to simple paragraphs (ATS can't parse tables)
-        client.flatten_tables(doc_id)
-
-        # Clean up empty sections from unused role slots
-        client.cleanup_empty_sections(doc_id)
-
-        # Bold skill category names (formatting isn't preserved through replacement)
-        _bold_skill_categories(client, doc_id)
-
-        # Export PDF
-        client.export_pdf(doc_id, pdf_path)
-
-        # Optionally delete the Google Doc
-        final_doc_id = doc_id
-        final_doc_url = doc_url
-        if not keep_google_doc:
-            client.delete_document(doc_id)
-            final_doc_id = None
-            final_doc_url = None
-
-        # Track in database (use custom_summary if provided, else variant summary)
-        resume_id = create_resume(
-            filename=pdf_path.name,
-            filepath=str(pdf_path),
-            variant=variant,
-            summary_text=custom_summary if custom_summary else data.summary,
-            target_company=company,
-            target_role=position,
-            google_doc_id=doc_id if keep_google_doc else None,
-        )
-
-        # Track each entry used and increment times_used
-        for role in data.roles:
-            for position_idx, entry_id in enumerate(role.entry_ids):
-                create_resume_entry(
-                    resume_id=resume_id,
-                    entry_id=entry_id,
-                    role_id=role.role_id,
-                    position=position_idx,
-                )
-                increment_entry_usage(entry_id)
-
-        # Track summary variant used
-        create_resume_section(
-            resume_id=resume_id,
-            section_type="summary",
-            section_name=variant,
-            content=data.summary,
-        )
-
-        # Track skills used
-        for category, skills in data.skills_by_category.items():
-            if skills:
-                create_resume_section(
-                    resume_id=resume_id,
-                    section_type="skills",
-                    section_name=category,
-                    content=", ".join(skills),
-                )
-
-        # Optionally open the PDF
-        if auto_open and pdf_path.exists():
-            open_file(pdf_path)
-
-        return ResumeGenerationResult(
-            success=True,
-            doc_id=final_doc_id,
-            doc_url=final_doc_url,
-            pdf_path=pdf_path,
-            replacements_made=replacements_made,
-            resume_id=resume_id,
-        )
-
-    except FileNotFoundError as e:
-        return ResumeGenerationResult(success=False, error=str(e))
-    except Exception as e:
-        return ResumeGenerationResult(success=False, error=f"API error: {e}")
 
 
 @dataclass
@@ -774,6 +559,7 @@ def _build_resume_segments(
     data: ResumeTemplateData,
     resolved_skills: dict[str, list[str]],
     show_consulting: bool,
+    earlier_roles: Optional[list[dict]] = None,
 ) -> list[_Segment]:
     """Build the ordered list of text segments for a resume.
 
@@ -781,6 +567,8 @@ def _build_resume_segments(
         data: Assembled template data from corpus
         resolved_skills: Display name -> skill list (already resolved)
         show_consulting: Whether to include the consulting section
+        earlier_roles: Optional list of dicts with company, title, location, dates
+                       (rendered as title-only entries with no bullets)
 
     Returns:
         Ordered list of _Segment objects
@@ -823,8 +611,12 @@ def _build_resume_segments(
     segments.append(_Segment("EXPERIENCE", "section_header"))
 
     # Determine which roles go in main body vs consulting
-    main_roles = data.roles[:5]  # Up to 5 main roles
-    consulting_role = data.roles[5] if len(data.roles) >= 6 and show_consulting else None
+    if show_consulting:
+        main_roles = data.roles[:5]
+        consulting_role = data.roles[5]
+    else:
+        main_roles = data.roles  # All roles in main experience body
+        consulting_role = None
 
     for role_idx, role in enumerate(main_roles):
         if not role.company and not role.title:
@@ -877,6 +669,20 @@ def _build_resume_segments(
             for bullet in proj.bullets:
                 if bullet:
                     segments.append(_Segment(f"• {bullet}", "bullet"))
+
+    # Earlier Experience (title-only, no bullets)
+    if earlier_roles:
+        segments.append(_Segment("", "blank"))
+        segments.append(_Segment("EARLIER EXPERIENCE", "section_header"))
+        for er in earlier_roles:
+            header_parts = [er.get("company", "")]
+            if er.get("location"):
+                header_parts[0] += f", {er['location']}"
+            if er.get("dates"):
+                header_parts.append(er["dates"])
+            segments.append(_Segment(" | ".join(header_parts), "role_header"))
+            if er.get("title"):
+                segments.append(_Segment(er["title"], "role_title"))
 
     # Education
     education = profile.get("education", {})
@@ -947,13 +753,13 @@ def _segments_to_text_and_requests(
         }
     })
 
-    # Default font for entire body: Garamond 10.5pt
+    # Default font for entire body: Arial 10pt
     requests.append({
         "updateTextStyle": {
             "range": {"startIndex": 1, "endIndex": 1 + text_len},
             "textStyle": {
-                "weightedFontFamily": {"fontFamily": "Garamond"},
-                "fontSize": {"magnitude": 10.5, "unit": "PT"},
+                "weightedFontFamily": {"fontFamily": "Arial"},
+                "fontSize": {"magnitude": 10, "unit": "PT"},
             },
             "fields": "weightedFontFamily,fontSize",
         }
@@ -1148,14 +954,76 @@ def _segments_to_text_and_requests(
     return full_text, requests
 
 
+def _pre_export_audit(
+    data: "ResumeTemplateData",
+    earlier_roles: Optional[list[dict]],
+    mode: str,
+) -> list[str]:
+    """Run integrity checks before PDF export. Returns list of failures (empty = pass)."""
+    failures: list[str] = []
+
+    companies = [r.company for r in data.roles]
+    if earlier_roles:
+        companies += [er.get("company", "") for er in earlier_roles]
+    seen: dict[str, int] = {}
+    for c in companies:
+        seen[c] = seen.get(c, 0) + 1
+    dupes = {c for c, count in seen.items() if count > 1}
+    if dupes:
+        failures.append(f"Duplicate company names: {dupes}")
+
+    main_companies = {r.company for r in data.roles}
+    for blocked in ("SpareFoot", "IBM"):
+        if blocked in main_companies:
+            failures.append(f"{blocked} in main Experience (should be Earlier Experience only)")
+
+    if mode == "strict":
+        try:
+            from jj.corpus import validate_bullets
+
+            all_bullets = [b for role in data.roles for b in role.bullets]
+            if all_bullets:
+                result = validate_bullets(all_bullets)
+                if result.get("invalid", 0) > 0:
+                    invalid = [
+                        r.get("bullet", "?")[:60]
+                        for r in result.get("results", [])
+                        if not r.get("valid")
+                    ]
+                    failures.append(f"{result['invalid']} bullets not in corpus: {invalid}")
+        except ImportError:
+            pass
+
+    em_dash = "—"
+    if data.summary and em_dash in data.summary:
+        failures.append("Em-dash found in summary")
+    for role in data.roles:
+        for b in role.bullets:
+            if em_dash in b:
+                failures.append(f"Em-dash in bullet: {b[:60]}...")
+                break
+
+    if not data.projects:
+        failures.append("No Projects section (expected 1+ project bullets)")
+
+    education = data.profile.get("education", {})
+    grad = education.get("graduation", "")
+    if grad and len(str(grad).strip()) > 0:
+        failures.append(f"Graduation year present: {grad}")
+
+    return failures
+
+
 def generate_resume_programmatic(
     company: str,
     position: str,
     variant: str = "general",
+    mode: str = "optimized",
     custom_summary: Optional[str] = None,
     skill_categories: Optional[list[str]] = None,
     custom_skills: Optional[dict[str, list[str]]] = None,
     role_bullets: Optional[dict[str, list[str]]] = None,
+    earlier_roles: Optional[list[dict]] = None,
     max_roles: int = 5,
     max_bullets_per_role: int = 6,
     jd_text: Optional[str] = None,
@@ -1176,10 +1044,17 @@ def generate_resume_programmatic(
         company: Target company name
         position: Target position title
         variant: Summary variant to use (e.g., "growth", "ai-agentic")
+        mode: "optimized" (default) uses role_bullets as-is — caller rewrites
+              bullets to mirror JD language while preserving facts from corpus.
+              "strict" looks up role_bullets in the corpus DB and uses verbatim text.
         custom_summary: Custom summary text (overrides variant summary)
         skill_categories: Ordered list of skill category keys to include
         custom_skills: Custom skills dict (display name -> skill list)
-        role_bullets: Custom bullet selection per role (company -> bullet texts)
+        role_bullets: Custom bullet selection per role (company -> bullet texts).
+              In strict mode, matched by prefix against corpus DB.
+              In optimized mode, used verbatim (caller is responsible for accuracy).
+        earlier_roles: Optional list of dicts with keys: company, title, location,
+              dates. Rendered as an "EARLIER EXPERIENCE" section with no bullets.
         max_roles: Maximum number of roles to include
         max_bullets_per_role: Maximum bullets per role
         jd_text: Optional job description text for relevance-based bullet ranking
@@ -1217,28 +1092,39 @@ def generate_resume_programmatic(
 
     # Override bullets per role if custom selection provided
     if role_bullets:
-        with get_connection() as conn:
+        if mode == "optimized":
             for role in data.roles:
                 if role.company not in role_bullets:
                     continue
-                custom_texts = role_bullets[role.company]
-                new_bullets = []
-                new_entry_ids = []
-                for bullet_text in custom_texts:
-                    prefix = bullet_text[:60]
-                    row = conn.execute(
-                        "SELECT id, text FROM entries WHERE text LIKE ? AND role_id = ?",
-                        (prefix + "%", role.role_id),
-                    ).fetchone()
-                    if row:
-                        new_bullets.append(row["text"])
-                        new_entry_ids.append(row["id"])
-                role.bullets = new_bullets
-                role.entry_ids = new_entry_ids
+                role.bullets = list(role_bullets[role.company])
+                role.entry_ids = []
+        else:
+            with get_connection() as conn:
+                for role in data.roles:
+                    if role.company not in role_bullets:
+                        continue
+                    custom_texts = role_bullets[role.company]
+                    new_bullets = []
+                    new_entry_ids = []
+                    for bullet_text in custom_texts:
+                        prefix = bullet_text[:60]
+                        row = conn.execute(
+                            "SELECT id, text FROM entries WHERE text LIKE ? AND role_id = ?",
+                            (prefix + "%", role.role_id),
+                        ).fetchone()
+                        if row:
+                            new_bullets.append(row["text"])
+                            new_entry_ids.append(row["id"])
+                    role.bullets = new_bullets
+                    role.entry_ids = new_entry_ids
 
     # Override summary
     if custom_summary:
         data.summary = custom_summary
+
+    # Load earlier_roles from profile if not explicitly provided
+    if earlier_roles is None:
+        earlier_roles = data.profile.get("earlier_roles")
 
     # Resolve skills (limit to 5 categories)
     max_skill_categories = 5
@@ -1274,8 +1160,16 @@ def generate_resume_programmatic(
         and data.roles[5].company in consulting_companies
     )
 
+    # Run integrity audit before building the document
+    audit_failures = _pre_export_audit(data, earlier_roles, mode)
+    if audit_failures:
+        return ResumeGenerationResult(
+            success=False,
+            error=f"Integrity audit failed: {'; '.join(audit_failures)}",
+        )
+
     # Build document segments
-    segments = _build_resume_segments(data, resolved_skills, show_consulting)
+    segments = _build_resume_segments(data, resolved_skills, show_consulting, earlier_roles)
 
     # Convert to text + formatting requests
     full_text, formatting_requests = _segments_to_text_and_requests(segments)
@@ -1465,12 +1359,12 @@ def generate_cover_letter(
         text_len = len(full_text)
 
         formatting_requests = [
-            # Set entire document font (Garamond, 11pt)
+            # Set entire document font (Arial, 11pt)
             {
                 "updateTextStyle": {
                     "range": {"startIndex": 1, "endIndex": 1 + text_len},
                     "textStyle": {
-                        "weightedFontFamily": {"fontFamily": "Garamond"},
+                        "weightedFontFamily": {"fontFamily": "Arial"},
                         "fontSize": {"magnitude": 11, "unit": "PT"},
                     },
                     "fields": "weightedFontFamily,fontSize",

@@ -104,6 +104,48 @@ Capture the result as `EMAIL_SYNC_RESULT` for inclusion in the Slack notificatio
 
 ## Phase 2: Scrape Company Career Pages
 
+### 2-pre. API Scan (Fast Pass)
+
+Before WebFetch scraping, run the ATS API scanner for all companies with known API-scannable ATS types (Greenhouse, Lever, Ashby). This is much faster and more reliable than WebFetch.
+
+```bash
+python3 -c "
+from jj.ats_scanner import get_api_scannable_companies, scan_all_api_companies
+from jj.db import is_known_job, record_job_listing, score_title_fit, create_application, find_duplicate_application, increment_search_count
+
+companies = get_api_scannable_companies()
+results = scan_all_api_companies(companies)
+summary = results.pop('_summary', {})
+
+new_jobs = []
+for company_id, jobs in results.items():
+    if not isinstance(company_id, int):
+        continue
+    for job in jobs:
+        url = job.get('url', '')
+        if not url or is_known_job(url):
+            continue
+        record_job_listing(company_id=company_id, url=url, title=job.get('title'), location=job.get('location'), ats_type=job.get('ats_type'))
+        title_result = score_title_fit(job.get('title', ''), job.get('location'))
+        if not title_result.get('pass'):
+            continue
+        dup = find_duplicate_application(company=job.get('company_name', ''), position=job.get('title', ''), job_url=url)
+        if dup:
+            continue
+        create_application(company=job.get('company_name', ''), position=job.get('title', ''), job_url=url, location=job.get('location'), ats_type=job.get('ats_type'), fit_score=title_result.get('total', 0), status='prospect', notes=f\"Title Fit: {title_result.get('total', 0)}. Via API scan.\")
+        new_jobs.append(job)
+    increment_search_count(company_id)
+
+print(f'API scan: {summary.get(\"companies_scanned\", 0)} companies, {len(new_jobs)} new prospects')
+"
+```
+
+Track the new jobs from this pass — they'll be included in the Phase 4 notification. Companies scanned via API do NOT need WebFetch in Phase 2b.
+
+### 2a. Get Known URLs (WebFetch fallback — non-API companies only)
+
+For companies NOT covered by the API scan (ats_type is workday, custom, unknown, etc.), proceed with the existing WebFetch flow:
+
 For each company with a `careers_url`:
 
 ### 2a. Get Known URLs
@@ -263,7 +305,7 @@ For each qualifying prospect (highest scores first, up to 3):
 2. Select the best variant by matching JD keywords against known variant definitions
 3. Use Claude's reasoning to:
    - SELECT the most relevant bullets from corpus for each role (do NOT generate new bullets)
-   - Compose a tailored summary paragraph
+   - Compose a tailored summary paragraph using the Identity-First framework (Identity → Evidence → Differentiation). Never use "12+ years" or category-label openings.
    - Reorder skill categories to match JD emphasis
 4. Score the tailored resume against the JD — must reach **85+** before generating
 5. Generate the resume:
