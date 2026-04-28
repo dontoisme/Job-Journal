@@ -1237,6 +1237,177 @@
     transition-duration: 0.4s;
     transition-timing-function: ease;
   }
+
+  /* ═══ RESPONSIVE — TABLET ═══ */
+  @media (max-width: 768px) {
+    .timeline { display: none; }
+
+    .page { padding: 0 24px; }
+
+    .hero h1 {
+      font-size: clamp(28px, 6vw, 44px);
+      letter-spacing: -1px;
+    }
+
+    .hero-sub { font-size: 15px; margin-bottom: 32px; }
+
+    .hero-stats { gap: 20px; flex-wrap: wrap; justify-content: center; }
+
+    .hero-stat-num { font-size: 22px; }
+
+    .chapter-title {
+      font-size: clamp(24px, 5vw, 32px);
+      letter-spacing: -0.5px;
+    }
+
+    .chapter-num {
+      font-size: 80px;
+      top: 60px;
+    }
+
+    .detail-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .schema-grid {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .rubric-pair {
+      grid-template-columns: 1fr;
+    }
+
+    .tier-card-head {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .tier-badges {
+      margin-left: 0;
+    }
+
+    .footer-tagline { font-size: 22px; }
+
+    .callout { padding: 20px 22px; }
+
+    .footer { padding: 60px 0 48px; }
+  }
+
+  /* ═══ RESPONSIVE — PHONE ═══ */
+  @media (max-width: 480px) {
+    .page { padding: 0 16px; }
+
+    .hero {
+      padding: 48px 0 60px;
+      min-height: 90vh;
+    }
+
+    .hero-overline {
+      font-size: 9px;
+      letter-spacing: 3px;
+    }
+
+    .hero h1 {
+      font-size: 32px;
+      letter-spacing: -0.8px;
+    }
+
+    .hero-sub {
+      font-size: 15px;
+      line-height: 1.6;
+      margin-bottom: 28px;
+    }
+
+    .hero-stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px 20px;
+    }
+
+    .hero-stat + .hero-stat::before { display: none; }
+
+    .hero-stat-num { font-size: 20px; }
+    .hero-stat-label { font-size: 9px; letter-spacing: 1px; }
+
+    .scroll-hint { margin-top: 40px; }
+
+    .chapter { padding: 40px 0 24px; }
+
+    .chapter-overline { font-size: 10px; letter-spacing: 2px; }
+
+    .chapter-title {
+      font-size: 28px;
+      letter-spacing: -0.5px;
+    }
+
+    .chapter-lead {
+      font-size: 15px;
+      line-height: 1.65;
+    }
+
+    .chapter-num {
+      font-size: 60px;
+      top: 40px;
+      right: -4px;
+    }
+
+    .chapter-header { margin-bottom: 28px; }
+
+    .detail-card { padding: 18px; }
+    .detail-card-full { padding: 20px; }
+
+    .tier-card { padding: 20px; }
+    .tier-cmd { font-size: 14px; }
+    .tier-desc { font-size: 13px; }
+    .tier-meta { gap: 10px; font-size: 10px; }
+
+    .schema-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .rubric-card { padding: 18px; }
+    .rubric-row { font-size: 12px; }
+
+    .callout {
+      padding: 18px 16px;
+      font-size: 14px;
+    }
+
+    .flow-h {
+      gap: 3px;
+    }
+    .flow-h-step {
+      font-size: 10px;
+      padding: 4px 8px;
+    }
+
+    .status-node { font-size: 9px; padding: 3px 6px; }
+
+    .v-pipeline { padding-left: 32px; }
+
+    .stack-layer { padding: 18px; }
+
+    .footer { padding: 48px 0 36px; }
+
+    .footer-pills { gap: 6px; }
+    .footer-pill { font-size: 10px; padding: 6px 12px; }
+
+    .footer-tagline {
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+
+    .visual-block { margin: 28px 0; }
+
+    .prompt-drawer.open { padding: 14px 16px; }
+    .prompt-text { font-size: 10px; }
+
+    .image-slot { aspect-ratio: 4/3; }
+
+    /* Corpus viz embedded component */
+    .corpus-viz { padding: 20px 14px 16px; }
+  }
 </style>
 </head>
 <body>

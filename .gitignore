@@ -69,3 +69,6 @@ EXECUTIVE_SUMMARY.md
 .beads/
 .dolt/
 AGENTS.md
+
+# Beads / Dolt files (added by bd init)
+.beads-credential-key

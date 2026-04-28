@@ -9,6 +9,7 @@ Build your professional corpus through guided conversation.
 /interview [role]       # Deep-dive on a specific role
 /interview skills       # Audit and organize skills
 /interview interests    # Mine personal interests for cover letter hooks
+/interview stories      # Review and practice STAR+R story bank
 ```
 
 ## Workflow
@@ -29,10 +30,11 @@ Based on corpus state and arguments:
 |-------|----------|------|
 | No roles | None | Onboarding |
 | Has roles, some incomplete | None | Continue incomplete role |
-| Has roles, all complete | None | Offer options (new role, deep-dive, skills) |
+| Has roles, all complete | None | Offer options (new role, deep-dive, skills, stories) |
 | Any | `[role]` | Role Deep Dive on specified role |
 | Any | `skills` | Skill Audit |
 | Any | `interests` | Personal Connections |
+| Any | `stories` | STAR+R Story Bank Review |
 
 ### Step 3: Onboarding Flow (First Time)
 
@@ -238,6 +240,106 @@ To add more later: jj interests add <topic> --tags ... --connection ...
 To review: jj interests list"
 ```
 
+### Step 4.6: STAR+R Story Bank Review (`/interview stories`)
+
+Review, refine, and practice your accumulated STAR+R stories. Stories are auto-generated during `/score` and `/pipeline` evaluations and stored in the `stories` table.
+
+#### Phase 1: Load Story Bank
+
+```python
+from jj.db import get_stories
+
+stories = get_stories()
+```
+
+If no stories exist:
+```
+"Your story bank is empty. Stories are automatically generated when you evaluate jobs with /score or /pipeline.
+
+To build your story bank:
+1. Run /score with a few job URLs — each evaluation generates 3-5 STAR+R stories
+2. Or I can help you create stories manually from your corpus right now.
+
+Want me to create stories from your existing corpus?"
+```
+
+If the user wants manual creation, read the corpus and guide them through crafting STAR+R stories from their strongest achievements (similar to the Role Deep Dive flow, but specifically structured as Situation → Task → Action → Result → Reflection).
+
+#### Phase 2: Review Stories (sorted by least-used first)
+
+Present stories sorted by `times_used` ASC (least-used first for variety):
+
+```
+## Your Story Bank (X stories)
+
+### 1. "Scaled experimentation velocity at ZenBusiness" (used 0 times)
+**Matches:** experimentation, A/B testing, growth
+**S:** ZenBusiness needed to accelerate experiment throughput but the team was bottlenecked on setup and analysis...
+**T:** Create a self-serve experimentation platform that any PM could use...
+**A:** Built Terraform-based A/B testing infrastructure, integrated with analytics pipeline...
+**R:** Scaled experimentation velocity 250%, reduced experiment setup from 2 weeks to 2 days...
+**R (Reflection):** Learned that democratizing tools is more impactful than running experiments yourself...
+
+### 2. "Built acquisition funnels driving 40% growth" (used 1 time)
+...
+```
+
+#### Phase 3: Refine
+
+For each story, offer refinement options:
+
+```
+"For each story, I can:
+1. **Sharpen** — Tighten the wording for a specific interview context
+2. **Expand** — Add more detail from your corpus
+3. **Practice** — I'll ask you the behavioral question and you deliver the story
+4. **Delete** — Remove if no longer relevant
+
+Which story would you like to work on? (or 'next' to continue)"
+```
+
+**Sharpen:** Ask what role/company they're preparing for. Reframe the story emphasis to match that JD's requirements. Update `jd_requirements_matched` on the story.
+
+**Expand:** Read related corpus entries (`source_entry_ids`) and suggest additional details or metrics to weave in.
+
+**Practice:** Present a behavioral question that maps to the story's requirements (e.g., "Tell me about a time you had to scale a process"). Let the user deliver their answer, then give feedback on: structure (STAR completeness), specificity (metrics, names), length (aim for 2-3 minutes), and confidence signals.
+
+After refinement:
+```python
+from jj.db import update_story
+
+update_story(story_id, situation=refined_s, task=refined_t, ...)
+```
+
+#### Phase 4: Gap Analysis
+
+After reviewing, identify gaps:
+
+```
+"Looking at your story bank coverage:
+
+**Well covered:** experimentation, growth, AI/ML, team leadership
+**Sparse:** stakeholder management (1 story), data infrastructure (0 stories)
+**Missing:** conflict resolution, failure/recovery, cross-functional influence
+
+Want me to help build stories for the gaps? I'll pull from your corpus."
+```
+
+#### Phase 5: Wrap Up
+
+```
+"Story bank review complete.
+- X stories reviewed
+- Y stories refined
+- Z new stories created
+
+Your stories are automatically matched to JD requirements during /score evaluations.
+They're also surfaced when you use /apply to answer custom interview questions.
+
+To practice specific stories: /interview stories
+To add more: keep running /score — each evaluation adds new stories"
+```
+
 ### Step 5: Voice Capture (Throughout)
 
 During the interview, note:
@@ -286,6 +388,10 @@ from jj.db import (
     get_stats,
     create_interest,       # For /interview interests
     get_interests,         # For /interview interests
+    get_stories,           # For /interview stories
+    create_story,          # For /interview stories
+    update_story,          # For /interview stories
+    increment_story_usage, # For /interview stories
 )
 from jj.parser import generate_corpus_md
 from jj.config import load_profile, save_profile

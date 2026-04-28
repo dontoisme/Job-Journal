@@ -112,8 +112,8 @@ Score each job (0-100) using the 4-category rubric:
 |----------|--------|------------------|
 | **Skills Match** | 35 pts | JD required skills vs corpus skills |
 | **Experience Level** | 25 pts | Seniority alignment (title, years) |
-| **Domain Fit** | 25 pts | Domain tag overlap (AI, growth, health-tech, platform, consumer) |
-| **Location/Remote** | 15 pts | Location compatibility with profile preferences |
+| **Domain Fit** | 30 pts | Domain tag overlap (AI, growth, health-tech, platform, consumer) |
+| **Location/Remote** | 10 pts | Location compatibility with profile preferences |
 
 Assign verdict:
 

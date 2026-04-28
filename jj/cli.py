@@ -2242,7 +2242,6 @@ def gdocs_generate(
 
     try:
         from jj.google_docs import (
-            generate_resume_from_corpus,
             generate_resume_gdocs,
             generate_resume_programmatic,
             get_gdocs_config,

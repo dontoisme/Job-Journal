@@ -49,6 +49,8 @@ class EmailMatch:
     snippet: str
     gmail_link: str
     match_type: str  # 'confirmation', 'update', 'rejection', 'interview'
+    thread_id: str = ""
+    body: str = ""
 
 
 @dataclass
@@ -279,10 +281,23 @@ class GmailClient:
         messages = results.get("messages", [])
         return messages
 
-    def get_message(self, message_id: str) -> dict:
-        """Get full message details by ID."""
+    def get_message(self, message_id: str, include_body: bool = False) -> dict:
+        """Get message details by ID.
+
+        Args:
+            message_id: Gmail message ID
+            include_body: If True, fetch full message (for body extraction).
+                          If False, fetch metadata only (faster).
+        """
         if not self.service:
             self.authenticate()
+
+        if include_body:
+            return self.service.users().messages().get(
+                userId="me",
+                id=message_id,
+                format="full",
+            ).execute()
 
         return self.service.users().messages().get(
             userId="me",
@@ -380,6 +395,12 @@ class GmailClient:
         except Exception:
             date = datetime.now()
 
+        # Extract body if full message was fetched
+        body = ""
+        payload = msg.get("payload", {})
+        if payload.get("parts") or payload.get("body", {}).get("data"):
+            body = self._extract_body(payload)
+
         return EmailMatch(
             message_id=msg["id"],
             subject=headers.get("Subject", ""),
@@ -387,7 +408,9 @@ class GmailClient:
             date=date,
             snippet=msg.get("snippet", ""),
             gmail_link=f"https://mail.google.com/mail/u/0/#inbox/{msg['id']}",
-            match_type="unknown"
+            match_type="unknown",
+            thread_id=msg.get("threadId", ""),
+            body=body,
         )
 
     def search_for_company(
@@ -419,9 +442,11 @@ class GmailClient:
                     continue
                 seen_ids.add(msg_summary["id"])
 
-                msg = self.get_message(msg_summary["id"])
+                msg = self.get_message(msg_summary["id"], include_body=True)
                 email_match = self._parse_message(msg)
                 email_match.match_type = self._classify_email(email_match, search_type)
+                if email_match.match_type == "unrelated":
+                    continue
                 results.append(email_match)
 
         return results
@@ -513,10 +538,18 @@ class GmailClient:
         return queries
 
     def _classify_email(self, email: EmailMatch, search_type: str) -> str:
-        """Classify an email based on its content."""
+        """Classify an email based on its content.
+
+        Uses subject + body (full text) for classification. Falls back to
+        subject + snippet if no body is available.
+
+        Signal priority: confirmation > interview > next_steps > rejection > update.
+        Interview signals override soft rejection language (e.g. "thank you for
+        your interest" followed by "schedule an interview" = interview, not rejection).
+        """
         subject_lower = email.subject.lower()
-        snippet_lower = email.snippet.lower()
-        combined = subject_lower + " " + snippet_lower
+        body_lower = email.body.lower() if email.body else email.snippet.lower()
+        combined = subject_lower + " " + body_lower
 
         # Check for confirmation FIRST — ATS platforms (Lever, Greenhouse) often
         # use "thank you for your interest" in confirmation emails alongside
@@ -530,21 +563,9 @@ class GmailClient:
         if any(sig in combined for sig in confirmation_signals):
             return "confirmation"
 
-        # Check for rejection signals (including soft rejection language)
-        rejection_signals = [
-            "unfortunately", "not moving forward", "other candidates",
-            "decided not to", "not be moving", "regret", "will not",
-            # Soft rejection language
-            "thank you for your interest",  # Common soft rejection
-            "wish you the best", "best of luck in your",
-            "pursued other candidates", "gone with another",
-            "not a fit", "not the right fit",
-            "position has been filled", "role has been filled",
-        ]
-        if any(sig in combined for sig in rejection_signals):
-            return "rejection"
-
-        # Check for interview signals
+        # Check for interview signals BEFORE rejection — emails that contain
+        # both soft rejection language ("thank you for your interest") and
+        # interview language ("schedule", "video call") are interviews.
         interview_signals = [
             "interview", "schedule", "calendar", "phone screen",
             "video call", "meet with", "speak with", "chat with",
@@ -561,6 +582,21 @@ class GmailClient:
         if any(sig in combined for sig in next_steps_signals):
             return "next_steps"
 
+        # Check for rejection signals (including soft rejection language)
+        # Now checked AFTER interview/next_steps so that positive signals win.
+        rejection_signals = [
+            "unfortunately", "not moving forward", "other candidates",
+            "decided not to", "not be moving", "regret", "will not",
+            # Soft rejection language
+            "thank you for your interest",  # Common soft rejection
+            "wish you the best", "best of luck in your",
+            "pursued other candidates", "gone with another",
+            "not a fit", "not the right fit",
+            "position has been filled", "role has been filled",
+        ]
+        if any(sig in combined for sig in rejection_signals):
+            return "rejection"
+
         # Check for generic application update (catch-all for recruiter emails)
         update_signals = [
             "your application", "regarding your", "your recent application",
@@ -569,7 +605,8 @@ class GmailClient:
         if any(sig in combined for sig in update_signals):
             return "update"
 
-        return search_type  # Default to the search type
+        # No job-related signals found — skip this email
+        return "unrelated"
 
 
 def verify_confirmations(
@@ -701,6 +738,8 @@ def search_updates(
     seen_message_ids = set()
     # Track latest update per application
     app_latest_updates: dict[int, UpdateResult] = {}
+    # Track latest email per (application, thread) to collapse thread replies
+    app_thread_latest: dict[tuple[int, str], UpdateResult] = {}
 
     for app in applications:
         company = app.get("company", "")
@@ -737,6 +776,22 @@ def search_updates(
                 action_required=action_required,
                 application_id=app_id,
             )
+
+            # Collapse thread replies — keep only the latest per (app, thread)
+            thread_key = (app_id, email.thread_id) if email.thread_id else None
+            if thread_key:
+                existing_thread = app_thread_latest.get(thread_key)
+                if existing_thread:
+                    # Replace with newer message, remove old from results
+                    if email.date > existing_thread.email.date:
+                        if existing_thread in results:
+                            results.remove(existing_thread)
+                        app_thread_latest[thread_key] = result
+                        results.append(result)
+                    # else: older message in same thread, skip
+                    continue
+                app_thread_latest[thread_key] = result
+
             results.append(result)
 
             # Track latest update for this application
@@ -797,7 +852,7 @@ def search_company_emails(company: str, max_results: int = 10) -> list[EmailMatc
 
     results = []
     for msg_summary in messages:
-        msg = client.get_message(msg_summary["id"])
+        msg = client.get_message(msg_summary["id"], include_body=True)
         email_match = client._parse_message(msg)
         email_match.match_type = client._classify_email(email_match, "update")
         results.append(email_match)
