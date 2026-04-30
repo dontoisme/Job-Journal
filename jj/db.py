@@ -451,6 +451,31 @@ CREATE TABLE IF NOT EXISTS stories (
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_stories_requirements ON stories(jd_requirements_matched);
+
+-- Pipeline runs (multi-phase resume evaluation)
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER NOT NULL REFERENCES applications(id),
+    resume_strict_id INTEGER REFERENCES resumes(id),
+    resume_freeform_id INTEGER REFERENCES resumes(id),
+    resume_final_id INTEGER REFERENCES resumes(id),
+    eval_recommended_base TEXT,
+    eval_score_strict INTEGER,
+    eval_score_freeform INTEGER,
+    eval_company_context TEXT,
+    eval_improvements TEXT,
+    eval_assessment TEXT,
+    final_score INTEGER,
+    final_verdict TEXT,
+    final_assessment TEXT,
+    final_remaining_gaps TEXT,
+    pipeline_status TEXT DEFAULT 'phase1',
+    phase_reached INTEGER DEFAULT 0,
+    started_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    completed_at TEXT,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_pipeline_runs_app ON pipeline_runs(application_id);
 """
 
 
@@ -519,6 +544,9 @@ def migrate_database() -> None:
         ("companies", "fit_notes", "TEXT"),
         # Job posting date
         ("applications", "posted_at", "TEXT"),
+        # Pipeline resume tracking
+        ("resumes", "generation_mode", "TEXT"),
+        ("resumes", "pipeline_run_id", "INTEGER"),
     ]
 
     with get_connection() as conn:
@@ -1569,6 +1597,8 @@ def create_resume(
     drift_score: int = 0,
     is_valid: bool = True,
     google_doc_id: Optional[str] = None,
+    generation_mode: Optional[str] = None,
+    pipeline_run_id: Optional[int] = None,
 ) -> int:
     """Create a new resume record and return its ID."""
     with get_connection() as conn:
@@ -1576,11 +1606,13 @@ def create_resume(
         cursor.execute(
             """
             INSERT INTO resumes (filename, filepath, variant, summary_text, target_company,
-                                target_role, jd_url, rj_score, drift_score, is_valid, google_doc_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                target_role, jd_url, rj_score, drift_score, is_valid,
+                                google_doc_id, generation_mode, pipeline_run_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (filename, filepath, variant, summary_text, target_company,
-             target_role, jd_url, rj_score, drift_score, is_valid, google_doc_id)
+             target_role, jd_url, rj_score, drift_score, is_valid,
+             google_doc_id, generation_mode, pipeline_run_id)
         )
         conn.commit()
         return cursor.lastrowid
@@ -4342,3 +4374,69 @@ def increment_story_usage(story_id: int) -> bool:
         )
         conn.commit()
         return cursor.rowcount > 0
+
+
+# --- Pipeline Runs ---
+
+
+def create_pipeline_run(application_id: int) -> int:
+    """Create a new pipeline run for the given application. Returns the run ID."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO pipeline_runs (application_id) VALUES (?)",
+            (application_id,),
+        )
+        conn.commit()
+        return cursor.lastrowid
+
+
+def update_pipeline_run(run_id: int, **kwargs) -> bool:
+    """Update pipeline run fields. Returns True if successful."""
+    if not kwargs:
+        return False
+
+    if "eval_improvements" in kwargs and isinstance(kwargs["eval_improvements"], (list, dict)):
+        kwargs["eval_improvements"] = json.dumps(kwargs["eval_improvements"])
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        set_parts = [f"{key} = ?" for key in kwargs.keys()]
+        set_clause = ", ".join(set_parts)
+        values = list(kwargs.values()) + [run_id]
+        cursor.execute(
+            f"UPDATE pipeline_runs SET {set_clause} WHERE id = ?",
+            values,
+        )
+        conn.commit()
+        return cursor.rowcount > 0
+
+
+def get_pipeline_run(run_id: int) -> Optional[dict[str, Any]]:
+    """Get a pipeline run by ID."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM pipeline_runs WHERE id = ?", (run_id,)
+        ).fetchone()
+        if row:
+            result = dict(row)
+            if result.get("eval_improvements"):
+                result["eval_improvements"] = json.loads(result["eval_improvements"])
+            return result
+    return None
+
+
+def get_pipeline_run_by_app(application_id: int) -> Optional[dict[str, Any]]:
+    """Get the most recent pipeline run for an application."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM pipeline_runs WHERE application_id = ? "
+            "ORDER BY started_at DESC LIMIT 1",
+            (application_id,),
+        ).fetchone()
+        if row:
+            result = dict(row)
+            if result.get("eval_improvements"):
+                result["eval_improvements"] = json.loads(result["eval_improvements"])
+            return result
+    return None

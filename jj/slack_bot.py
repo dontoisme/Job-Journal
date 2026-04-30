@@ -7,7 +7,11 @@ Socket Mode (no public endpoint required). When the user clicks a
   1. Validates the clicker against slack_authorized_users
   2. Pre-checks the DB for an existing score + resume
   3. Enqueues the job for a single worker thread
-  4. Spawns `claude -p "/slack-apply <url>"` (score + auto-resume)
+  4. Orchestrates a 4-phase pipeline:
+     Phase 1: /slack-apply (score + 2 candidate resumes)
+     Phase 2: /resume-eval via Opus 4.7 (compare + recommend)
+     Phase 3: /resume-refine (apply improvements, generate final PDF)
+     Phase 4: /resume-eval --final via Opus 4.7 (final scoring)
   5. Posts the result back as a threaded reply
 
 Designed to run as a macOS LaunchAgent with KeepAlive so it restarts
@@ -48,6 +52,15 @@ APPLY_TIMEOUT_SEC = 900  # 15-minute limit for score + apply chain
 ACTION_ID = "score_job"
 WORKER_POLL_INTERVAL = 1.0
 ALLOWED_TOOLS = "Bash,WebFetch,WebSearch,Read,Write,Grep,Glob"
+
+# Pipeline phase timeouts (seconds)
+PHASE_TIMEOUTS = {
+    "phase1": 900,   # 15 min: score + 2 candidate resumes
+    "phase2": 600,   # 10 min: Opus 4.7 eval + WebSearch
+    "phase3": 600,   # 10 min: apply improvements + generate final
+    "phase4": 300,   # 5 min: final eval (no WebSearch)
+}
+PIPELINE_EVAL_MODEL = "opus"
 
 # --- Log verb prefixes (Rich markup) ---
 # Primary events — designed to pop visually:
@@ -212,6 +225,164 @@ def _run_slack_apply_subprocess(url: str) -> tuple[int, str, str]:
         return 1, "", str(e)
 
 
+def _run_phase_subprocess(
+    prompt: str,
+    timeout: int,
+    model: Optional[str] = None,
+) -> tuple[int, str, str]:
+    """Spawn a headless Claude CLI subprocess for one pipeline phase."""
+    claude_path = shutil.which("claude")
+    if not claude_path:
+        return 127, "", "'claude' not found in PATH"
+
+    cmd = [claude_path, "-p", prompt, "--allowedTools", ALLOWED_TOOLS]
+    if model:
+        cmd.extend(["--model", model])
+
+    logger.info("%s %s%s", V_SPAWN, prompt.split()[0], f" (model={model})" if model else "")
+    try:
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=timeout,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+    except subprocess.TimeoutExpired:
+        logger.error("%s timeout after %ds", V_FAIL, timeout)
+        return 124, "", f"Timed out after {timeout}s"
+    except Exception as e:
+        logger.exception("Subprocess launch failed")
+        return 1, "", str(e)
+
+
+def _parse_app_id(stdout: str) -> Optional[int]:
+    """Extract App ID from skill stdout."""
+    import re
+    match = re.search(r"App ID:\s*(\d+)", stdout)
+    return int(match.group(1)) if match else None
+
+
+def _degrade_pipeline(app_id: int, phase: int, error: str = "") -> None:
+    """Graceful degradation: link the best available resume when a phase fails."""
+    from jj.db import get_pipeline_run_by_app, update_pipeline_run, update_application
+
+    pipeline = get_pipeline_run_by_app(app_id)
+    if not pipeline:
+        return
+
+    run_id = pipeline["id"]
+    status = f"degraded_phase{phase}"
+
+    if phase == 2:
+        best_id = pipeline.get("resume_strict_id")
+    elif phase == 3:
+        base = pipeline.get("eval_recommended_base", "strict")
+        best_id = (
+            pipeline.get("resume_strict_id") if base == "strict"
+            else pipeline.get("resume_freeform_id") or pipeline.get("resume_strict_id")
+        )
+    elif phase == 4:
+        best_id = pipeline.get("resume_final_id")
+    else:
+        best_id = None
+
+    update_pipeline_run(
+        run_id,
+        pipeline_status=status,
+        phase_reached=phase - 1,
+        error=error,
+        completed_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+    )
+
+    if best_id:
+        update_application(app_id, resume_id=best_id)
+
+    logger.warning(
+        "%s pipeline degraded at phase %d (app %d), using resume %s",
+        V_WARN, phase, app_id, best_id,
+    )
+
+
+def _run_pipeline(url: str) -> tuple[int, str, str]:
+    """Orchestrate the 4-phase resume evaluation pipeline.
+
+    Returns (returncode, stdout, stderr) from the perspective of the
+    overall pipeline. rc=0 means at least Phase 1 succeeded; the
+    pipeline_runs table has the authoritative status.
+    """
+    t0 = time.time()
+
+    # Phase 1: Score + generate 2 candidate resumes
+    logger.info("%s Phase 1/4: score + candidate resumes", V_NOTE)
+    rc, stdout, stderr = _run_phase_subprocess(
+        f"/slack-apply {url}", timeout=PHASE_TIMEOUTS["phase1"],
+    )
+    if rc != 0:
+        return rc, stdout, stderr
+
+    app_id = _parse_app_id(stdout)
+    if not app_id:
+        logger.error("%s Could not parse App ID from Phase 1 output", V_FAIL)
+        return rc, stdout, stderr
+
+    # Check if score was below threshold (no pipeline started)
+    if "RESULT: SCORE_ONLY" in stdout:
+        logger.info("%s Below threshold, pipeline not started", V_NOTE)
+        return 0, stdout, stderr
+
+    elapsed = int(time.time() - t0)
+    logger.info("%s Phase 1 done in %ds (app %d)", V_DONE, elapsed, app_id)
+
+    # Phase 2: Opus 4.7 evaluation
+    logger.info("%s Phase 2/4: Opus evaluation", V_NOTE)
+    rc2, stdout2, stderr2 = _run_phase_subprocess(
+        f"/resume-eval {app_id}",
+        timeout=PHASE_TIMEOUTS["phase2"],
+        model=PIPELINE_EVAL_MODEL,
+    )
+    if rc2 != 0:
+        logger.warning("%s Phase 2 failed (rc=%d), degrading", V_WARN, rc2)
+        _degrade_pipeline(app_id, phase=2, error=stderr2[-500:] if stderr2 else "")
+        return 0, stdout, stderr
+
+    elapsed = int(time.time() - t0)
+    logger.info("%s Phase 2 done in %ds total", V_DONE, elapsed)
+
+    # Phase 3: Apply improvements, generate final resume
+    logger.info("%s Phase 3/4: refinement", V_NOTE)
+    rc3, stdout3, stderr3 = _run_phase_subprocess(
+        f"/resume-refine {app_id}", timeout=PHASE_TIMEOUTS["phase3"],
+    )
+    if rc3 != 0:
+        logger.warning("%s Phase 3 failed (rc=%d), degrading", V_WARN, rc3)
+        _degrade_pipeline(app_id, phase=3, error=stderr3[-500:] if stderr3 else "")
+        return 0, stdout, stderr
+
+    elapsed = int(time.time() - t0)
+    logger.info("%s Phase 3 done in %ds total", V_DONE, elapsed)
+
+    # Phase 4: Final evaluation
+    logger.info("%s Phase 4/4: final evaluation", V_NOTE)
+    rc4, stdout4, stderr4 = _run_phase_subprocess(
+        f"/resume-eval {app_id} --final",
+        timeout=PHASE_TIMEOUTS["phase4"],
+        model=PIPELINE_EVAL_MODEL,
+    )
+    if rc4 != 0:
+        logger.warning("%s Phase 4 failed (rc=%d), degrading", V_WARN, rc4)
+        _degrade_pipeline(app_id, phase=4, error=stderr4[-500:] if stderr4 else "")
+        return 0, stdout, stderr
+
+    elapsed = int(time.time() - t0)
+    logger.info("%s Pipeline complete in %ds (app %d)", V_DONE, elapsed, app_id)
+    return 0, stdout, stderr
+
+
+def _lookup_pipeline_result(app_id: int) -> Optional[dict[str, Any]]:
+    """Fetch pipeline run data for the Slack result message."""
+    from jj.db import get_pipeline_run_by_app
+
+    return get_pipeline_run_by_app(app_id)
+
+
 def _format_result_message(
     url: str,
     app: Optional[dict[str, Any]],
@@ -245,7 +416,41 @@ def _format_result_message(
         f"Fit: *{score}* ({verdict})"
     )
 
-    if resume_id:
+    # Check for pipeline data
+    pipeline = _lookup_pipeline_result(app_id) if app_id else None
+
+    if pipeline and pipeline.get("pipeline_status", "").startswith(("completed", "degraded")):
+        final_score = pipeline.get("final_score")
+        final_verdict = pipeline.get("final_verdict", "")
+        score_strict = pipeline.get("eval_score_strict")
+        score_freeform = pipeline.get("eval_score_freeform")
+        status = pipeline["pipeline_status"]
+
+        scores_line = []
+        if score_strict is not None:
+            scores_line.append(f"Strict: {score_strict}")
+        if score_freeform is not None:
+            scores_line.append(f"Freeform: {score_freeform}")
+        if final_score is not None:
+            scores_line.append(f"*Final: {final_score}*")
+        if scores_line:
+            line += f"\n:bar_chart: RJ Scores: {' | '.join(scores_line)}"
+
+        if final_verdict:
+            line += f" ({final_verdict})"
+
+        if status.startswith("degraded"):
+            phase = pipeline.get("phase_reached", "?")
+            line += f"\n:warning: Pipeline degraded at phase {phase}/4"
+
+        if resume_id:
+            doc_url = _lookup_resume_doc_url(resume_id)
+            line += "\n:page_facing_up: Final resume generated"
+            if doc_url:
+                line += f" — <{doc_url}|Google Doc>"
+            line += "\n:file_folder: `~/Documents/Resumes/slack/`"
+
+    elif resume_id:
         rj_text = ""
         if rj_before is not None and rj_after is not None:
             rj_text = f" | RJ: {rj_before}→{rj_after}"
@@ -295,7 +500,7 @@ def _worker_loop(web: WebClient) -> None:
             thread_ts = job.get("thread_ts")
 
             t0 = time.time()
-            rc, stdout, stderr = _run_slack_apply_subprocess(url)
+            rc, stdout, stderr = _run_pipeline(url)
             elapsed = int(time.time() - t0)
 
             app = _lookup_application_by_url(url) if rc == 0 else None
@@ -305,9 +510,11 @@ def _worker_loop(web: WebClient) -> None:
                 verdict = _verdict_from_score(score)
                 company = app.get("company", "?")
                 position = app.get("position", "?")
+                pipeline = _lookup_pipeline_result(app.get("id")) if app.get("id") else None
+                p_status = pipeline.get("pipeline_status", "") if pipeline else ""
                 logger.info(
-                    "%s %3ds  %s @ %s → Fit:%s (%s)",
-                    V_DONE, elapsed, position, company, score, verdict,
+                    "%s %3ds  %s @ %s → Fit:%s (%s) pipeline=%s",
+                    V_DONE, elapsed, position, company, score, verdict, p_status or "n/a",
                 )
             elif rc == 124:
                 logger.warning("%s %3ds  timeout  %s", V_FAIL, elapsed, url)
@@ -379,22 +586,25 @@ def _on_block_actions(web: WebClient, req: SocketModeRequest, authorized_users: 
             )
             continue
 
-        # 2) Already-processed pre-check — skip if fully scored AND
-        #    resume already generated (or score was below threshold).
+        # 2) Already-processed pre-check — skip if pipeline completed
+        #    or fully scored with resume (or score below threshold).
         existing = _lookup_application_by_url(url)
         if existing and existing.get("has_full_score"):
             score = existing.get("fit_score")
             resume_id = existing.get("resume_id")
-            # Skip if: resume already generated, OR score < 65 (no resume expected)
-            if resume_id is not None or (score is not None and score < 65):
+            app_id = existing.get("id")
+            pipeline = _lookup_pipeline_result(app_id) if app_id else None
+            p_done = pipeline and pipeline.get("pipeline_status", "").startswith(("completed", "degraded"))
+            # Skip if: pipeline done, resume already generated, or score < 65
+            if p_done or resume_id is not None or (score is not None and score < 65):
                 verdict = _verdict_from_score(score)
                 company = existing.get("company", "?")
                 position = existing.get("position", "?")
-                app_id = existing.get("id")
                 dash = f"http://localhost:8000/prospects/{app_id}" if app_id else None
                 logger.info(
-                    "%s already processed: %s @ %s → Fit:%s (%s) resume=%s",
+                    "%s already processed: %s @ %s → Fit:%s (%s) resume=%s pipeline=%s",
                     V_SKIP, position, company, score, verdict, resume_id,
+                    pipeline.get("pipeline_status") if pipeline else "n/a",
                 )
                 text = (
                     f":repeat: Already processed: *{position}* @ *{company}* — "
@@ -415,7 +625,7 @@ def _on_block_actions(web: WebClient, req: SocketModeRequest, authorized_users: 
                 web,
                 channel=channel,
                 user=user,
-                text=f":hourglass_flowing_sand: Score+Apply queued: {url}",
+                text=f":hourglass_flowing_sand: Pipeline queued (score → eval → refine → final): {url}",
             )
 
         # 4) Visible threaded progress message
@@ -423,7 +633,7 @@ def _on_block_actions(web: WebClient, req: SocketModeRequest, authorized_users: 
             web,
             channel=channel,
             thread_ts=thread_ts,
-            text=f":mag: Scoring and evaluating <{url}|this job>…",
+            text=f":mag: Starting 4-phase pipeline for <{url}|this job>…",
         )
 
         # 5) Enqueue for the worker thread

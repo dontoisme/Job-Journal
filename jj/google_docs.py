@@ -1030,6 +1030,9 @@ def generate_resume_programmatic(
     output_dir: Optional[Path] = None,
     auto_open: bool = True,
     keep_google_doc: bool = True,
+    export_pdf: bool = True,
+    generation_mode: Optional[str] = None,
+    pipeline_run_id: Optional[int] = None,
 ) -> ResumeGenerationResult:
     """Generate an ATS-friendly resume programmatically (no template).
 
@@ -1196,8 +1199,9 @@ def generate_resume_programmatic(
         # Apply all formatting in one batch
         client.apply_formatting(doc_id, formatting_requests)
 
-        # Export PDF
-        client.export_pdf(doc_id, pdf_path)
+        # Export PDF (skipped for candidate resumes in pipeline mode)
+        if export_pdf:
+            client.export_pdf(doc_id, pdf_path)
 
         # Optionally delete the Google Doc
         final_doc_id = doc_id
@@ -1209,13 +1213,15 @@ def generate_resume_programmatic(
 
         # Track in database
         resume_id = create_resume(
-            filename=pdf_path.name,
-            filepath=str(pdf_path),
+            filename=pdf_path.name if export_pdf else f"{doc_title}.gdoc",
+            filepath=str(pdf_path) if export_pdf else "",
             variant=variant,
             summary_text=data.summary,
             target_company=company,
             target_role=position,
             google_doc_id=doc_id if keep_google_doc else None,
+            generation_mode=generation_mode,
+            pipeline_run_id=pipeline_run_id,
         )
 
         for role in data.roles:
@@ -1248,14 +1254,14 @@ def generate_resume_programmatic(
                     content=", ".join(skills),
                 )
 
-        if auto_open and pdf_path.exists():
+        if auto_open and export_pdf and pdf_path.exists():
             open_file(pdf_path)
 
         return ResumeGenerationResult(
             success=True,
             doc_id=final_doc_id,
             doc_url=final_doc_url,
-            pdf_path=pdf_path,
+            pdf_path=pdf_path if export_pdf else None,
             replacements_made=len(segments),
             resume_id=resume_id,
         )

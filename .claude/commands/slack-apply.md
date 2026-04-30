@@ -1,6 +1,6 @@
 # /slack-apply - Headless Score + Apply (Slack-Triggered)
 
-Autonomous score-and-apply workflow triggered by Slack button clicks. Runs headlessly with no user prompts or approval gates. Combines `/score` triage with `/pipeline`-style resume generation.
+Autonomous score-and-apply workflow triggered by Slack button clicks. Runs headlessly with no user prompts or approval gates. Combines `/score` triage with dual-resume generation for the evaluation pipeline.
 
 ## Critical: Headless Mode Rules
 
@@ -17,13 +17,14 @@ Autonomous score-and-apply workflow triggered by Slack button clicks. Runs headl
 
 Single URL only (one Slack button = one job).
 
-## Resume Generation Mode
+## Resume Generation Modes
 
-Always uses **disciplined mode** (`mode="strict"`):
-- Summary composed fresh (Identity-First framework)
-- Skills reordered/filtered for JD emphasis
-- Bullet changes limited to SWAP/CUT/PROMOTE/DEMOTE against corpus
-- All output validated against corpus DB
+This skill generates **TWO candidate resumes** for the evaluation pipeline:
+
+1. **Strict resume** (`mode="strict"`): Corpus-verbatim bullets, SWAP/CUT/PROMOTE/DEMOTE only. Summary composed fresh but all facts from corpus.
+2. **Freeform resume** (`mode="optimized"`): Full rewrite. Summary and bullets can be reworded to mirror JD language. Facts must still trace to corpus but phrasing is free.
+
+Both are Google Docs only (no PDF export). The downstream `/resume-refine` step produces the final PDF.
 
 ## Workflow
 
@@ -181,19 +182,29 @@ report_id = create_evaluation_report(
 
 - **If `fit_score < 65`:** STOP. Report score only and exit:
   ```
-  Score: XX% (Verdict). Below 65 threshold -- no resume generated.
+  RESULT: SCORE_ONLY
+  Score: XX% (Verdict)
+  Company: [company]
+  Position: [position]
+  Archetype: [archetype]
+  App ID: [app_id]
   ```
 
-- **If `fit_score >= 65`:** Proceed to Phase 3. Report:
-  ```
-  Score: XX% (Verdict). Generating tailored resume...
-  ```
+- **If `fit_score >= 65`:** Proceed to Phase 3.
 
-### Phase 3: Resume Generation
+### Phase 3: Dual Resume Generation
 
-Follow the `/pipeline` Phase 3 pattern for autonomous resume generation.
+Generate TWO candidate resumes for the evaluation pipeline. Both are Google Docs only (no PDF).
 
-#### Step 1: Create Output Directory
+#### Step 1: Create Pipeline Run
+
+```python
+from jj.db import create_pipeline_run
+
+run_id = create_pipeline_run(application_id=app_id)
+```
+
+#### Step 2: Create Output Directory
 
 ```python
 from pathlib import Path
@@ -202,7 +213,7 @@ output_dir = Path.home() / "Documents" / "Resumes" / "slack"
 output_dir.mkdir(parents=True, exist_ok=True)
 ```
 
-#### Step 2: Assemble Template Data
+#### Step 3: Assemble Template Data
 
 ```python
 from jj.google_docs import assemble_template_data
@@ -212,7 +223,7 @@ template_data = assemble_template_data(jd_text=jd_text)
 
 This loads the corpus, profile, and ranks bullets by JD relevance.
 
-#### Step 3: Tailor Content (Autonomous)
+#### Step 4: Tailor Content — Strict Version
 
 All decisions are made autonomously. No user approval gates.
 
@@ -232,7 +243,6 @@ All decisions are made autonomously. No user approval gates.
 - Apply operations to improve JD alignment
 - Every bullet must be exact corpus text
 - Do NOT paraphrase, combine, merge, or rewrite
-- Do NOT add invented details
 
 **Content Integrity Rules (CRITICAL):**
 - No em-dashes anywhere
@@ -242,9 +252,84 @@ All decisions are made autonomously. No user approval gates.
 - No graduation year in education
 - SpareFoot and IBM appear ONLY in Earlier Experience
 
-#### Step 4: Score Tailored Resume
+#### Step 5: Generate Strict Resume (Doc only)
 
-Score the tailored content against the JD:
+```python
+from jj.google_docs import generate_resume_programmatic
+
+result_strict = generate_resume_programmatic(
+    company=company,
+    position=position,
+    variant=archetype,
+    mode="strict",
+    custom_summary=strict_summary,
+    custom_skills=prioritized_skills,      # dict[str, list[str]]
+    role_bullets=reordered_bullets,         # dict[str, list[str]]
+    earlier_roles=earlier_roles,           # from profile.yaml
+    max_roles=5,
+    max_bullets_per_role=6,
+    jd_text=jd_text,
+    output_dir=output_dir,
+    auto_open=False,
+    keep_google_doc=True,
+    export_pdf=False,                       # Doc only for candidate
+    generation_mode="strict",
+    pipeline_run_id=run_id,
+)
+```
+
+If `result_strict.success` is False, report the error and exit.
+
+#### Step 6: Tailor Content — Freeform Version
+
+Now create a second, more aggressive version:
+
+**Summary (freeform rewrite):**
+- Mirror JD language and priorities directly
+- Can use JD keywords and phrasing
+- Still must be factually accurate to corpus/base.md
+- Same banned phrases and no em-dashes rules apply
+
+**Bullets (full rewrite allowed):**
+- Can reword bullets to mirror JD language
+- Can combine or restructure bullet points
+- All facts, metrics, and technologies must still trace to corpus
+- Do NOT invent metrics, company names, or technologies
+- Aim for stronger keyword alignment with the JD
+
+**Skills (same as strict, but can adjust naming):**
+- Can rename skill categories to match JD terminology
+- Can regroup skills if JD organizes them differently
+
+#### Step 7: Generate Freeform Resume (Doc only)
+
+```python
+result_freeform = generate_resume_programmatic(
+    company=company,
+    position=position,
+    variant=archetype,
+    mode="optimized",
+    custom_summary=freeform_summary,
+    custom_skills=freeform_skills,         # dict[str, list[str]]
+    role_bullets=freeform_bullets,          # dict[str, list[str]]
+    earlier_roles=earlier_roles,
+    max_roles=5,
+    max_bullets_per_role=6,
+    jd_text=jd_text,
+    output_dir=output_dir,
+    auto_open=False,
+    keep_google_doc=True,
+    export_pdf=False,                       # Doc only for candidate
+    generation_mode="freeform",
+    pipeline_run_id=run_id,
+)
+```
+
+If `result_freeform.success` is False, report the error but continue (strict resume is still available).
+
+#### Step 8: Score Both Resumes
+
+Score both tailored resumes against the JD using the RJ rubric:
 
 | Category | Points | What to Evaluate |
 |----------|--------|------------------|
@@ -253,62 +338,21 @@ Score the tailored content against the JD:
 | Bullet relevance | 35 | Do lead bullets at recent roles match JD priorities? |
 | Keyword density | 15 | Key terms from JD present throughout resume? |
 
-Record `rj_before` (standard resume score) and `rj_after` (tailored score).
+Record `rj_strict` and `rj_freeform` scores.
 
-**Threshold: 85+.** If below 85, iterate on bullet selection and summary up to 2 additional times. If still below 85 after iterations, generate anyway but add "(below-85 threshold)" to notes.
-
-#### Step 5: Generate Document
+#### Step 9: Update Pipeline Run
 
 ```python
-from jj.google_docs import generate_resume_programmatic
+from jj.db import update_pipeline_run
 
-result = generate_resume_programmatic(
-    company=company,
-    position=position,
-    variant=archetype,
-    mode="strict",
-    custom_summary=tailored_summary,
-    custom_skills=prioritized_skills,      # dict[str, list[str]]
-    role_bullets=reordered_bullets,         # dict[str, list[str]]
-    earlier_roles=earlier_roles,           # from profile.yaml
-    max_roles=5,
-    max_bullets_per_role=6,
-    jd_text=jd_text,
-    output_dir=output_dir,                 # ~/Documents/Resumes/slack/
-    auto_open=False,
-    keep_google_doc=True,
-)
-```
-
-If `result.success` is False, report the error and exit.
-
-#### Step 6: Validate Content
-
-```python
-from jj.resume_gen import validate_resume_content
-
-is_valid, drift_score, results = validate_resume_content(
-    bullets=all_bullet_texts,
-    fail_fast=False,
-)
-```
-
-If validation fails, flag in notes but do not block (the resume is already generated and may still be useful).
-
-#### Step 7: Update Application Record
-
-```python
-from jj.db import update_application
-
-rj_notes = f"RJ:{rj_before}→{rj_after} (+{rj_after - rj_before}pts)"
-existing_notes = current_notes or ""
-
-update_application(
-    app_id,
-    resume_id=result.resume_id,
-    rj_before=rj_before,
-    rj_after=rj_after,
-    notes=f"{existing_notes} | {rj_notes}, variant={archetype}",
+update_pipeline_run(
+    run_id,
+    resume_strict_id=result_strict.resume_id,
+    resume_freeform_id=result_freeform.resume_id if result_freeform.success else None,
+    eval_score_strict=rj_strict,
+    eval_score_freeform=rj_freeform if result_freeform.success else None,
+    pipeline_status="phase1",
+    phase_reached=1,
 )
 ```
 
@@ -326,21 +370,19 @@ Archetype: [archetype]
 App ID: [app_id]
 ```
 
-**If score >= 65 (resume generated):**
+**If score >= 65 (pipeline started):**
 ```
-RESULT: SCORE_AND_RESUME
+RESULT: PIPELINE_PHASE1
 Score: XX% (Verdict)
 Company: [company]
 Position: [position]
 Archetype: [archetype]
 App ID: [app_id]
-Resume ID: [resume_id]
-PDF: [pdf_path]
-Doc URL: [doc_url]
-RJ Before: [rj_before]
-RJ After: [rj_after]
-Valid: [yes/no]
-Drift: [drift_score]
+Pipeline Run: [run_id]
+Resume Strict ID: [strict_resume_id]
+Resume Freeform ID: [freeform_resume_id]
+RJ Strict: [rj_strict]
+RJ Freeform: [rj_freeform]
 ```
 
 ## Error Handling
@@ -349,9 +391,9 @@ Drift: [drift_score]
 |-----------|----------|
 | URL not accessible | Report error, exit with non-zero |
 | No corpus found | Report "Run /interview first", exit |
-| Google Docs API failure | Report score (already saved), note resume generation failed |
+| Google Docs API failure (strict) | Report score (already saved), note resume generation failed |
+| Google Docs API failure (freeform) | Continue with strict only; freeform_resume_id will be null |
 | Integrity audit failure | Fix and retry once; if still failing, report the audit failures |
-| Validation finds fabrication | Flag in notes, report warning, but still output the resume |
 
 ## What This Skill Does NOT Do
 
@@ -360,3 +402,4 @@ Drift: [drift_score]
 - No user approval gates (fully autonomous)
 - No batch processing (single URL per invocation)
 - No form-filling or ATS submission
+- No PDF export (that happens in `/resume-refine`)

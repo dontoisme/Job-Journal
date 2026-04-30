@@ -1,0 +1,272 @@
+# /resume-eval - Opus 4.7 Resume Evaluation Agent
+
+Specialized evaluation agent that compares candidate resumes against a job description and company context. Run with `--model opus` for Opus 4.7.
+
+## Critical: Headless Mode Rules
+
+- Do NOT prompt the user for input or approval at any point
+- Make all decisions autonomously
+- If any step fails, report the error clearly and exit
+- Write all results to the `pipeline_runs` DB table
+
+## Usage
+
+```
+/resume-eval <app_id>            # Phase 2: Compare strict vs freeform
+/resume-eval <app_id> --final    # Phase 4: Score the final refined resume
+```
+
+## Phase 2: Comparative Evaluation (default)
+
+### Step 1: Load Pipeline Context
+
+```python
+from jj.db import get_pipeline_run_by_app, get_resume, get_evaluation_report
+from jj.config import DB_PATH
+import sqlite3
+
+pipeline = get_pipeline_run_by_app(app_id)
+if not pipeline:
+    print("ERROR: No pipeline run found for app", app_id)
+    exit(1)
+
+run_id = pipeline["id"]
+strict_resume = get_resume(pipeline["resume_strict_id"])
+freeform_resume = get_resume(pipeline["resume_freeform_id"]) if pipeline.get("resume_freeform_id") else None
+eval_report = get_evaluation_report(app_id)
+jd_text = eval_report["jd_snapshot"] if eval_report else None
+```
+
+If `jd_text` is None, fetch the JD via WebFetch using the application's `job_url`.
+
+### Step 2: Read Resume Content
+
+Read both Google Docs to get the full resume text:
+
+```python
+# Get resume content from Google Docs
+from jj.google_docs import GoogleDocsClient
+
+client = GoogleDocsClient()
+client.authenticate()
+
+strict_text = client.get_document_text(strict_resume["google_doc_id"])
+freeform_text = client.get_document_text(freeform_resume["google_doc_id"]) if freeform_resume else None
+```
+
+If Google Docs API fails, reconstruct from `resume_sections` and `resume_entries` tables:
+
+```python
+conn = sqlite3.connect(DB_PATH)
+conn.row_factory = sqlite3.Row
+
+sections = conn.execute(
+    "SELECT section_type, section_name, content, position FROM resume_sections WHERE resume_id = ? ORDER BY position",
+    (resume_id,)
+).fetchall()
+
+entries = conn.execute(
+    "SELECT re.position, e.text, r.company FROM resume_entries re "
+    "JOIN entries e ON re.entry_id = e.id JOIN roles r ON re.role_id = r.id "
+    "WHERE re.resume_id = ? ORDER BY re.role_id, re.position",
+    (resume_id,)
+).fetchall()
+conn.close()
+```
+
+### Step 3: Research the Company
+
+Use **WebSearch** to research the company:
+
+1. Company overview: what they do, their products/services
+2. Culture and values: Glassdoor, company blog, recent press
+3. Recent news: funding, product launches, leadership changes
+4. Role context: what success looks like for this position, team structure if available
+
+Synthesize into a 2-3 paragraph company context that informs resume evaluation.
+
+### Step 4: Evaluate Both Resumes
+
+Score each resume (0-100) using the RJ rubric:
+
+| Category | Points | What to Evaluate |
+|----------|--------|------------------|
+| Summary alignment | 25 | Does the summary mirror the JD's key themes and the company's priorities? |
+| Skills coverage | 25 | Are the JD's top 5 required skills listed prominently? Do skill names match JD terminology? |
+| Bullet relevance | 35 | Do lead bullets at recent roles directly address JD priorities? Are metrics/outcomes aligned with what the company values? |
+| Keyword density | 15 | Are key terms from JD present naturally throughout the resume? |
+
+For each resume, provide:
+- Total score (0-100)
+- Category breakdown with specific notes
+- Strengths (what works well for this specific JD + company)
+- Weaknesses (what's missing, misaligned, or could be stronger)
+
+### Step 5: Recommend Base and Improvements
+
+1. **Choose the better base**: "strict" or "freeform"
+2. **Generate structured improvement directives** (JSON array):
+
+```json
+[
+  {
+    "type": "SUMMARY",
+    "instruction": "Rewrite to emphasize [specific JD theme]. Lead with [specific identity framing].",
+    "new_text": "Full replacement summary text here.",
+    "rationale": "The JD emphasizes X but the current summary leads with Y."
+  },
+  {
+    "type": "BULLET_SWAP",
+    "company": "ZenBusiness",
+    "old_prefix": "Led cross-functional",
+    "new_text": "Replacement bullet text (corpus-sourced if strict base, rewritten if freeform base)",
+    "rationale": "The JD requires [skill] but this bullet emphasizes [other skill]."
+  },
+  {
+    "type": "BULLET_PROMOTE",
+    "company": "WellSky",
+    "bullet_prefix": "Designed care coordination",
+    "rationale": "This bullet directly addresses the JD's requirement for [X]."
+  },
+  {
+    "type": "BULLET_CUT",
+    "company": "Relatient",
+    "bullet_prefix": "Maintained documentation",
+    "rationale": "Low relevance to the JD; space better used for [Y]."
+  },
+  {
+    "type": "SKILLS_REORDER",
+    "new_order": ["AI & Orchestration", "Product & Analytics", "Growth & Experimentation"],
+    "rationale": "JD leads with AI/ML requirements."
+  },
+  {
+    "type": "SKILLS_RENAME",
+    "old_name": "Growth & Experimentation",
+    "new_name": "Experimentation & Optimization",
+    "rationale": "Matches JD's terminology for this competency area."
+  }
+]
+```
+
+**Rules for improvement directives:**
+- If recommending strict as base: BULLET_SWAP must reference existing corpus bullets (use prefix matching)
+- If recommending freeform as base: bullets can be rewritten but facts must trace to corpus
+- Maximum 10 improvement directives (focus on highest-impact changes)
+- Every directive must have a rationale tied to the specific JD or company context
+
+### Step 6: Write Results to DB
+
+```python
+from jj.db import update_pipeline_run
+import json
+
+update_pipeline_run(
+    run_id,
+    eval_recommended_base=recommended_base,     # "strict" or "freeform"
+    eval_score_strict=score_strict,
+    eval_score_freeform=score_freeform,
+    eval_company_context=company_context_text,
+    eval_improvements=improvements_list,         # JSON-serialized automatically
+    eval_assessment=assessment_text,             # Free-text evaluation narrative
+    pipeline_status="phase2",
+    phase_reached=2,
+)
+```
+
+### Step 7: Report
+
+```
+RESULT: EVAL_COMPLETE
+App ID: [app_id]
+Pipeline Run: [run_id]
+Score Strict: [score_strict]
+Score Freeform: [score_freeform]
+Recommended Base: [strict|freeform]
+Improvements: [count]
+```
+
+---
+
+## Phase 4: Final Evaluation (`--final` flag)
+
+When invoked with `--final`, evaluate only the final refined resume.
+
+### Step 1: Load Pipeline Context
+
+```python
+pipeline = get_pipeline_run_by_app(app_id)
+final_resume = get_resume(pipeline["resume_final_id"])
+```
+
+If `resume_final_id` is None, report error and exit.
+
+### Step 2: Read Final Resume
+
+Read the Google Doc for the final resume (same as Phase 2 Step 2).
+
+### Step 3: Load Cached Company Context
+
+Use the company context already stored from Phase 2 -- no need to re-research:
+
+```python
+company_context = pipeline["eval_company_context"]
+jd_text = eval_report["jd_snapshot"]
+```
+
+### Step 4: Score Final Resume
+
+Score using the same RJ rubric (0-100). Compare against Phase 2 scores:
+
+- `improvement_vs_strict = final_score - pipeline["eval_score_strict"]`
+- `improvement_vs_freeform = final_score - pipeline["eval_score_freeform"]`
+
+Assign verdict:
+
+| Score | Verdict |
+|-------|---------|
+| 80-100 | Strong Fit |
+| 65-79 | Good Fit |
+| 50-64 | Moderate Fit |
+| <50 | Stretch |
+
+Flag any regressions (final score lower than either candidate).
+
+### Step 5: Identify Remaining Gaps
+
+Note any JD requirements that are still not well-addressed, for awareness (not for another iteration).
+
+### Step 6: Write Results to DB
+
+```python
+update_pipeline_run(
+    run_id,
+    final_score=final_score,
+    final_verdict=verdict,
+    final_assessment=assessment_text,
+    final_remaining_gaps=remaining_gaps_text,
+    pipeline_status="completed",
+    phase_reached=4,
+    completed_at=datetime.now().isoformat(),
+)
+```
+
+### Step 7: Report
+
+```
+RESULT: FINAL_EVAL_COMPLETE
+App ID: [app_id]
+Pipeline Run: [run_id]
+Final Score: [final_score]
+Verdict: [verdict]
+vs Strict: [+/- N]
+vs Freeform: [+/- N]
+```
+
+## Error Handling
+
+| Situation | Response |
+|-----------|----------|
+| No pipeline_run found | Report error, exit non-zero |
+| Google Docs API failure | Fall back to DB reconstruction of resume content |
+| WebSearch failure | Evaluate without company context; note this in assessment |
+| No JD snapshot available | Fetch JD via WebFetch from application's job_url |
