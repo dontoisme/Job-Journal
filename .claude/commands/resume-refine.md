@@ -1,6 +1,6 @@
 # /resume-refine - Apply Evaluation Improvements and Generate Final Resume
 
-Takes the evaluation agent's improvement directives and generates the final refined resume with PDF export.
+Takes the evaluation agent's improvement directives and generates the final refined resume with PDF export. **Read `docs/pipeline-refinement-notes.md` for calibration context.**
 
 ## Critical: Headless Mode Rules
 
@@ -8,6 +8,28 @@ Takes the evaluation agent's improvement directives and generates the final refi
 - Make all decisions autonomously
 - If any step fails, report the error clearly and exit
 - Output final resume to `~/Documents/Resumes/YYYY-MM-DD/slack/Company/`
+
+## Disciplined Mode Constraints (CRITICAL)
+
+The refinement phase operates under **disciplined mode only**. These constraints are non-negotiable:
+
+**Allowed operations:**
+- SUMMARY: Compose a fresh summary using the Identity-First framework (identity, evidence, differentiation)
+- BULLET_SWAP: Swap one corpus bullet for another corpus bullet from the same role
+- BULLET_PROMOTE: Move a bullet higher in its role section
+- BULLET_CUT: Remove a bullet from a role section
+- SKILLS_REORDER: Reorder skill categories
+- SKILLS_RENAME: Rename a skill category (must use industry-standard taxonomy)
+
+**Prohibited operations:**
+- Do NOT generate new bullet text. Every bullet must exist verbatim in the corpus DB.
+- Do NOT inject the target company's product names, team names, or org structure into any bullet
+- Do NOT substitute words inside corpus bullets to match JD vocabulary
+- Do NOT change the number of bullets per role (unless a CUT directive was issued)
+- Do NOT restructure the document layout beyond what the directives specify
+- Do NOT paraphrase JD language back at the reviewer in bullets
+
+**Over-tailoring guard:** Before generating, scan all bullet text for the target company name. If any bullet contains the target company name (e.g. "Lattice", "OpenAI"), that bullet MUST be rejected and the original corpus bullet restored. This is a hard constraint, not a suggestion.
 
 ## Usage
 
@@ -118,12 +140,21 @@ for directive in improvements:
     elif dtype == "BULLET_SWAP":
         company_name = directive["company"]
         old_prefix = directive["old_prefix"]
-        new_text = directive["new_text"]
-        if company_name in refined_bullets:
-            refined_bullets[company_name] = [
-                new_text if b.startswith(old_prefix) else b
-                for b in refined_bullets[company_name]
-            ]
+        # Look up the replacement bullet from the corpus DB by prefix
+        corpus_prefix = directive.get("corpus_bullet_prefix", "")
+        if company_name in refined_bullets and corpus_prefix:
+            # Find the corpus bullet matching the prefix
+            replacement = conn.execute(
+                "SELECT e.text FROM entries e JOIN roles r ON e.role_id = r.id "
+                "WHERE r.company = ? AND e.text LIKE ? LIMIT 1",
+                (company_name, corpus_prefix + "%"),
+            ).fetchone()
+            if replacement:
+                new_text = dict(replacement)["text"]
+                refined_bullets[company_name] = [
+                    new_text if b.startswith(old_prefix) else b
+                    for b in refined_bullets[company_name]
+                ]
 
     elif dtype == "BULLET_PROMOTE":
         company_name = directive["company"]
@@ -203,7 +234,15 @@ today = date.today().isoformat()  # YYYY-MM-DD
 output_dir = Path.home() / "Documents" / "Resumes" / today / "slack" / company
 output_dir.mkdir(parents=True, exist_ok=True)
 
-mode = "strict" if recommended_base == "strict" else "optimized"
+# Always use strict mode — refinement must use corpus bullets only
+mode = "strict"
+
+# Over-tailoring guard: reject any bullet containing the target company name
+for comp, bullets in list(refined_bullets.items()):
+    refined_bullets[comp] = [
+        b for b in bullets
+        if company.lower() not in b.lower()
+    ]
 
 result_final = generate_resume_programmatic(
     company=company,

@@ -115,18 +115,39 @@ Synthesize into a 2-3 paragraph company context that informs resume evaluation.
 
 ### Step 4: Evaluate Both Resumes
 
-Score each resume (0-100) using the RJ rubric:
+Score each resume (0-100) using the RJ rubric. **Read `docs/pipeline-refinement-notes.md` for calibration context.**
+
+#### Positive scoring (up to 100)
 
 | Category | Points | What to Evaluate |
 |----------|--------|------------------|
-| Summary alignment | 25 | Does the summary mirror the JD's key themes and the company's priorities? |
-| Skills coverage | 25 | Are the JD's top 5 required skills listed prominently? Do skill names match JD terminology? |
-| Bullet relevance | 35 | Do lead bullets at recent roles directly address JD priorities? Are metrics/outcomes aligned with what the company values? |
-| Keyword density | 15 | Are key terms from JD present naturally throughout the resume? |
+| Summary alignment | 25 | Does the summary convey relevant identity and evidence without parroting the JD? |
+| Skills coverage | 25 | Are the JD's top 5 required skills present? Use industry-standard category names, not unusual JD-specific phrasing. |
+| Bullet relevance | 35 | Do lead bullets at recent roles demonstrate relevant outcomes? Do they read as natural descriptions of past work? |
+| Natural keyword presence | 15 | Are key JD terms present organically, or do they feel injected? |
+
+#### Over-tailoring deductions (CRITICAL)
+
+Recruiters at high-prestige companies in 2026 have seen hundreds of AI-tailored resumes. Resumes that mirror JD language tightly are now correlated with low-effort applications. Apply these deductions AFTER positive scoring:
+
+**Hard deductions (score floor 60 if ANY present):**
+- Bullets that name the target company's product areas, teams, or org structure (e.g. "Lattice's Reviews, Grow, and Calibration teams")
+- Bullets describing past roles using forward-looking JD framing (e.g. "the pattern X needs to ship Y")
+- Verbatim JD phrases of 5+ consecutive words appearing in resume bullets
+- Grammar errors: stacked prepositions, redundant modifiers, unclear referents, run-on clauses from vocabulary injection
+
+**Soft deductions (5-10 point reduction each):**
+- Sentences that paraphrase JD phrasing back with light rewording
+- Skill category names that mirror unusual JD phrasing rather than industry-standard taxonomy
+- Summary containing more than 3 distinct JD keyword phrases
+- Any bullet exceeding 35 words (suggests clause-stacking from injection)
+
+**The key calibration question:** "Would this resume earn a screen from a human reviewer who has seen 200 AI-tailored resumes this month?" If a bullet reads as transparently model-generated alignment text, the resume fails regardless of keyword density.
 
 For each resume, provide:
-- Total score (0-100)
+- Total score (0-100, after deductions)
 - Category breakdown with specific notes
+- Over-tailoring flags (list any hard/soft deduction triggers found)
 - Strengths (what works well for this specific JD + company)
 - Weaknesses (what's missing, misaligned, or could be stronger)
 
@@ -147,8 +168,8 @@ For each resume, provide:
     "type": "BULLET_SWAP",
     "company": "ZenBusiness",
     "old_prefix": "Led cross-functional",
-    "new_text": "Replacement bullet text (corpus-sourced if strict base, rewritten if freeform base)",
-    "rationale": "The JD requires [skill] but this bullet emphasizes [other skill]."
+    "corpus_bullet_prefix": "Drove experimentation framework",
+    "rationale": "Swap to a corpus bullet that better demonstrates [JD requirement]. The replacement bullet exists in the corpus for this role."
   },
   {
     "type": "BULLET_PROMOTE",
@@ -176,11 +197,15 @@ For each resume, provide:
 ]
 ```
 
-**Rules for improvement directives:**
-- If recommending strict as base: BULLET_SWAP must reference existing corpus bullets (use prefix matching)
-- If recommending freeform as base: bullets can be rewritten but facts must trace to corpus
-- Maximum 10 improvement directives (focus on highest-impact changes)
+**Rules for improvement directives (disciplined mode ONLY):**
+- BULLET_SWAP must reference existing corpus bullets (use prefix matching against the corpus DB). Do NOT generate new bullet text.
+- Do NOT inject target company product names, team names, or org structure into any bullet
+- Do NOT substitute words inside corpus bullets to match JD vocabulary
+- Do NOT restructure document layout (bullet counts per role, section ordering beyond skills)
+- Skill category names must use industry-standard taxonomy, not unusual JD-specific phrasing
+- Maximum 8 improvement directives (focus on reordering and selection, not rewriting)
 - Every directive must have a rationale tied to the specific JD or company context
+- The refinement phase operates under disciplined-mode constraints: SWAP/CUT/PROMOTE/DEMOTE + fresh summary only
 
 ### Step 6: Write Results to DB
 
@@ -243,7 +268,7 @@ jd_text = eval_report["jd_snapshot"]
 
 ### Step 4: Score Final Resume
 
-Score using the same RJ rubric (0-100). Compare against Phase 2 scores:
+Score using the same RJ rubric (0-100) including all over-tailoring deductions from Phase 2 Step 4. The same hard and soft deduction rules apply. Compare against Phase 2 scores:
 
 - `improvement_vs_strict = final_score - pipeline["eval_score_strict"]`
 - `improvement_vs_freeform = final_score - pipeline["eval_score_freeform"]`
