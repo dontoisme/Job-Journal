@@ -57,21 +57,30 @@ existing = conn.execute(
     "SELECT id, company, position, status, fit_score, notes, resume_id FROM applications WHERE job_url = ?",
     (url,)
 ).fetchone()
+
+# Check if a pipeline run already exists for this application
+pipeline_exists = False
+if existing:
+    pipeline_row = conn.execute(
+        "SELECT pipeline_status FROM pipeline_runs WHERE application_id = ? ORDER BY started_at DESC LIMIT 1",
+        (existing["id"],)
+    ).fetchone()
+    pipeline_exists = pipeline_row and pipeline_row["pipeline_status"] in ("completed", "degraded_phase2", "degraded_phase3", "degraded_phase4")
 conn.close()
 ```
 
-**Three states:**
+**Four states:**
 
 1. **No existing row** -- proceed to scoring.
 
 2. **Existing row with `notes` starting with `"Title Fit:"`** -- bare title pre-filter from monitor. Keep `existing["id"]` and proceed. Will UPDATE in place.
 
-3. **Existing row with other `notes` AND `resume_id IS NOT NULL`** -- already fully processed (scored + resume generated). Report and exit:
+3. **Existing row with a completed pipeline_run** -- already fully processed through the 4-phase pipeline. Report and exit:
    ```
-   Already processed: [Company] - [Position] (app #ID, fit: X%, resume generated)
+   Already processed: [Company] - [Position] (app #ID, fit: X%, pipeline complete)
    ```
 
-4. **Existing row with other `notes` but `resume_id IS NULL`** -- scored but no resume. If `fit_score >= 65`, proceed to Phase 3 (resume generation only, skip re-scoring). If `fit_score < 65`, report and exit.
+4. **Existing row with score but no completed pipeline** -- re-run is allowed (old single-pass result or incomplete pipeline). Keep `existing["id"]`, skip re-scoring if `fit_score` is already set and >= 65, proceed to Phase 3. If `fit_score < 65`, report and exit.
 
 #### Step 3: Detect Archetype
 

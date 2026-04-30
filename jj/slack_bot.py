@@ -586,17 +586,18 @@ def _on_block_actions(web: WebClient, req: SocketModeRequest, authorized_users: 
             )
             continue
 
-        # 2) Already-processed pre-check — skip if pipeline completed
-        #    or fully scored with resume (or score below threshold).
+        # 2) Already-processed pre-check — only skip if a completed
+        #    pipeline exists, or score is below threshold. Old single-pass
+        #    results (resume_id but no pipeline) are allowed to re-run.
         existing = _lookup_application_by_url(url)
         if existing and existing.get("has_full_score"):
             score = existing.get("fit_score")
-            resume_id = existing.get("resume_id")
             app_id = existing.get("id")
             pipeline = _lookup_pipeline_result(app_id) if app_id else None
             p_done = pipeline and pipeline.get("pipeline_status", "").startswith(("completed", "degraded"))
-            # Skip if: pipeline done, resume already generated, or score < 65
-            if p_done or resume_id is not None or (score is not None and score < 65):
+            # Skip only if: pipeline already completed, or score < 65 (no resume expected)
+            if p_done or (score is not None and score < 65):
+                resume_id = existing.get("resume_id")
                 verdict = _verdict_from_score(score)
                 company = existing.get("company", "?")
                 position = existing.get("position", "?")
