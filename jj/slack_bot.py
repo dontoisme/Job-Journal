@@ -1,13 +1,13 @@
-"""Slack Socket Mode bot for jj — handles [Score] button clicks.
+"""Slack Socket Mode bot for jj — handles [Go] button clicks.
 
 Listens for block_actions interactions from the Slack workspace via
 Socket Mode (no public endpoint required). When the user clicks a
-[Score] button on a job notification, the bot:
+[Go] button on a job notification, the bot:
 
   1. Validates the clicker against slack_authorized_users
-  2. Pre-checks the DB for an existing score on that URL
+  2. Pre-checks the DB for an existing score + resume
   3. Enqueues the job for a single worker thread
-  4. Spawns `claude -p "/score <url>"` as a subprocess
+  4. Spawns `claude -p "/slack-apply <url>"` (score + auto-resume)
   5. Posts the result back as a threaded reply
 
 Designed to run as a macOS LaunchAgent with KeepAlive so it restarts
@@ -43,10 +43,11 @@ from jj.config import load_config
 logger = logging.getLogger("jj.slack_bot")
 
 # --- Constants ---
-SCORE_TIMEOUT_SEC = 600  # 10-minute hard limit per /score subprocess
+SCORE_TIMEOUT_SEC = 600  # 10-minute hard limit (kept for reference)
+APPLY_TIMEOUT_SEC = 900  # 15-minute limit for score + apply chain
 ACTION_ID = "score_job"
 WORKER_POLL_INTERVAL = 1.0
-ALLOWED_TOOLS = "Bash,WebFetch,Read,Grep,Glob"
+ALLOWED_TOOLS = "Bash,WebFetch,WebSearch,Read,Write,Grep,Glob"
 
 # --- Log verb prefixes (Rich markup) ---
 # Primary events — designed to pop visually:
@@ -118,7 +119,8 @@ def _lookup_application_by_url(url: str) -> Optional[dict[str, Any]]:
     init_database()
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT id, company, position, fit_score, notes, status "
+            "SELECT id, company, position, fit_score, notes, status, "
+            "resume_id, rj_before, rj_after "
             "FROM applications WHERE job_url = ? "
             "ORDER BY created_at DESC LIMIT 1",
             (url,),
@@ -147,7 +149,7 @@ def _verdict_from_score(score: Optional[int]) -> str:
 
 
 # =============================================================================
-# Subprocess — spawn `claude -p "/score <url>"`
+# Subprocess — spawn headless Claude for scoring / score+apply
 # =============================================================================
 
 def _run_score_subprocess(url: str) -> tuple[int, str, str]:
@@ -180,22 +182,52 @@ def _run_score_subprocess(url: str) -> tuple[int, str, str]:
         return 1, "", str(e)
 
 
+def _run_slack_apply_subprocess(url: str) -> tuple[int, str, str]:
+    """Spawn the headless /slack-apply run (score + resume). Returns (returncode, stdout, stderr)."""
+    claude_path = shutil.which("claude")
+    if not claude_path:
+        return 127, "", "'claude' not found in PATH"
+
+    cmd = [
+        claude_path,
+        "-p",
+        f"/slack-apply {url}",
+        "--allowedTools",
+        ALLOWED_TOOLS,
+    ]
+    logger.info("%s /slack-apply %s", V_SPAWN, url)
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=APPLY_TIMEOUT_SEC,
+        )
+        return proc.returncode, proc.stdout, proc.stderr
+    except subprocess.TimeoutExpired:
+        logger.error("%s timeout after %ds", V_FAIL, APPLY_TIMEOUT_SEC)
+        return 124, "", f"Timed out after {APPLY_TIMEOUT_SEC}s"
+    except Exception as e:
+        logger.exception("Subprocess launch failed")
+        return 1, "", str(e)
+
+
 def _format_result_message(
     url: str,
     app: Optional[dict[str, Any]],
     returncode: int,
     stderr_tail: str,
 ) -> str:
-    """Build the Slack text for a completed (or failed) score job."""
+    """Build the Slack text for a completed (or failed) score+apply job."""
     if returncode == 124:
         return (
-            f":warning: Scoring timed out after {SCORE_TIMEOUT_SEC // 60} min. "
+            f":warning: Score+Apply timed out after {APPLY_TIMEOUT_SEC // 60} min. "
             f"<{url}|View JD>"
         )
     if returncode != 0 or app is None:
         tail = (stderr_tail or "(no error output)").strip()[-300:]
         return (
-            f":x: Scoring failed (exit {returncode}) for <{url}|this job>.\n"
+            f":x: Score+Apply failed (exit {returncode}) for <{url}|this job>.\n"
             f"```{tail}```"
         )
     score = app.get("fit_score")
@@ -203,16 +235,47 @@ def _format_result_message(
     company = app.get("company", "?")
     position = app.get("position", "?")
     app_id = app.get("id")
-    # Link to the per-prospect detail page
+    resume_id = app.get("resume_id")
+    rj_before = app.get("rj_before")
+    rj_after = app.get("rj_after")
     dash = f"http://localhost:8000/prospects/{app_id}" if app_id else None
 
     line = (
-        f":white_check_mark: Scored: *{position}* @ *{company}* — "
+        f":white_check_mark: *{position}* @ *{company}* — "
         f"Fit: *{score}* ({verdict})"
     )
+
+    if resume_id:
+        rj_text = ""
+        if rj_before is not None and rj_after is not None:
+            rj_text = f" | RJ: {rj_before}→{rj_after}"
+        doc_url = _lookup_resume_doc_url(resume_id)
+        line += f"\n:page_facing_up: Resume generated{rj_text}"
+        if doc_url:
+            line += f" — <{doc_url}|Google Doc>"
+        line += "\n:file_folder: `~/Documents/Resumes/slack/`"
+    elif score is not None and score < 65:
+        line += "\n_Below 65 threshold — no resume generated_"
+
     if dash:
-        line += f" — <{dash}|View details>"
+        line += f"\n<{dash}|View details>"
     return line
+
+
+def _lookup_resume_doc_url(resume_id: int) -> Optional[str]:
+    """Fetch the Google Doc URL for a generated resume."""
+    from jj.db import get_connection, init_database
+
+    init_database()
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT google_doc_id FROM resumes WHERE id = ?", (resume_id,),
+        ).fetchone()
+        if row:
+            doc_id = dict(row).get("google_doc_id")
+            if doc_id:
+                return f"https://docs.google.com/document/d/{doc_id}/edit"
+    return None
 
 
 # =============================================================================
@@ -232,7 +295,7 @@ def _worker_loop(web: WebClient) -> None:
             thread_ts = job.get("thread_ts")
 
             t0 = time.time()
-            rc, stdout, stderr = _run_score_subprocess(url)
+            rc, stdout, stderr = _run_slack_apply_subprocess(url)
             elapsed = int(time.time() - t0)
 
             app = _lookup_application_by_url(url) if rc == 0 else None
@@ -316,31 +379,35 @@ def _on_block_actions(web: WebClient, req: SocketModeRequest, authorized_users: 
             )
             continue
 
-        # 2) Already-scored pre-check — only skip if a full /score run
-        #    has actually been done (i.e., an evaluation_reports row
-        #    exists). A bare fit_score from the hourly scan's title
-        #    pre-filter is NOT enough — the button should still run
-        #    /score to produce the real 4-category corpus evaluation.
+        # 2) Already-processed pre-check — skip if fully scored AND
+        #    resume already generated (or score was below threshold).
         existing = _lookup_application_by_url(url)
         if existing and existing.get("has_full_score"):
             score = existing.get("fit_score")
-            verdict = _verdict_from_score(score)
-            company = existing.get("company", "?")
-            position = existing.get("position", "?")
-            app_id = existing.get("id")
-            dash = f"http://localhost:8000/prospects/{app_id}" if app_id else None
-            logger.info(
-                "%s corpus-scored: %s @ %s → Fit:%s (%s)",
-                V_SKIP, position, company, score, verdict,
-            )
-            text = (
-                f":repeat: Already corpus-scored: *{position}* @ *{company}* — "
-                f"Fit: *{score}* ({verdict})"
-            )
-            if dash:
-                text += f" — <{dash}|View details>"
-            _post_message(web, channel=channel, thread_ts=thread_ts, text=text)
-            continue
+            resume_id = existing.get("resume_id")
+            # Skip if: resume already generated, OR score < 65 (no resume expected)
+            if resume_id is not None or (score is not None and score < 65):
+                verdict = _verdict_from_score(score)
+                company = existing.get("company", "?")
+                position = existing.get("position", "?")
+                app_id = existing.get("id")
+                dash = f"http://localhost:8000/prospects/{app_id}" if app_id else None
+                logger.info(
+                    "%s already processed: %s @ %s → Fit:%s (%s) resume=%s",
+                    V_SKIP, position, company, score, verdict, resume_id,
+                )
+                text = (
+                    f":repeat: Already processed: *{position}* @ *{company}* — "
+                    f"Fit: *{score}* ({verdict})"
+                )
+                if resume_id:
+                    doc_url = _lookup_resume_doc_url(resume_id)
+                    if doc_url:
+                        text += f"\n:page_facing_up: <{doc_url}|Resume>"
+                if dash:
+                    text += f" — <{dash}|View details>"
+                _post_message(web, channel=channel, thread_ts=thread_ts, text=text)
+                continue
 
         # 3) Ephemeral ack (within 3s — Slack requires it)
         if user:
@@ -348,15 +415,15 @@ def _on_block_actions(web: WebClient, req: SocketModeRequest, authorized_users: 
                 web,
                 channel=channel,
                 user=user,
-                text=f":hourglass_flowing_sand: Scoring queued: {url}",
+                text=f":hourglass_flowing_sand: Score+Apply queued: {url}",
             )
 
-        # 4) Visible threaded "Scoring…" so everyone in the thread sees progress
+        # 4) Visible threaded progress message
         _post_message(
             web,
             channel=channel,
             thread_ts=thread_ts,
-            text=f":mag: Scoring <{url}|this job>…",
+            text=f":mag: Scoring and evaluating <{url}|this job>…",
         )
 
         # 5) Enqueue for the worker thread
@@ -501,7 +568,7 @@ def run_bot() -> int:
     except Exception:
         logger.exception("Socket Mode connect failed")
         return 1
-    logger.info("%s Listening for [Score] button clicks", V_READY)
+    logger.info("%s Listening for [Go] button clicks", V_READY)
 
     # Block main thread; SocketModeClient runs its own internal threads
     while not _shutdown.is_set():

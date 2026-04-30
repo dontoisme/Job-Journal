@@ -100,7 +100,7 @@ def _format_job_block(j: dict[str, Any], show_verdict: bool = False) -> dict:
     if url and len(url) <= 2000:
         block["accessory"] = {
             "type": "button",
-            "text": {"type": "plain_text", "text": "Score", "emoji": True},
+            "text": {"type": "plain_text", "text": "Go", "emoji": True},
             "action_id": "score_job",
             "value": url,
         }
