@@ -372,8 +372,28 @@ def _run_pipeline(url: str) -> tuple[int, str, str]:
         return 0, stdout, stderr
 
     elapsed = int(time.time() - t0)
+
+    # Update application fit_score with the final pipeline score
+    _promote_final_score(app_id)
+
     logger.info("%s Pipeline complete in %ds (app %d)", V_DONE, elapsed, app_id)
     return 0, stdout, stderr
+
+
+def _promote_final_score(app_id: int) -> None:
+    """Update the application's fit_score with the pipeline's final score."""
+    from jj.db import get_pipeline_run_by_app, update_application
+
+    pipeline = get_pipeline_run_by_app(app_id)
+    if not pipeline:
+        return
+    final_score = pipeline.get("final_score")
+    if final_score is not None:
+        update_application(app_id, fit_score=final_score)
+        logger.info(
+            "%s promoted final score %d to app %d",
+            V_NOTE, final_score, app_id,
+        )
 
 
 def _lookup_pipeline_result(app_id: int) -> Optional[dict[str, Any]]:
