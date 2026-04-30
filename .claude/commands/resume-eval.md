@@ -41,37 +41,65 @@ If `jd_text` is None, fetch the JD via WebFetch using the application's `job_url
 
 ### Step 2: Read Resume Content
 
-Read both Google Docs to get the full resume text:
-
-```python
-# Get resume content from Google Docs
-from jj.google_docs import GoogleDocsClient
-
-client = GoogleDocsClient()
-client.authenticate()
-
-strict_text = client.get_document_text(strict_resume["google_doc_id"])
-freeform_text = client.get_document_text(freeform_resume["google_doc_id"]) if freeform_resume else None
-```
-
-If Google Docs API fails, reconstruct from `resume_sections` and `resume_entries` tables:
+Reconstruct both resumes from the DB (more reliable than Google Docs API in headless mode):
 
 ```python
 conn = sqlite3.connect(DB_PATH)
 conn.row_factory = sqlite3.Row
 
-sections = conn.execute(
-    "SELECT section_type, section_name, content, position FROM resume_sections WHERE resume_id = ? ORDER BY position",
-    (resume_id,)
-).fetchall()
+def _reconstruct_resume(resume_id):
+    """Reconstruct resume text from DB tables."""
+    summary = conn.execute(
+        "SELECT content FROM resume_sections WHERE resume_id = ? AND section_type = 'summary' LIMIT 1",
+        (resume_id,)
+    ).fetchone()
 
-entries = conn.execute(
-    "SELECT re.position, e.text, r.company FROM resume_entries re "
-    "JOIN entries e ON re.entry_id = e.id JOIN roles r ON re.role_id = r.id "
-    "WHERE re.resume_id = ? ORDER BY re.role_id, re.position",
-    (resume_id,)
-).fetchall()
+    skills = conn.execute(
+        "SELECT section_name, content FROM resume_sections WHERE resume_id = ? AND section_type = 'skills' ORDER BY position",
+        (resume_id,)
+    ).fetchall()
+
+    bullets = conn.execute(
+        "SELECT r.company, r.title, e.text, re.position FROM resume_entries re "
+        "JOIN entries e ON re.entry_id = e.id JOIN roles r ON re.role_id = r.id "
+        "WHERE re.resume_id = ? ORDER BY re.role_id, re.position",
+        (resume_id,)
+    ).fetchall()
+
+    parts = []
+    if summary:
+        parts.append(f"SUMMARY:\n{dict(summary)['content']}\n")
+    if skills:
+        parts.append("SKILLS:")
+        for s in skills:
+            s = dict(s)
+            parts.append(f"  {s['section_name']}: {s['content']}")
+        parts.append("")
+    if bullets:
+        current_company = None
+        for b in bullets:
+            b = dict(b)
+            if b["company"] != current_company:
+                current_company = b["company"]
+                parts.append(f"EXPERIENCE: {b['title']} @ {b['company']}")
+            parts.append(f"  - {b['text']}")
+    return "\n".join(parts)
+
+strict_text = _reconstruct_resume(pipeline["resume_strict_id"])
+freeform_text = _reconstruct_resume(pipeline["resume_freeform_id"]) if pipeline.get("resume_freeform_id") else None
 conn.close()
+```
+
+If DB reconstruction returns empty text, fall back to Google Docs API:
+
+```python
+if not strict_text.strip():
+    from jj.google_docs import GoogleDocsClient
+    client = GoogleDocsClient()
+    client.authenticate()
+    strict_text = client.get_document_text(strict_resume["google_doc_id"])
+    if freeform_resume and not (freeform_text or "").strip():
+        freeform_text = client.get_document_text(freeform_resume["google_doc_id"])
 ```
 
 ### Step 3: Research the Company
@@ -202,7 +230,7 @@ If `resume_final_id` is None, report error and exit.
 
 ### Step 2: Read Final Resume
 
-Read the Google Doc for the final resume (same as Phase 2 Step 2).
+Reconstruct the final resume from DB using the same `_reconstruct_resume()` approach as Phase 2 Step 2. Fall back to `GoogleDocsClient.get_document_text()` if DB reconstruction is empty.
 
 ### Step 3: Load Cached Company Context
 

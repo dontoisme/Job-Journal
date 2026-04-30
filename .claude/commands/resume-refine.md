@@ -7,7 +7,7 @@ Takes the evaluation agent's improvement directives and generates the final refi
 - Do NOT prompt the user for input or approval at any point
 - Make all decisions autonomously
 - If any step fails, report the error clearly and exit
-- Output final resume to `~/Documents/Resumes/slack/`
+- Output final resume to `~/Documents/Resumes/YYYY-MM-DD/slack/Company/`
 
 ## Usage
 
@@ -197,8 +197,10 @@ Record `rj_before` (base resume score from pipeline) and `rj_after` (refined sco
 ```python
 from jj.google_docs import generate_resume_programmatic
 from pathlib import Path
+from datetime import date
 
-output_dir = Path.home() / "Documents" / "Resumes" / "slack"
+today = date.today().isoformat()  # YYYY-MM-DD
+output_dir = Path.home() / "Documents" / "Resumes" / today / "slack" / company
 output_dir.mkdir(parents=True, exist_ok=True)
 
 mode = "strict" if recommended_base == "strict" else "optimized"
@@ -215,7 +217,7 @@ result_final = generate_resume_programmatic(
     max_roles=5,
     max_bullets_per_role=6,
     jd_text=jd_text,
-    output_dir=output_dir,
+    output_dir=output_dir,                  # YYYY-MM-DD/slack/Company/
     auto_open=False,
     keep_google_doc=True,
     export_pdf=True,                        # Final gets PDF

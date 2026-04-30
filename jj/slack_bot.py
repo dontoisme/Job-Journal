@@ -448,7 +448,7 @@ def _format_result_message(
             line += "\n:page_facing_up: Final resume generated"
             if doc_url:
                 line += f" — <{doc_url}|Google Doc>"
-            line += "\n:file_folder: `~/Documents/Resumes/slack/`"
+            line += "\n:file_folder: `~/Documents/Resumes/.../slack/{company}/`"
 
     elif resume_id:
         rj_text = ""
@@ -458,7 +458,7 @@ def _format_result_message(
         line += f"\n:page_facing_up: Resume generated{rj_text}"
         if doc_url:
             line += f" — <{doc_url}|Google Doc>"
-        line += "\n:file_folder: `~/Documents/Resumes/slack/`"
+        line += "\n:file_folder: `~/Documents/Resumes/.../slack/{company}/`"
     elif score is not None and score < 65:
         line += "\n_Below 65 threshold — no resume generated_"
 

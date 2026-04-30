@@ -2058,6 +2058,25 @@ class GoogleDocsClient:
 
         return self.docs_service.documents().get(documentId=doc_id).execute()
 
+    def get_document_text(self, doc_id: str) -> str:
+        """Extract plain text from a Google Doc.
+
+        Returns the full document content as a single string with
+        structural elements (paragraphs) joined by newlines.
+        """
+        self._ensure_authenticated()
+        doc = self.docs_service.documents().get(documentId=doc_id).execute()
+        parts = []
+        for element in doc.get("body", {}).get("content", []):
+            paragraph = element.get("paragraph")
+            if not paragraph:
+                continue
+            for pe in paragraph.get("elements", []):
+                text_run = pe.get("textRun")
+                if text_run:
+                    parts.append(text_run.get("content", ""))
+        return "".join(parts)
+
     def delete_document(self, doc_id: str) -> bool:
         """Delete a document (move to trash).
 

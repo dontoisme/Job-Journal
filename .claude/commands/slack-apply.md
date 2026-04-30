@@ -7,7 +7,7 @@ Autonomous score-and-apply workflow triggered by Slack button clicks. Runs headl
 - Do NOT prompt the user for input or approval at any point
 - Make all tailoring decisions autonomously
 - If any step fails, report the error clearly and exit
-- Output resumes to `~/Documents/Resumes/slack/`
+- Output resumes to `~/Documents/Resumes/YYYY-MM-DD/slack/Company/phase1/`
 
 ## Usage
 
@@ -24,7 +24,7 @@ This skill generates **TWO candidate resumes** for the evaluation pipeline:
 1. **Strict resume** (`mode="strict"`): Corpus-verbatim bullets, SWAP/CUT/PROMOTE/DEMOTE only. Summary composed fresh but all facts from corpus.
 2. **Freeform resume** (`mode="optimized"`): Full rewrite. Summary and bullets can be reworded to mirror JD language. Facts must still trace to corpus but phrasing is free.
 
-Both are Google Docs only (no PDF export). The downstream `/resume-refine` step produces the final PDF.
+Both are exported as Google Docs + PDFs into `YYYY-MM-DD/slack/Company/phase1/`. The downstream `/resume-refine` step produces the final PDF in `YYYY-MM-DD/slack/Company/`.
 
 ## Workflow
 
@@ -213,13 +213,15 @@ from jj.db import create_pipeline_run
 run_id = create_pipeline_run(application_id=app_id)
 ```
 
-#### Step 2: Create Output Directory
+#### Step 2: Create Output Directories
 
 ```python
 from pathlib import Path
+from datetime import date
 
-output_dir = Path.home() / "Documents" / "Resumes" / "slack"
-output_dir.mkdir(parents=True, exist_ok=True)
+today = date.today().isoformat()  # YYYY-MM-DD
+phase1_dir = Path.home() / "Documents" / "Resumes" / today / "slack" / company / "phase1"
+phase1_dir.mkdir(parents=True, exist_ok=True)
 ```
 
 #### Step 3: Assemble Template Data
@@ -278,10 +280,10 @@ result_strict = generate_resume_programmatic(
     max_roles=5,
     max_bullets_per_role=6,
     jd_text=jd_text,
-    output_dir=output_dir,
+    output_dir=phase1_dir,                  # YYYY-MM-DD/slack/Company/phase1/
     auto_open=False,
     keep_google_doc=True,
-    export_pdf=False,                       # Doc only for candidate
+    export_pdf=True,                        # PDF for comparison
     generation_mode="strict",
     pipeline_run_id=run_id,
 )
@@ -325,10 +327,10 @@ result_freeform = generate_resume_programmatic(
     max_roles=5,
     max_bullets_per_role=6,
     jd_text=jd_text,
-    output_dir=output_dir,
+    output_dir=phase1_dir,                  # YYYY-MM-DD/slack/Company/phase1/
     auto_open=False,
     keep_google_doc=True,
-    export_pdf=False,                       # Doc only for candidate
+    export_pdf=True,                        # PDF for comparison
     generation_mode="freeform",
     pipeline_run_id=run_id,
 )
@@ -411,4 +413,4 @@ RJ Freeform: [rj_freeform]
 - No user approval gates (fully autonomous)
 - No batch processing (single URL per invocation)
 - No form-filling or ATS submission
-- No PDF export (that happens in `/resume-refine`)
+- No final resume (that happens in `/resume-refine`)
