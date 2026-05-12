@@ -213,10 +213,46 @@ Before generating a tailored resume, score the **standard resume** against the J
 
 | Resume Score | Action | Rationale |
 |--------------|--------|-----------|
-| **85-100%** | Use standard resume as-is | Strong alignment, tailoring adds minimal value |
-| **<85%** | Full custom tailor | Tailor summary, skills, and bullet selection to match JD |
+| **Any score** | Default to archetype resume | Pre-built master resume matched by detected archetype. Fast. |
+| **User requests tailoring** | Full custom tailor | Only when user explicitly asks for per-JD customization. |
 
-### Step 3: Generate Tailored Resume
+### Step 2b: Archetype Resume Selection (Default)
+
+After scoring, present the matching archetype resume as the default choice:
+
+```python
+from jj.config import load_archetypes
+from jj.db import get_archetype_resume
+
+archetypes = load_archetypes()
+archetype_def = archetypes.get("archetypes", {}).get(archetype)
+if not archetype_def or not archetype_def.get("resume_id"):
+    archetype_def = archetypes.get("archetypes", {}).get("general")
+
+resume = get_archetype_resume(archetype)
+if not resume:
+    resume = get_archetype_resume("general")
+```
+
+Present to user:
+```
+Using [archetype] master resume (resume #[id]).
+PDF: [pdf_path]
+Google Doc: https://docs.google.com/document/d/[google_doc_id]
+
+Use this resume, or tailor specifically for this role?
+```
+
+**If user accepts archetype:** Link application to archetype resume and skip to Step 5 (custom Q&A).
+
+```python
+from jj.db import update_application
+update_application(app_id, resume_id=resume["id"])
+```
+
+**If user requests tailoring:** Proceed to Step 3 below (the original per-JD generation flow).
+
+### Step 3: Generate Tailored Resume (Only When Requested)
 
 #### Content Integrity Rules (CRITICAL)
 

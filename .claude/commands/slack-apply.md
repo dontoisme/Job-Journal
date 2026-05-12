@@ -1,13 +1,12 @@
 # /slack-apply - Headless Score + Apply (Slack-Triggered)
 
-Autonomous score-and-apply workflow triggered by Slack button clicks. Runs headlessly with no user prompts or approval gates. Combines `/score` triage with dual-resume generation for the evaluation pipeline.
+Autonomous score-and-apply workflow triggered by Slack button clicks. Runs headlessly with no user prompts or approval gates. Scores the job, then links the matching archetype master resume.
 
 ## Critical: Headless Mode Rules
 
 - Do NOT prompt the user for input or approval at any point
-- Make all tailoring decisions autonomously
 - If any step fails, report the error clearly and exit
-- Output resumes to `~/Documents/Resumes/YYYY-MM-DD/slack/Company/phase1/`
+- Master archetype resumes live in `~/Documents/Resumes/archetypes/`
 
 ## Usage
 
@@ -17,14 +16,16 @@ Autonomous score-and-apply workflow triggered by Slack button clicks. Runs headl
 
 Single URL only (one Slack button = one job).
 
-## Resume Generation Modes
+## Archetype Resume System
 
-This skill generates **TWO candidate resumes** for the evaluation pipeline:
+Instead of generating per-JD resumes, this skill selects from 4 pre-built master resumes stored in `~/.job-journal/archetypes.yaml`:
 
-1. **Strict resume** (`mode="strict"`): Corpus-verbatim bullets, SWAP/CUT/PROMOTE/DEMOTE only. Summary composed fresh but all facts from corpus.
-2. **Freeform resume** (`mode="optimized"`): Full rewrite. Summary and bullets can be reworded to mirror JD language. Facts must still trace to corpus but phrasing is free.
+- **growth**: Growth/PLG, experimentation, funnels, conversion
+- **ai-agentic**: AI/ML, multi-agent systems, orchestration, platform
+- **health-tech**: Healthcare, EHR, clinical workflows, patient experience
+- **general**: Fallback for roles that don't match a specific archetype
 
-Both are exported as Google Docs + PDFs into `YYYY-MM-DD/slack/Company/phase1/`. The downstream `/resume-refine` step produces the final PDF in `YYYY-MM-DD/slack/Company/`.
+Each archetype has a Google Doc + PDF in `~/Documents/Resumes/archetypes/`.
 
 ## Workflow
 
@@ -65,7 +66,7 @@ if existing:
         "SELECT pipeline_status FROM pipeline_runs WHERE application_id = ? ORDER BY started_at DESC LIMIT 1",
         (existing["id"],)
     ).fetchone()
-    pipeline_exists = pipeline_row and pipeline_row["pipeline_status"] in ("completed", "degraded_phase2", "degraded_phase3", "degraded_phase4")
+    pipeline_exists = pipeline_row and pipeline_row["pipeline_status"] in ("completed", "archetype", "degraded_phase2", "degraded_phase3", "degraded_phase4")
 conn.close()
 ```
 
@@ -201,169 +202,65 @@ report_id = create_evaluation_report(
 
 - **If `fit_score >= 65`:** Proceed to Phase 3.
 
-### Phase 3: Dual Resume Generation
+### Phase 3: Archetype Resume Selection
 
-Generate TWO candidate resumes for the evaluation pipeline. Both are Google Docs only (no PDF).
+Select the pre-built master resume matching the detected archetype.
 
-#### Step 1: Create Pipeline Run
+#### Step 1: Load Archetype Resume
 
 ```python
-from jj.db import create_pipeline_run
+from jj.config import load_archetypes
+from jj.db import get_archetype_resume, update_application
+from pathlib import Path
+
+archetypes = load_archetypes()
+archetype_def = archetypes.get("archetypes", {}).get(archetype)
+
+if not archetype_def or not archetype_def.get("resume_id"):
+    archetype_def = archetypes.get("archetypes", {}).get("general")
+
+resume_id = archetype_def["resume_id"]
+pdf_path = archetype_def.get("pdf_path", "")
+google_doc_id = archetype_def.get("google_doc_id", "")
+```
+
+#### Step 2: Verify Resume Exists
+
+```python
+resume = get_archetype_resume(archetype)
+if not resume:
+    resume = get_archetype_resume("general")
+    archetype_used = "general"
+else:
+    archetype_used = archetype
+
+if not resume:
+    print("ERROR: No archetype resumes found. Run archetype generation first.")
+    exit(1)
+
+resume_id = resume["id"]
+pdf_path = archetype_def.get("pdf_path", resume.get("filepath", ""))
+```
+
+#### Step 3: Link Application to Archetype Resume
+
+```python
+update_application(app_id, resume_id=resume_id)
+```
+
+#### Step 4: Create Pipeline Run (for tracking continuity)
+
+```python
+from jj.db import create_pipeline_run, update_pipeline_run
+from datetime import datetime
 
 run_id = create_pipeline_run(application_id=app_id)
-```
-
-#### Step 2: Create Output Directories
-
-```python
-from pathlib import Path
-from datetime import date
-
-today = date.today().isoformat()  # YYYY-MM-DD
-phase1_dir = Path.home() / "Documents" / "Resumes" / today / "slack" / company / "phase1"
-phase1_dir.mkdir(parents=True, exist_ok=True)
-```
-
-#### Step 3: Assemble Template Data
-
-```python
-from jj.google_docs import assemble_template_data
-
-template_data = assemble_template_data(jd_text=jd_text)
-```
-
-This loads the corpus, profile, and ranks bullets by JD relevance.
-
-#### Step 4: Tailor Content — Strict Version
-
-All decisions are made autonomously. No user approval gates.
-
-**Summary (compose fresh):**
-- Identity-First framework: Identity -> Evidence -> Differentiation
-- All facts from base.md/corpus only
-- Banned phrases: "12+ years", "proven track record", "results-driven", "passionate", "deep experience in"
-- No em-dashes. Max 3-4 sentences.
-
-**Skills (reorder/filter):**
-- Select categories matching JD emphasis
-- Reorder to lead with strongest matches
-- Values must be `list[str]`, not comma-separated strings
-
-**Bullets (SWAP/CUT/PROMOTE/DEMOTE only):**
-- Review auto-ranked bullets from `assemble_template_data`
-- Apply operations to improve JD alignment
-- Every bullet must be exact corpus text
-- Do NOT paraphrase, combine, merge, or rewrite
-
-**Content Integrity Rules (CRITICAL):**
-- No em-dashes anywhere
-- Role dates must exactly match base.md corpus dates
-- No invented specifics (metrics, company names, technologies)
-- GitHub URL: github.com/dontoisme
-- No graduation year in education
-- SpareFoot and IBM appear ONLY in Earlier Experience
-
-#### Step 5: Generate Strict Resume (Doc only)
-
-```python
-from jj.google_docs import generate_resume_programmatic
-
-result_strict = generate_resume_programmatic(
-    company=company,
-    position=position,
-    variant=archetype,
-    mode="strict",
-    custom_summary=strict_summary,
-    custom_skills=prioritized_skills,      # dict[str, list[str]]
-    role_bullets=reordered_bullets,         # dict[str, list[str]]
-    earlier_roles=earlier_roles,           # from profile.yaml
-    max_roles=5,
-    max_bullets_per_role=6,
-    jd_text=jd_text,
-    output_dir=phase1_dir,                  # YYYY-MM-DD/slack/Company/phase1/
-    auto_open=False,
-    keep_google_doc=True,
-    export_pdf=True,                        # PDF for comparison
-    generation_mode="strict",
-    pipeline_run_id=run_id,
-)
-```
-
-If `result_strict.success` is False, report the error and exit.
-
-#### Step 6: Tailor Content — Freeform Version
-
-Now create a second, more aggressive version:
-
-**Summary (freeform rewrite):**
-- Mirror JD language and priorities directly
-- Can use JD keywords and phrasing
-- Still must be factually accurate to corpus/base.md
-- Same banned phrases and no em-dashes rules apply
-
-**Bullets (full rewrite allowed):**
-- Can reword bullets to mirror JD language
-- Can combine or restructure bullet points
-- All facts, metrics, and technologies must still trace to corpus
-- Do NOT invent metrics, company names, or technologies
-- Aim for stronger keyword alignment with the JD
-
-**Skills (same as strict, but can adjust naming):**
-- Can rename skill categories to match JD terminology
-- Can regroup skills if JD organizes them differently
-
-#### Step 7: Generate Freeform Resume (Doc only)
-
-```python
-result_freeform = generate_resume_programmatic(
-    company=company,
-    position=position,
-    variant=archetype,
-    mode="optimized",
-    custom_summary=freeform_summary,
-    custom_skills=freeform_skills,         # dict[str, list[str]]
-    role_bullets=freeform_bullets,          # dict[str, list[str]]
-    earlier_roles=earlier_roles,
-    max_roles=5,
-    max_bullets_per_role=6,
-    jd_text=jd_text,
-    output_dir=phase1_dir,                  # YYYY-MM-DD/slack/Company/phase1/
-    auto_open=False,
-    keep_google_doc=True,
-    export_pdf=True,                        # PDF for comparison
-    generation_mode="freeform",
-    pipeline_run_id=run_id,
-)
-```
-
-If `result_freeform.success` is False, report the error but continue (strict resume is still available).
-
-#### Step 8: Score Both Resumes
-
-Score both tailored resumes against the JD using the RJ rubric:
-
-| Category | Points | What to Evaluate |
-|----------|--------|------------------|
-| Summary alignment | 25 | Does tailored summary emphasize JD's key themes? |
-| Skills coverage | 25 | Are JD's top 5 required skills listed prominently? |
-| Bullet relevance | 35 | Do lead bullets at recent roles match JD priorities? |
-| Keyword density | 15 | Key terms from JD present throughout resume? |
-
-Record `rj_strict` and `rj_freeform` scores.
-
-#### Step 9: Update Pipeline Run
-
-```python
-from jj.db import update_pipeline_run
-
 update_pipeline_run(
     run_id,
-    resume_strict_id=result_strict.resume_id,
-    resume_freeform_id=result_freeform.resume_id if result_freeform.success else None,
-    eval_score_strict=rj_strict,
-    eval_score_freeform=rj_freeform if result_freeform.success else None,
-    pipeline_status="phase1",
-    phase_reached=1,
+    resume_final_id=resume_id,
+    pipeline_status="archetype",
+    phase_reached=0,
+    completed_at=datetime.now().isoformat(),
 )
 ```
 
@@ -381,19 +278,17 @@ Archetype: [archetype]
 App ID: [app_id]
 ```
 
-**If score >= 65 (pipeline started):**
+**If score >= 65 (archetype resume linked):**
 ```
-RESULT: PIPELINE_PHASE1
+RESULT: ARCHETYPE_APPLIED
 Score: XX% (Verdict)
 Company: [company]
 Position: [position]
 Archetype: [archetype]
 App ID: [app_id]
-Pipeline Run: [run_id]
-Resume Strict ID: [strict_resume_id]
-Resume Freeform ID: [freeform_resume_id]
-RJ Strict: [rj_strict]
-RJ Freeform: [rj_freeform]
+Resume ID: [resume_id]
+PDF: [pdf_path]
+Google Doc: https://docs.google.com/document/d/[google_doc_id]
 ```
 
 ## Error Handling
@@ -402,15 +297,14 @@ RJ Freeform: [rj_freeform]
 |-----------|----------|
 | URL not accessible | Report error, exit with non-zero |
 | No corpus found | Report "Run /interview first", exit |
-| Google Docs API failure (strict) | Report score (already saved), note resume generation failed |
-| Google Docs API failure (freeform) | Continue with strict only; freeform_resume_id will be null |
-| Integrity audit failure | Fix and retry once; if still failing, report the audit failures |
+| No archetype resume found | Report error, suggest running archetype generation |
+| Archetype variant not found | Fall back to "general" archetype |
 
 ## What This Skill Does NOT Do
 
+- No per-JD resume generation (uses pre-built archetype resumes)
 - No cover letter generation (interactive only, via `/apply`)
 - No custom Q&A answers (interactive only, via `/apply`)
 - No user approval gates (fully autonomous)
 - No batch processing (single URL per invocation)
 - No form-filling or ATS submission
-- No final resume (that happens in `/resume-refine`)

@@ -109,6 +109,15 @@ When the user asks to find job emails not yet in Job Journal:
 - **Role dates** must exactly match base.md corpus dates
 - **GitHub URL:** github.com/dontoisme
 
+### Archetype Master Resumes
+- 4 pre-built resumes stored in `~/.job-journal/archetypes.yaml`: growth, ai-agentic, health-tech, general
+- PDFs and Google Docs in `~/Documents/Resumes/archetypes/`
+- `resumes` table has `is_archetype=1` flag; query via `get_archetype_resume(variant)`
+- `/slack-apply` defaults to archetype lookup (no per-JD generation)
+- `/apply` offers archetype as default, with per-JD tailoring as opt-in escape hatch
+- Config helpers: `load_archetypes()` / `save_archetypes()` in `jj/config.py`
+- To regenerate: update `archetypes.yaml` bullet/skill selections, then call `generate_resume_programmatic()` with `generation_mode="archetype"` and set `is_archetype=1`
+
 ### Things NOT to Do
 - Don't invent facts, metrics, or company names not in base.md
 - Don't use em-dashes in resume content

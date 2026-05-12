@@ -1181,8 +1181,9 @@ def generate_resume_programmatic(
     name_data = data.profile.get("name", {})
     full_name = f"{name_data.get('first', '')} {name_data.get('last', '')}".strip() or "Resume"
     timestamp = datetime.now().strftime("%Y%m%d")
-    doc_title = f"{full_name} - {position} - {company} - {timestamp}"
-    pdf_filename = f"{full_name} - {position} - {company} - Resume.pdf"
+    mode_suffix = f" ({generation_mode})" if generation_mode else ""
+    doc_title = f"{full_name} - {position} - {company} - {timestamp}{mode_suffix}"
+    pdf_filename = f"{full_name} - {position} - {company} - Resume{mode_suffix}.pdf"
     pdf_path = output_dir / pdf_filename
 
     try:

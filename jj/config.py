@@ -11,6 +11,7 @@ DB_PATH = JJ_HOME / "journal.db"
 CORPUS_PATH = JJ_HOME / "corpus.md"
 PROFILE_PATH = JJ_HOME / "profile.yaml"
 CONFIG_PATH = JJ_HOME / "config.yaml"
+ARCHETYPES_PATH = JJ_HOME / "archetypes.yaml"
 
 # Default profile template
 DEFAULT_PROFILE: dict[str, Any] = {
@@ -137,6 +138,16 @@ def load_config() -> dict[str, Any]:
 def save_config(config: dict[str, Any]) -> None:
     """Save the application config."""
     save_yaml(CONFIG_PATH, config)
+
+
+def load_archetypes() -> dict[str, Any]:
+    """Load the archetypes configuration."""
+    return load_yaml(ARCHETYPES_PATH)
+
+
+def save_archetypes(data: dict[str, Any]) -> None:
+    """Save the archetypes configuration."""
+    save_yaml(ARCHETYPES_PATH, data)
 
 
 def get_full_name() -> str:

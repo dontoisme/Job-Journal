@@ -547,6 +547,7 @@ def migrate_database() -> None:
         # Pipeline resume tracking
         ("resumes", "generation_mode", "TEXT"),
         ("resumes", "pipeline_run_id", "INTEGER"),
+        ("resumes", "is_archetype", "BOOLEAN DEFAULT 0"),
     ]
 
     with get_connection() as conn:
@@ -1703,6 +1704,30 @@ def validate_resume(resume_id: int, is_valid: bool, drift_score: int = 0) -> boo
         )
         conn.commit()
         return cursor.rowcount > 0
+
+
+def get_archetype_resume(variant: str) -> Optional[dict[str, Any]]:
+    """Get the master archetype resume for a given variant."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM resumes WHERE is_archetype = 1 AND variant = ? ORDER BY created_at DESC LIMIT 1",
+            (variant,)
+        )
+        row = cursor.fetchone()
+        if row:
+            return dict(row)
+    return None
+
+
+def get_archetype_resumes() -> list[dict[str, Any]]:
+    """Get all master archetype resumes."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM resumes WHERE is_archetype = 1 ORDER BY variant"
+        )
+        return [dict(row) for row in cursor.fetchall()]
 
 
 def get_resumes_with_applications(days: int = 30) -> list[dict]:

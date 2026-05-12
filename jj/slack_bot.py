@@ -328,10 +328,16 @@ def _run_pipeline(url: str) -> tuple[int, str, str]:
         logger.info("%s Below threshold, pipeline not started", V_NOTE)
         return 0, stdout, stderr
 
+    # Archetype resume linked (no further phases needed)
+    if "RESULT: ARCHETYPE_APPLIED" in stdout:
+        elapsed = int(time.time() - t0)
+        logger.info("%s Archetype resume linked in %ds (app %d)", V_DONE, elapsed, app_id)
+        return 0, stdout, stderr
+
     elapsed = int(time.time() - t0)
     logger.info("%s Phase 1 done in %ds (app %d)", V_DONE, elapsed, app_id)
 
-    # Phase 2: Opus 4.7 evaluation
+    # Phase 2: Opus 4.7 evaluation (legacy pipeline, only if Phase 1 produced PIPELINE_PHASE1)
     logger.info("%s Phase 2/4: Opus evaluation", V_NOTE)
     rc2, stdout2, stderr2 = _run_phase_subprocess(
         f"/resume-eval {app_id}",
@@ -439,7 +445,15 @@ def _format_result_message(
     # Check for pipeline data
     pipeline = _lookup_pipeline_result(app_id) if app_id else None
 
-    if pipeline and pipeline.get("pipeline_status", "").startswith(("completed", "degraded")):
+    if pipeline and pipeline.get("pipeline_status") == "archetype":
+        if resume_id:
+            doc_url = _lookup_resume_doc_url(resume_id)
+            line += f"\n:page_facing_up: Archetype resume linked"
+            if doc_url:
+                line += f" — <{doc_url}|Google Doc>"
+            line += "\n:file_folder: `~/Documents/Resumes/archetypes/`"
+
+    elif pipeline and pipeline.get("pipeline_status", "").startswith(("completed", "degraded")):
         final_score = pipeline.get("final_score")
         final_verdict = pipeline.get("final_verdict", "")
         score_strict = pipeline.get("eval_score_strict")
