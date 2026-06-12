@@ -22,6 +22,9 @@ ACTIVE_STATUSES = {
 
 TERMINAL_STATUSES = {'accepted', 'rejected', 'withdrawn'}
 
+# Out-of-pipeline statuses: archived prospects and passed-on roles
+ARCHIVE_STATUSES = {'stale', 'skipped'}
+
 ALL_STATUSES = ACTIVE_STATUSES | TERMINAL_STATUSES
 
 # Status ordering for progression tracking
@@ -821,6 +824,20 @@ def migrate_database() -> None:
             except sqlite3.OperationalError:
                 pass  # Table might already be correct
 
+        # Normalize stray status values written before validation existed
+        cursor.execute("""
+            UPDATE applications SET status = 'recruiter_screen', updated_at = CURRENT_TIMESTAMP
+            WHERE status IN ('screening', 'screen')
+        """)
+        cursor.execute("""
+            UPDATE applications
+            SET status = 'rejected',
+                notes = COALESCE(notes || char(10), '') || 'Status normalized from legacy value: closed',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE status = 'closed'
+        """)
+        conn.commit()
+
 
 def migrate_application_lifecycle() -> dict[str, int]:
     """
@@ -1208,7 +1225,7 @@ def transition_application_status(
         True if successful, False otherwise
     """
     # Validate new_status
-    valid_statuses = ALL_STATUSES | {'skipped', 'screening'}  # Include screening for backward compat
+    valid_statuses = ALL_STATUSES | ARCHIVE_STATUSES | {'screening'}  # Include screening for backward compat
     if new_status not in valid_statuses:
         return False
 
@@ -1282,7 +1299,7 @@ def get_pipeline_stats() -> dict[str, Any]:
             SELECT COUNT(*) as stale_count FROM applications
             WHERE (
                 (status = 'applied' AND julianday('now') - julianday(applied_at) > 7)
-                OR (status = 'screening' AND julianday('now') - julianday(updated_at) > 14)
+                OR (status IN ('recruiter_screen', 'hiring_manager') AND julianday('now') - julianday(updated_at) > 14)
             )
         """)
         stale_row = cursor.fetchone()
@@ -1307,7 +1324,7 @@ def get_stale_applications(days_threshold: int = 7) -> list[dict[str, Any]]:
             FROM applications
             WHERE (
                 (status = 'applied' AND julianday('now') - julianday(applied_at) > ?)
-                OR (status = 'screening' AND julianday('now') - julianday(updated_at) > ?)
+                OR (status IN ('recruiter_screen', 'hiring_manager') AND julianday('now') - julianday(updated_at) > ?)
             )
             ORDER BY days_since DESC
         """, (days_threshold, days_threshold * 2))
@@ -1548,6 +1565,24 @@ def log_event(
         )
         conn.commit()
         return cursor.lastrowid
+
+
+def get_last_email_sync() -> Optional[dict[str, Any]]:
+    """Get the most recent email_sync_run event, or None if never synced."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT created_at, metadata FROM events
+            WHERE event_type = 'email_sync_run'
+            ORDER BY created_at DESC LIMIT 1
+        """)
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            'synced_at': row['created_at'],
+            'summary': json.loads(row['metadata']) if row['metadata'] else {},
+        }
 
 
 def get_events(

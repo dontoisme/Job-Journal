@@ -812,6 +812,87 @@ def stats():
 
 
 @app.command()
+def funnel(
+    weeks: int = typer.Option(0, "--weeks", "-w", help="Show a weekly trail for the last N weeks"),
+    months: int = typer.Option(0, "--months", "-m", help="Show a monthly trail for the last N months"),
+):
+    """Show the job search funnel: applications, calls, interviews, offers."""
+
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    from rich.table import Table
+
+    from jj.analytics import get_funnel_summary
+
+    summary = get_funnel_summary(
+        trail_weeks=max(weeks, 12),
+        trail_months=max(months, 6),
+    )
+    if not summary:
+        console.print("[yellow]No application data yet.[/yellow]")
+        raise typer.Exit(0)
+
+    table = Table(title=f"Job Search Funnel (week of {summary['week_start']})")
+    table.add_column("Stage", style="bold")
+    table.add_column("This Week", justify="right")
+    table.add_column("This Month", justify="right")
+    table.add_column("All Time", justify="right", style="cyan")
+
+    for stage in summary["stages"]:
+        table.add_row(
+            stage["label"],
+            str(stage["this_week"]),
+            str(stage["this_month"]),
+            str(stage["all_time"]),
+        )
+    console.print(table)
+
+    rates = summary.get("conversion_rates", {})
+    if rates:
+        parts = []
+        for key, label in [
+            ("applications_to_calls", "Application -> Call"),
+            ("calls_to_interviews", "Call -> Interview"),
+            ("interviews_to_offers", "Interview -> Offer"),
+        ]:
+            if key in rates:
+                parts.append(f"{label}: {rates[key]}%")
+        console.print(f"[dim]Conversion: {' | '.join(parts)}[/dim]")
+
+    if weeks > 0:
+        wt = Table(title=f"Weekly trail (last {weeks} weeks, weeks start Sunday)")
+        wt.add_column("Week of")
+        for _, label in [(s["key"], s["label"]) for s in summary["stages"]]:
+            wt.add_column(label, justify="right")
+        for row in summary["weeks"][-weeks:]:
+            wt.add_row(
+                row["week_start"],
+                str(row["applications"]),
+                str(row["calls"]),
+                str(row["interviews"]),
+                str(row["offers"]),
+            )
+        console.print(wt)
+
+    if months > 0:
+        mt = Table(title=f"Monthly trail (last {months} months)")
+        mt.add_column("Month")
+        for _, label in [(s["key"], s["label"]) for s in summary["stages"]]:
+            mt.add_column(label, justify="right")
+        for row in summary["months"][-months:]:
+            mt.add_row(
+                row["month"],
+                str(row["applications"]),
+                str(row["calls"]),
+                str(row["interviews"]),
+                str(row["offers"]),
+            )
+        console.print(mt)
+
+
+@app.command()
 def serve(
     port: int = typer.Option(8000, "--port", "-p", help="Port to run on"),
     host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host to bind to"),
@@ -1359,7 +1440,10 @@ def email_sync(
     days: int = typer.Option(7, "--days", "-d", help="Search emails from last N days"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show detailed output"),
 ):
-    """Run both verify and updates (full sync).
+    """Run both verify and updates (legacy sync).
+
+    Deprecated: prefer 'jj email pair', which uses the pairing system and is
+    what the scheduled LaunchAgent runs.
 
     Examples:
         jj email sync
@@ -1368,6 +1452,8 @@ def email_sync(
     if not JJ_HOME.exists():
         console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
         raise typer.Exit(1)
+
+    console.print("[yellow]Note: 'jj email sync' is the legacy path. Prefer 'jj email pair'.[/yellow]\n")
 
     console.print(Panel.fit(
         "[bold]Gmail Sync[/bold]\n\n"
@@ -1715,7 +1801,11 @@ def email_pair(
         applications = [app]
         console.print(f"[bold]Syncing emails for {app['company']} - {app.get('position', 'N/A')}...[/bold]\n")
     else:
-        applications = [a for a in get_applications() if a.get('status') not in ('prospect', 'skipped')]
+        from jj.db import TERMINAL_STATUSES
+        # Terminal and archived apps are settled; skip them so each run only
+        # queries Gmail for applications that can still change state.
+        skip_statuses = TERMINAL_STATUSES | {'prospect', 'skipped', 'stale'}
+        applications = [a for a in get_applications() if a.get('status') not in skip_statuses]
         if not applications:
             console.print("[yellow]No applications to sync.[/yellow]")
             return
@@ -1762,12 +1852,25 @@ def email_report():
         console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
         raise typer.Exit(1)
 
-    from jj.db import get_pairing_stats
+    from jj.db import get_last_email_sync, get_pairing_stats
 
     stats = get_pairing_stats()
 
+    last_sync = get_last_email_sync()
+    if last_sync:
+        sync_summary = last_sync['summary']
+        sync_line = (
+            f"Last sync: {last_sync['synced_at']} UTC "
+            f"({sync_summary.get('applications_checked', 0)} checked, "
+            f"{sync_summary.get('resolutions_found', 0)} resolutions, "
+            f"{sync_summary.get('errors', 0)} errors)"
+        )
+    else:
+        sync_line = "[red]Last sync: never — run 'jj email pair' or 'jj monitor install-email-sync'[/red]"
+
     console.print(Panel.fit(
         f"[bold]Application Email Pairing Report[/bold]\n\n"
+        f"{sync_line}\n"
         f"Total Applications: {stats['total']}\n\n"
         f"[bold]Status Breakdown[/bold]\n"
         f"  [green]Resolved[/green] (confirmation + resolution): {stats['resolved']}\n"
@@ -1794,6 +1897,78 @@ app_cmd = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(app_cmd, name="app")
+
+ROUND_TYPES = {'phone', 'hm', 'tech', 'panel', 'final', 'other'}
+
+
+@app_cmd.command("round")
+def app_round(
+    app_id: int = typer.Argument(..., help="Application ID"),
+    round_type: str = typer.Option(..., "--type", "-t", help=f"Round type: {', '.join(sorted(ROUND_TYPES))}"),
+    date: str = typer.Option(None, "--date", "-d", help="Round date YYYY-MM-DD (default: today)"),
+    interviewer: str = typer.Option(None, "--interviewer", "-i", help="Interviewer name"),
+    notes: str = typer.Option(None, "--notes", "-n", help="Notes about the round"),
+):
+    """Log an interview round for an application.
+
+    Rounds are stored as events and feed the Interviews row in 'jj funnel'.
+
+    Examples:
+        jj app round 42 --type hm --date 2026-04-10
+        jj app round 42 --type tech --interviewer "Head of Growth"
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    from datetime import date as date_cls
+    from datetime import datetime
+
+    from jj.db import get_application, get_events, log_event
+
+    if round_type not in ROUND_TYPES:
+        console.print(f"[red]Invalid round type '{round_type}'. Use one of: {', '.join(sorted(ROUND_TYPES))}[/red]")
+        raise typer.Exit(1)
+
+    if date:
+        try:
+            date_cls.fromisoformat(date)
+        except ValueError:
+            console.print(f"[red]Invalid date '{date}'. Use YYYY-MM-DD.[/red]")
+            raise typer.Exit(1)
+    else:
+        date = datetime.now().date().isoformat()
+
+    application = get_application(app_id)
+    if not application:
+        console.print(f"[red]Application {app_id} not found.[/red]")
+        raise typer.Exit(1)
+
+    existing = get_events(
+        event_type='interview_round',
+        entity_type='application',
+        entity_id=app_id,
+        limit=1000,
+    )
+    round_number = len(existing) + 1
+
+    log_event(
+        event_type='interview_round',
+        entity_type='application',
+        entity_id=app_id,
+        metadata={
+            'round_type': round_type,
+            'round_number': round_number,
+            'date': date,
+            'interviewer': interviewer,
+            'notes': notes,
+        },
+    )
+
+    console.print(
+        f"[green]Logged round {round_number} ({round_type}) on {date} for "
+        f"{application['company']} - {application['position']}[/green]"
+    )
 
 
 @app_cmd.command("status")
@@ -2511,13 +2686,10 @@ def worker_sync(
     recurring: bool = typer.Option(False, "--recurring", "-r", help="Schedule recurring sync"),
     hours: int = typer.Option(1, "--hours", help="Hours between syncs (with --recurring)"),
 ):
-    """Trigger email sync immediately."""
-    from jj.worker import run_task_now, schedule_email_sync
-
-    if recurring:
-        schedule_email_sync(hours=hours)
-    else:
-        run_task_now('email_sync')
+    """Deprecated: email sync no longer runs through the worker."""
+    console.print("[yellow]'jj worker sync' is deprecated.[/yellow]")
+    console.print("Run [cyan]jj email pair[/cyan] for a one-off sync, or")
+    console.print("[cyan]jj monitor install-email-sync[/cyan] to schedule it.")
 
 
 @worker_app.command("run")
@@ -3350,8 +3522,8 @@ def monitor_install_email_sync(
 ):
     """Install (or uninstall) a LaunchAgent for periodic email sync.
 
-    Runs 'jj email sync --days 3' every N hours (default: 2).
-    No Claude session needed — runs the CLI directly.
+    Runs 'jj email pair' (the pairing sync) every N hours (default: 2) in
+    headless mode. No Claude session needed — runs the CLI directly.
     """
     import subprocess
 

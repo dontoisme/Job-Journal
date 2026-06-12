@@ -1,8 +1,165 @@
 """Analytics and insights for Job Journal."""
 
-from typing import Any
+from datetime import date, datetime, timedelta
+from typing import Any, Optional
 
 from jj.db import DB_PATH, get_connection
+
+# Evidence union for the funnel summary: every (stage, app, timestamp) signal
+# that an application reached a stage, from applications, real (non-migration)
+# status events, interview_round events, and paired resolution emails.
+_FUNNEL_EVIDENCE_SQL = """
+    SELECT 'applications' AS stage, id AS app_id, applied_at AS ts
+    FROM applications
+    WHERE applied_at IS NOT NULL AND status NOT IN ('prospect', 'skipped')
+
+    UNION ALL
+    SELECT
+        CASE
+            WHEN json_extract(new_value, '$.status') IN ('recruiter_screen', 'hiring_manager', 'screening') THEN 'calls'
+            WHEN json_extract(new_value, '$.status') IN ('interview', 'technical') THEN 'interviews'
+            WHEN json_extract(new_value, '$.status') = 'offer' THEN 'offers'
+        END AS stage,
+        entity_id AS app_id,
+        created_at AS ts
+    FROM events
+    WHERE event_type = 'status_change'
+      AND entity_type = 'application'
+      AND COALESCE(json_extract(metadata, '$.source'), '') != 'migration'
+      AND json_extract(new_value, '$.status') IN
+          ('recruiter_screen', 'hiring_manager', 'screening', 'interview', 'technical', 'offer')
+
+    UNION ALL
+    SELECT 'interviews' AS stage, entity_id AS app_id,
+           COALESCE(json_extract(metadata, '$.date'), created_at) AS ts
+    FROM events
+    WHERE event_type = 'interview_round' AND entity_type = 'application'
+
+    UNION ALL
+    SELECT
+        CASE resolution_type
+            WHEN 'screening' THEN 'calls'
+            WHEN 'interview' THEN 'interviews'
+            WHEN 'offer' THEN 'offers'
+        END AS stage,
+        application_id AS app_id,
+        received_at AS ts
+    FROM application_emails
+    WHERE resolution_type IN ('screening', 'interview', 'offer')
+"""
+
+FUNNEL_STAGES = [
+    ('applications', 'Applications'),
+    ('calls', 'Calls'),
+    ('interviews', 'Interviews'),
+    ('offers', 'Offers'),
+]
+
+
+def _parse_evidence_date(ts: str) -> Optional[date]:
+    """Parse a date or ISO datetime string to a date."""
+    try:
+        return date.fromisoformat(str(ts)[:10])
+    except ValueError:
+        return None
+
+
+def get_funnel_summary(trail_weeks: int = 12, trail_months: int = 6) -> dict[str, Any]:
+    """Answer "how many applications, calls, and interviews have I had?"
+
+    Counts distinct applications per stage from the evidence union. All-time
+    counts an app once per stage; period counts include any app with evidence
+    in that period (so a second interview round this week counts this week).
+    Weeks run Sunday-Saturday to match TWC.
+    """
+    if not DB_PATH.exists():
+        return {}
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(_FUNNEL_EVIDENCE_SQL)
+        rows = [
+            (row['stage'], row['app_id'], row['ts'])
+            for row in cursor.fetchall()
+            if row['stage'] and row['app_id'] and row['ts']
+        ]
+
+    today = datetime.now().date()
+    week_start = today - timedelta(days=(today.weekday() + 1) % 7)
+    month_start = today.replace(day=1)
+
+    stage_keys = [key for key, _ in FUNNEL_STAGES]
+    all_time = {key: set() for key in stage_keys}
+    this_week = {key: set() for key in stage_keys}
+    this_month = {key: set() for key in stage_keys}
+    by_week: dict[str, dict[str, set]] = {}
+    by_month: dict[str, dict[str, set]] = {}
+
+    for stage, app_id, ts in rows:
+        if stage not in all_time:
+            continue
+        all_time[stage].add(app_id)
+        d = _parse_evidence_date(ts)
+        if d is None or d > today:
+            continue
+        if d >= week_start:
+            this_week[stage].add(app_id)
+        if d >= month_start:
+            this_month[stage].add(app_id)
+        evidence_week = (d - timedelta(days=(d.weekday() + 1) % 7)).isoformat()
+        by_week.setdefault(evidence_week, {k: set() for k in stage_keys})[stage].add(app_id)
+        by_month.setdefault(d.strftime('%Y-%m'), {k: set() for k in stage_keys})[stage].add(app_id)
+
+    stages = [
+        {
+            'key': key,
+            'label': label,
+            'all_time': len(all_time[key]),
+            'this_week': len(this_week[key]),
+            'this_month': len(this_month[key]),
+        }
+        for key, label in FUNNEL_STAGES
+    ]
+
+    def _trail(buckets: dict[str, dict[str, set]], labels: list[str], label_field: str) -> list[dict[str, Any]]:
+        trail = []
+        for label in labels:
+            counts = buckets.get(label, {})
+            entry: dict[str, Any] = {label_field: label}
+            for key in stage_keys:
+                entry[key] = len(counts.get(key, set()))
+            trail.append(entry)
+        return trail
+
+    week_labels = [
+        (week_start - timedelta(weeks=i)).isoformat()
+        for i in range(trail_weeks - 1, -1, -1)
+    ]
+    month_labels = []
+    year, month = month_start.year, month_start.month
+    for _ in range(trail_months):
+        month_labels.append(f'{year:04d}-{month:02d}')
+        month -= 1
+        if month == 0:
+            year, month = year - 1, 12
+    month_labels.reverse()
+
+    conversions = {}
+    pairs = [('applications', 'calls'), ('calls', 'interviews'), ('interviews', 'offers')]
+    for upstream, downstream in pairs:
+        if all_time[upstream]:
+            conversions[f'{upstream}_to_{downstream}'] = round(
+                len(all_time[downstream]) / len(all_time[upstream]) * 100, 1
+            )
+
+    return {
+        'stages': stages,
+        'weeks': _trail(by_week, week_labels, 'week_start'),
+        'months': _trail(by_month, month_labels, 'month'),
+        'conversion_rates': conversions,
+        'week_start': week_start.isoformat(),
+        'month_start': month_start.isoformat(),
+    }
 
 
 def get_funnel_stats() -> dict[str, Any]:
@@ -25,8 +182,13 @@ def get_funnel_stats() -> dict[str, Any]:
 
         # Calculate conversion rates
         applied = counts.get('applied', 0)
-        screening = counts.get('screening', 0)
-        interview = counts.get('interview', 0)
+        # Calls bucket: recruiter/HM screens (legacy 'screening' rows included)
+        screening = (
+            counts.get('recruiter_screen', 0)
+            + counts.get('hiring_manager', 0)
+            + counts.get('screening', 0)
+        )
+        interview = counts.get('interview', 0) + counts.get('technical', 0)
         offer = counts.get('offer', 0)
         rejected = counts.get('rejected', 0)
 
@@ -40,7 +202,7 @@ def get_funnel_stats() -> dict[str, Any]:
                     'color': '#3b82f6',
                 },
                 {
-                    'name': 'Screening',
+                    'name': 'Calls',
                     'count': screening + interview + offer,
                     'color': '#8b5cf6',
                 },
@@ -82,38 +244,74 @@ def get_funnel_stats() -> dict[str, Any]:
         return funnel
 
 
+def _parse_evidence_datetime(ts: str) -> Optional[datetime]:
+    """Parse an ISO datetime (or date) string, dropping timezone info."""
+    try:
+        return datetime.fromisoformat(str(ts).replace('Z', '')).replace(tzinfo=None)
+    except ValueError:
+        return None
+
+
 def get_time_in_stage_stats() -> dict[str, Any]:
-    """Get average time spent in each stage."""
+    """Get time spent in each stage, derived from status_change events.
+
+    Duration in a stage runs from the timestamp that entered it (applied_at
+    for the first stage) to the event that left it; the current stage is
+    still open and measured to now. Migration snapshot events are excluded.
+    """
     if not DB_PATH.exists():
         return {}
 
     with get_connection() as conn:
         cursor = conn.cursor()
-
-        # Average days in each status
         cursor.execute("""
-            SELECT
-                status,
-                ROUND(AVG(julianday(COALESCE(updated_at, 'now')) - julianday(applied_at)), 1) as avg_days,
-                MIN(julianday(COALESCE(updated_at, 'now')) - julianday(applied_at)) as min_days,
-                MAX(julianday(COALESCE(updated_at, 'now')) - julianday(applied_at)) as max_days,
-                COUNT(*) as count
-            FROM applications
-            WHERE status NOT IN ('skipped', 'prospect')
-              AND applied_at IS NOT NULL
-            GROUP BY status
+            SELECT entity_id, created_at,
+                   json_extract(old_value, '$.status') as old_status,
+                   json_extract(new_value, '$.status') as new_status
+            FROM events
+            WHERE event_type = 'status_change'
+              AND entity_type = 'application'
+              AND COALESCE(json_extract(metadata, '$.source'), '') != 'migration'
+            ORDER BY entity_id, created_at
         """)
+        event_rows = [dict(row) for row in cursor.fetchall()]
 
-        stats = {}
-        for row in cursor.fetchall():
-            stats[row['status']] = {
-                'avg_days': row['avg_days'] or 0,
-                'min_days': row['min_days'] or 0,
-                'max_days': row['max_days'] or 0,
-                'count': row['count'],
-            }
+        cursor.execute("SELECT id, applied_at FROM applications")
+        applied_at = {row['id']: row['applied_at'] for row in cursor.fetchall()}
 
-        return stats
+    by_app: dict[int, list[dict]] = {}
+    for row in event_rows:
+        by_app.setdefault(row['entity_id'], []).append(row)
+
+    now = datetime.now()
+    durations: dict[str, list[float]] = {}
+
+    def _record(status: Optional[str], start: Optional[datetime], end: Optional[datetime]) -> None:
+        if not status or status in ('skipped', 'prospect') or not start or not end:
+            return
+        days = (end - start).total_seconds() / 86400
+        if days >= 0:
+            durations.setdefault(status, []).append(days)
+
+    for app_id, app_events in by_app.items():
+        prev_ts = _parse_evidence_datetime(applied_at.get(app_id) or '')
+        for event in app_events:
+            ts = _parse_evidence_datetime(event['created_at'])
+            _record(event['old_status'], prev_ts, ts)
+            prev_ts = ts or prev_ts
+        # Current stage is still open
+        _record(app_events[-1]['new_status'], prev_ts, now)
+
+    stats = {}
+    for status, days_list in durations.items():
+        stats[status] = {
+            'avg_days': round(sum(days_list) / len(days_list), 1),
+            'min_days': round(min(days_list), 1),
+            'max_days': round(max(days_list), 1),
+            'count': len(days_list),
+        }
+
+    return stats
 
 
 def get_application_timeline(days: int = 30) -> list[dict[str, Any]]:
@@ -379,18 +577,26 @@ def get_weekly_summary(weeks: int = 4) -> list[dict[str, Any]]:
         return [dict(row) for row in cursor.fetchall()]
 
 
-def get_all_analytics() -> dict[str, Any]:
-    """Get all analytics data for the dashboard."""
+def get_all_analytics(days: int = 30) -> dict[str, Any]:
+    """Get all analytics data for the dashboard.
+
+    Args:
+        days: Window for time-bounded sections (timeline, weekly summary).
+    """
+    weeks = max(4, min(days // 7, 52))
     return {
         'funnel': get_funnel_stats(),
+        'funnel_summary': get_funnel_summary(),
+        'event_funnel': get_event_conversion_funnel(),
         'time_in_stage': get_time_in_stage_stats(),
-        'timeline': get_application_timeline(30),
+        'timeline': get_application_timeline(days),
         'response_rates': get_company_response_rates()[:10],
         'fit_score_analysis': get_fit_score_analysis(),
         'rejection_patterns': get_rejection_patterns(),
         'timing_insights': get_timing_insights(),
-        'weekly_summary': get_weekly_summary(4),
+        'weekly_summary': get_weekly_summary(weeks),
         'stage_progression': get_stage_progression_stats(),
+        'window_days': days,
     }
 
 
@@ -411,7 +617,10 @@ def get_stage_progression_stats() -> dict[str, Any]:
     with get_connection() as conn:
         cursor = conn.cursor()
 
-        # Get unique applications that reached each status via events
+        # Get unique applications that reached each status via events.
+        # Excludes source='migration' events: those are a one-time snapshot of
+        # current status at migration time, not real progressions, and some
+        # were later corrected without new events.
         cursor.execute("""
             SELECT
                 json_extract(new_value, '$.status') as status,
@@ -420,6 +629,7 @@ def get_stage_progression_stats() -> dict[str, Any]:
             WHERE event_type = 'status_change'
               AND entity_type = 'application'
               AND json_extract(new_value, '$.status') IS NOT NULL
+              AND COALESCE(json_extract(metadata, '$.source'), '') != 'migration'
             GROUP BY json_extract(new_value, '$.status')
         """)
 
@@ -429,7 +639,8 @@ def get_stage_progression_stats() -> dict[str, Any]:
             if status and status not in ('skipped', 'prospect'):
                 reached[status] = row['unique_apps']
 
-        # Also check current status for apps without event history
+        # Also check current status for apps without (non-migration) event
+        # history, so migration-only apps still count by current status.
         cursor.execute("""
             SELECT status, COUNT(DISTINCT id) as count
             FROM applications
@@ -437,6 +648,7 @@ def get_stage_progression_stats() -> dict[str, Any]:
               AND id NOT IN (
                   SELECT DISTINCT entity_id FROM events
                   WHERE event_type = 'status_change' AND entity_type = 'application'
+                    AND COALESCE(json_extract(metadata, '$.source'), '') != 'migration'
               )
             GROUP BY status
         """)
@@ -487,6 +699,7 @@ def get_event_conversion_funnel() -> dict[str, Any]:
                 WHERE event_type = 'status_change'
                   AND entity_type = 'application'
                   AND json_extract(new_value, '$.status') NOT IN ('skipped', 'prospect', 'rejected', 'withdrawn')
+                  AND COALESCE(json_extract(metadata, '$.source'), '') != 'migration'
             ),
             app_highest AS (
                 SELECT

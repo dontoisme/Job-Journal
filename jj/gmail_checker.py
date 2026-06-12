@@ -184,7 +184,12 @@ def infer_company_domain(company: str) -> Optional[str]:
         if clean.endswith(suffix):
             clean = clean[:-len(suffix)]
 
-    # Remove special characters and spaces
+    # Multi-word names rarely map to a guessable .com; let the ATS and
+    # subject-keyword queries handle them instead of searching a wrong domain.
+    if ' ' in clean.strip():
+        return None
+
+    # Remove special characters
     clean = re.sub(r'[^a-z0-9]', '', clean)
 
     if clean:
@@ -232,7 +237,17 @@ class GmailClient:
         self._config = load_email_domains()
 
     def authenticate(self) -> bool:
-        """Authenticate with Gmail API. Returns True if successful."""
+        """Authenticate with Gmail API. Returns True if successful.
+
+        In headless contexts (JJ_HEADLESS=1 or stdin is not a TTY), this is
+        refresh-only: if the token is missing or unrefreshable it raises
+        RuntimeError instead of opening the browser OAuth flow, so scheduled
+        runs fail loudly rather than hang.
+        """
+        import os
+        import sys
+
+        headless = os.environ.get("JJ_HEADLESS") == "1" or not sys.stdin.isatty()
         creds = None
 
         # Load existing token
@@ -245,11 +260,21 @@ class GmailClient:
                 try:
                     creds.refresh(Request())
                 except Exception:
+                    if headless:
+                        raise RuntimeError(
+                            "Gmail token expired and could not be refreshed. "
+                            "Run 'jj email setup' from a terminal to re-authenticate."
+                        )
                     # Token revoked or refresh failed — delete stale token, start fresh
                     if TOKEN_PATH.exists():
                         TOKEN_PATH.unlink()
                     creds = None
             if not creds or not creds.valid:
+                if headless:
+                    raise RuntimeError(
+                        "Gmail token missing or invalid and browser OAuth is not "
+                        "available headlessly. Run 'jj email setup' from a terminal."
+                    )
                 if not CREDENTIALS_PATH.exists():
                     raise FileNotFoundError(
                         f"Gmail credentials not found at {CREDENTIALS_PATH}.\n"
@@ -451,6 +476,21 @@ class GmailClient:
 
         return results
 
+    def _ats_sender_terms(self) -> str:
+        """Build the from:() term list for known ATS platforms.
+
+        Derived from email_domains.yaml ats_patterns so the query list stays
+        in sync with the configured platforms.
+        """
+        domains = set()
+        for addresses in (self._config.get('ats_patterns') or {}).values():
+            for addr in addresses:
+                if '@' in addr:
+                    domains.add(addr.split('@', 1)[1])
+        # Workable has no fixed sender pattern in the YAML; keep legacy terms
+        domains.update({'workable', 'workablemail'})
+        return " OR ".join(sorted(domains))
+
     def _build_company_queries(
         self,
         company: str,
@@ -486,9 +526,7 @@ class GmailClient:
                 )
 
             # PRIORITY 2: ATS platforms with company name variants in subject
-            ats_from = " OR ".join([
-                "ashbyhq", "greenhouse", "lever", "icims", "rippling", "workday", "workable", "workablemail"
-            ])
+            ats_from = self._ats_sender_terms()
             # Search for each company name variant
             for name in company_names:
                 clean_name = name.replace('"', "").strip()
@@ -513,9 +551,7 @@ class GmailClient:
                 )
 
             # PRIORITY 2: ATS with company name variants anywhere
-            ats_from = " OR ".join([
-                "ashbyhq", "greenhouse", "lever", "icims", "rippling", "workable", "workablemail"
-            ])
+            ats_from = self._ats_sender_terms()
             for name in company_names:
                 clean_name = name.replace('"', "").strip()
                 queries.append(
@@ -1045,10 +1081,14 @@ def sync_application_emails(
 
     from jj.db import (
         RESOLUTION_TO_STATUS,
+        STATUS_ORDER,
+        TERMINAL_STATUSES,
         add_application_email,
         email_already_recorded,
+        get_application,
         get_confirmation_email,
         get_resolution_email,
+        log_event,
         transition_application_status,
         update_application_pairing_status,
     )
@@ -1091,16 +1131,13 @@ def sync_application_emails(
         else:
             search_after = datetime.now() - timedelta(days=30)
 
-        # Check current pairing state
+        # Check current pairing state. A resolved app keeps syncing so later
+        # resolutions (post-screen rejection, offer) are still captured.
         existing_confirmation = get_confirmation_email(app_id)
         existing_resolution = get_resolution_email(app_id)
 
         if existing_resolution:
             summary['already_resolved'] += 1
-            if verbose:
-                print("  Already resolved")
-            update_application_pairing_status(app_id)
-            continue
 
         # Search for emails from this company
         try:
@@ -1112,6 +1149,9 @@ def sync_application_emails(
         except Exception as e:
             summary['errors'].append(f"{company}: {str(e)}")
             continue
+
+        # Process chronologically so multi-stage threads resolve in order
+        emails.sort(key=lambda e: e.date or datetime.min)
 
         for email in emails:
             # Skip if already recorded
@@ -1145,10 +1185,10 @@ def sync_application_emails(
                 if verbose:
                     print(f"  Found confirmation: {email.subject}")
 
-            elif pair_type == 'resolution' and not existing_resolution:
+            elif pair_type == 'resolution':
                 # First positive response is always recruiter_screen, not interview
                 # (Companies often say "interview" for initial recruiter calls)
-                if resolution_type == 'interview':
+                if resolution_type == 'interview' and not existing_resolution:
                     resolution_type = 'screening'
 
                 add_application_email(
@@ -1171,22 +1211,42 @@ def sync_application_emails(
                 if verbose:
                     print(f"  Found resolution ({resolution_type}): {email.subject}")
 
-                # Auto-sync resolution to application status
+                # Auto-sync resolution to application status: forward moves
+                # only, except rejection/offer which apply from any active
+                # status. Terminal statuses are never overwritten.
                 if resolution_type:
                     new_status = RESOLUTION_TO_STATUS.get(resolution_type)
-                    if new_status:
-                        transition_application_status(
-                            app_id,
-                            new_status,
-                            reason=f"Email resolution: {resolution_type}",
-                            source='email',
-                            metadata={'email_id': email.message_id}
+                    current_status = (get_application(app_id) or {}).get('status')
+                    if new_status and current_status not in TERMINAL_STATUSES:
+                        forward = (
+                            STATUS_ORDER.get(new_status, 0)
+                            > STATUS_ORDER.get(current_status, 0)
                         )
-                        if verbose:
-                            print(f"  Updated status to '{new_status}'")
+                        if forward or new_status in ('rejected', 'offer'):
+                            transition_application_status(
+                                app_id,
+                                new_status,
+                                reason=f"Email resolution: {resolution_type}",
+                                source='email',
+                                metadata={'email_id': email.message_id}
+                            )
+                            if verbose:
+                                print(f"  Updated status to '{new_status}'")
 
         # Update pairing status
         update_application_pairing_status(app_id)
+
+    # Record the sync run so the dashboard can show sync freshness
+    log_event(
+        event_type='email_sync_run',
+        entity_type='system',
+        metadata={
+            'applications_checked': summary['applications_checked'],
+            'confirmations_found': summary['confirmations_found'],
+            'resolutions_found': summary['resolutions_found'],
+            'errors': len(summary['errors']),
+        },
+    )
 
     return summary
 

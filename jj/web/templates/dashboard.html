@@ -20,6 +20,44 @@
 </div>
 {% endif %}
 
+<!-- Funnel Summary: applications / calls / interviews / offers -->
+{% if funnel_summary and funnel_summary.stages %}
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div class="card-header">
+        <span class="card-title">🎯 Funnel</span>
+        <span style="font-size: 0.75rem; color: var(--text-secondary);">week of {{ funnel_summary.week_start }}</span>
+    </div>
+    <table style="width: 100%; border-collapse: collapse;">
+        <thead>
+            <tr style="text-align: right; color: var(--text-secondary); font-size: 0.8rem;">
+                <th style="text-align: left; padding: 0.25rem 0;">Stage</th>
+                <th style="padding: 0.25rem 0;">This Week</th>
+                <th style="padding: 0.25rem 0;">This Month</th>
+                <th style="padding: 0.25rem 0;">All Time</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for stage in funnel_summary.stages %}
+            <tr style="text-align: right; border-top: 1px solid var(--border);">
+                <td style="text-align: left; padding: 0.4rem 0; font-weight: 600;">{{ stage.label }}</td>
+                <td>{{ stage.this_week }}</td>
+                <td>{{ stage.this_month }}</td>
+                <td style="color: var(--accent); font-weight: 600;">{{ stage.all_time }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% if funnel_summary.conversion_rates %}
+    {% set cr = funnel_summary.conversion_rates %}
+    <div style="margin-top: 0.5rem; font-size: 0.8rem; color: var(--text-secondary);">
+        {% if cr.applications_to_calls is defined %}Application &rarr; Call {{ cr.applications_to_calls }}%{% endif %}
+        {% if cr.calls_to_interviews is defined %} &middot; Call &rarr; Interview {{ cr.calls_to_interviews }}%{% endif %}
+        {% if cr.interviews_to_offers is defined %} &middot; Interview &rarr; Offer {{ cr.interviews_to_offers }}%{% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
 <!-- Pipeline Visualization -->
 <div class="card pipeline-card" style="margin-bottom: 1.5rem;">
     <div class="card-header">
@@ -43,10 +81,10 @@
         </div>
         <div class="pipeline-arrow">&rarr;</div>
         <div class="pipeline-stage">
-            <div class="pipeline-count">{{ pipeline.screening.count if pipeline.screening else 0 }}</div>
-            <div class="pipeline-label">Screening</div>
-            {% if pipeline.screening and pipeline.screening.avg_days %}
-            <div class="pipeline-days">{{ pipeline.screening.avg_days|int }}d avg</div>
+            <div class="pipeline-count">{{ pipeline.recruiter_screen.count if pipeline.recruiter_screen else 0 }}</div>
+            <div class="pipeline-label">Calls</div>
+            {% if pipeline.recruiter_screen and pipeline.recruiter_screen.avg_days %}
+            <div class="pipeline-days">{{ pipeline.recruiter_screen.avg_days|int }}d avg</div>
             {% endif %}
         </div>
         <div class="pipeline-arrow">&rarr;</div>
@@ -72,8 +110,8 @@
         <div class="stat-label">Applied</div>
     </div>
     <div class="stat-card">
-        <div class="stat-value">{{ counts.screening }}</div>
-        <div class="stat-label">Screening</div>
+        <div class="stat-value">{{ counts.recruiter_screen }}</div>
+        <div class="stat-label">Calls</div>
     </div>
     <div class="stat-card warning">
         <div class="stat-value">{{ counts.interview }}</div>
@@ -90,11 +128,24 @@
 <div class="card" style="margin-top: 1.5rem;">
     <div class="card-header">
         <span class="card-title">📧 Email Pairing</span>
-        {% if pairing.ghosted > 0 %}
-        <span class="badge badge-danger">{{ pairing.ghosted }} ghosted</span>
-        {% else %}
-        <span class="badge badge-success">{{ pairing.resolved }} resolved</span>
-        {% endif %}
+        <span>
+            {% if sync_health %}
+            {% set sync_colors = {'green': 'var(--success)', 'yellow': 'var(--warning)', 'red': 'var(--danger)'} %}
+            <span style="font-size: 0.75rem; color: {{ sync_colors[sync_health.status] }};" title="Email sync freshness">
+                &#9679;
+                {% if sync_health.hours_ago is not none %}
+                synced {{ sync_health.hours_ago }}h ago
+                {% else %}
+                never synced
+                {% endif %}
+            </span>
+            {% endif %}
+            {% if pairing.ghosted > 0 %}
+            <span class="badge badge-danger">{{ pairing.ghosted }} ghosted</span>
+            {% else %}
+            <span class="badge badge-success">{{ pairing.resolved }} resolved</span>
+            {% endif %}
+        </span>
     </div>
 
     <!-- Pairing status visualization -->

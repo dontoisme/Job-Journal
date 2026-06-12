@@ -12,12 +12,16 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from jj.analytics import get_all_analytics, get_funnel_stats, get_weekly_summary
+from jj.analytics import (
+    get_all_analytics,
+    get_funnel_stats,
+    get_funnel_summary,
+    get_weekly_summary,
+)
 from jj.config import CORPUS_PATH, JJ_HOME, load_profile
 from jj.db import (
     DB_PATH,
     backfill_activity_dates,
-    create_task,
     get_all_twc_claim_periods,
     get_application,
     get_applications,
@@ -41,7 +45,6 @@ from jj.db import (
     # TWC functions
     get_twc_week_boundaries,
     get_twc_week_summary,
-    log_event,
     mark_twc_payment_submitted,
     update_application,
     update_twc_fields,
@@ -378,6 +381,38 @@ def get_application_counts():
     return counts
 
 
+def get_email_sync_health():
+    """Summarize email sync freshness for the dashboard widget."""
+    from datetime import timezone
+
+    from jj.db import get_last_email_sync
+
+    last = get_last_email_sync()
+    if not last:
+        return {"status": "red", "synced_at": None, "hours_ago": None, "summary": {}}
+
+    try:
+        # events.created_at is CURRENT_TIMESTAMP, which SQLite stores in UTC
+        synced = datetime.fromisoformat(last["synced_at"]).replace(tzinfo=timezone.utc)
+        hours_ago = (datetime.now(timezone.utc) - synced).total_seconds() / 3600
+    except ValueError:
+        return {"status": "red", "synced_at": last["synced_at"], "hours_ago": None, "summary": last["summary"]}
+
+    if hours_ago < 4:
+        status = "green"
+    elif hours_ago < 24:
+        status = "yellow"
+    else:
+        status = "red"
+
+    return {
+        "status": status,
+        "synced_at": last["synced_at"],
+        "hours_ago": round(hours_ago, 1),
+        "summary": last["summary"],
+    }
+
+
 def get_email_stats():
     """Get email confirmation, update stats, and pairing stats."""
     import sqlite3
@@ -620,6 +655,9 @@ async def dashboard(request: Request):
     focus = get_todays_focus()
     focus_counts = get_focus_counts()
 
+    funnel_summary = get_funnel_summary()
+    sync_health = get_email_sync_health()
+
     return templates.TemplateResponse("dashboard.html", {
         "request": request,
         "stats": stats,
@@ -632,6 +670,8 @@ async def dashboard(request: Request):
         "email_stats": email_stats,
         "focus": focus,
         "focus_counts": focus_counts,
+        "funnel_summary": funnel_summary,
+        "sync_health": sync_health,
     })
 
 
@@ -957,8 +997,10 @@ async def api_prospects(include_stale: bool = False):
 @app.post("/api/prospects/{app_id}/archive")
 async def api_archive_prospect(app_id: int):
     """Archive a prospect by setting status to 'stale'."""
-    from jj.db import update_application
-    success = update_application(app_id, status="stale")
+    from jj.db import transition_application_status
+    success = transition_application_status(
+        app_id, "stale", reason="Prospect archived", source="web"
+    )
     if success:
         return {"ok": True}
     return JSONResponse(status_code=404, content={"error": "Not found"})
@@ -968,13 +1010,12 @@ async def api_archive_prospect(app_id: int):
 async def api_mark_applied(app_id: int):
     """Mark a prospect as applied."""
     from datetime import datetime
-    from jj.db import update_application
-    success = update_application(
-        app_id,
-        status="applied",
-        applied_at=datetime.now().isoformat(),
+    from jj.db import transition_application_status, update_application
+    success = transition_application_status(
+        app_id, "applied", reason="Marked applied from prospect board", source="web"
     )
     if success:
+        update_application(app_id, applied_at=datetime.now().isoformat())
         return {"ok": True}
     return JSONResponse(status_code=404, content={"error": "Not found"})
 
@@ -1125,27 +1166,39 @@ async def api_enrich_area(request: Request, area_id: int):
 # Analytics routes
 # --------------------------------------------------------------------------
 
+ANALYTICS_RANGES = {"30": 30, "90": 90, "180": 180, "all": 3650}
+
+
 @app.get("/analytics", response_class=HTMLResponse)
-async def analytics_page(request: Request):
+async def analytics_page(request: Request, days: str = "30", granularity: str = "week"):
     """Analytics dashboard page."""
-    analytics = get_all_analytics()
+    window = ANALYTICS_RANGES.get(days, 30)
+    analytics = get_all_analytics(days=window)
 
     return templates.TemplateResponse("analytics.html", {
         "request": request,
         "analytics": analytics,
+        "current_range": days if days in ANALYTICS_RANGES else "30",
+        "granularity": granularity if granularity in ("week", "month") else "week",
     })
 
 
 @app.get("/api/analytics")
-async def api_analytics():
+async def api_analytics(days: str = "30"):
     """Get all analytics data."""
-    return get_all_analytics()
+    return get_all_analytics(days=ANALYTICS_RANGES.get(days, 30))
 
 
 @app.get("/api/analytics/funnel")
 async def api_funnel():
     """Get funnel statistics."""
     return get_funnel_stats()
+
+
+@app.get("/api/analytics/summary")
+async def api_funnel_summary():
+    """Get evidence-based funnel summary: applications, calls, interviews, offers."""
+    return get_funnel_summary()
 
 
 @app.get("/api/analytics/weekly")
@@ -1202,17 +1255,13 @@ async def archive_application(app_id: int):
     if not app:
         return JSONResponse({"error": "Application not found"}, status_code=404)
 
+    from jj.db import transition_application_status
     old_status = app.get('status')
-    success = update_application(app_id, status='skipped')
+    success = transition_application_status(
+        app_id, 'skipped', reason='Archived via dashboard', source='web'
+    )
 
     if success:
-        log_event(
-            'application_archived',
-            entity_type='application',
-            entity_id=app_id,
-            old_value={'status': old_status},
-            new_value={'status': 'skipped'},
-        )
         return {"success": True}
     return JSONResponse({"error": "Failed to archive"}, status_code=500)
 
@@ -1275,13 +1324,6 @@ async def api_tasks():
         "tasks": get_recent_tasks(limit=20),
         "stats": get_task_stats(),
     }
-
-
-@app.post("/api/tasks/email-sync")
-async def trigger_email_sync():
-    """Trigger an email sync task."""
-    task_id = create_task('email_sync', priority=10)
-    return {"task_id": task_id, "status": "queued"}
 
 
 # --------------------------------------------------------------------------

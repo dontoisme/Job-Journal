@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# email-sync-launcher.sh — LaunchAgent wrapper for jj email sync
+# email-sync-launcher.sh — LaunchAgent wrapper for jj email pair
 #
 # Called by macOS LaunchAgent (com.jj.email-sync.plist) every 2 hours.
-# Runs a lightweight email sync without Claude — just the CLI directly.
+# Runs the email pairing sync without Claude — just the CLI directly.
+# JJ_HEADLESS=1 makes Gmail auth fail loudly instead of opening a browser.
 
 echo "=== Email sync: $(date '+%Y-%m-%d %H:%M:%S') ==="
 
@@ -34,9 +35,9 @@ if [ ! -f "$HOME/.job-journal/gmail_token.json" ]; then
     exit 0
 fi
 
-# Run email sync (last 3 days, non-verbose for log cleanliness)
-echo "Running jj email sync --days 3..."
-jj email sync --days 3 2>&1
+# Run pairing sync (active applications only, non-verbose for log cleanliness)
+echo "Running jj email pair..."
+JJ_HEADLESS=1 jj email pair 2>&1
 
 EXIT_CODE=$?
 echo "=== Email sync complete: $(date '+%Y-%m-%d %H:%M:%S') (exit: $EXIT_CODE) ==="

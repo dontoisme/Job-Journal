@@ -4,6 +4,16 @@
 {% block page_title %}Analytics{% endblock %}
 
 {% block content %}
+<!-- Date range selector -->
+<div style="display: flex; gap: 0.5rem; margin-bottom: 1rem; align-items: center;">
+    <span style="font-size: 0.8rem; color: var(--text-secondary);">Range:</span>
+    {% for range_key, range_label in [('30', '30 days'), ('90', '90 days'), ('180', '180 days'), ('all', 'All time')] %}
+    <a href="/analytics?days={{ range_key }}&granularity={{ granularity }}"
+       class="badge {% if current_range == range_key %}badge-accent{% endif %}"
+       style="text-decoration: none;">{{ range_label }}</a>
+    {% endfor %}
+</div>
+
 <!-- Conversion Funnel -->
 <div class="card" style="margin-bottom: 1.5rem;">
     <div class="card-header">
@@ -29,13 +39,13 @@
         {% if analytics.funnel.conversion_rates.applied_to_screening %}
         <div class="rate-item">
             <div class="rate-value">{{ analytics.funnel.conversion_rates.applied_to_screening }}%</div>
-            <div class="rate-label">Applied → Screening</div>
+            <div class="rate-label">Applied → Calls</div>
         </div>
         {% endif %}
         {% if analytics.funnel.conversion_rates.screening_to_interview %}
         <div class="rate-item">
             <div class="rate-value">{{ analytics.funnel.conversion_rates.screening_to_interview }}%</div>
-            <div class="rate-label">Screening → Interview</div>
+            <div class="rate-label">Calls → Interview</div>
         </div>
         {% endif %}
         {% if analytics.funnel.conversion_rates.interview_to_offer %}
@@ -52,6 +62,72 @@
     </div>
     {% endif %}
 </div>
+
+<!-- True Funnel (event-based): apps that ever reached each stage -->
+{% if analytics.event_funnel and analytics.event_funnel.reached_at_least %}
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div class="card-header">
+        <span class="card-title">True Funnel (event history)</span>
+        <span style="font-size: 0.75rem; color: var(--text-secondary);">apps that ever reached each stage</span>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.5rem;">
+        {% for stage_key, stage_label in [('applied', 'Applied'), ('recruiter_screen', 'Recruiter'), ('hiring_manager', 'HM'), ('interview', 'Interview'), ('offer', 'Offer')] %}
+        <div class="pairing-stat">
+            <div class="pairing-count">{{ analytics.event_funnel.reached_at_least.get(stage_key, 0) }}</div>
+            <div class="pairing-label">{{ stage_label }}</div>
+        </div>
+        {% endfor %}
+    </div>
+    {% if analytics.event_funnel.conversion_rates %}
+    <div style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid var(--border); font-size: 0.8rem; color: var(--text-secondary);">
+        {% for key, rate in analytics.event_funnel.conversion_rates.items() %}
+        {{ key.replace('_to_', ' → ').replace('_', ' ') }}: {{ rate }}%{% if not loop.last %} &middot; {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<!-- Activity Trail: applications / calls / interviews / offers per period -->
+{% if analytics.funnel_summary %}
+{% set trail = analytics.funnel_summary.months if granularity == 'month' else analytics.funnel_summary.weeks %}
+{% set trail_field = 'month' if granularity == 'month' else 'week_start' %}
+<div class="card" style="margin-bottom: 1.5rem;">
+    <div class="card-header">
+        <span class="card-title">Activity Trail</span>
+        <span>
+            <a href="/analytics?days={{ current_range }}&granularity=week"
+               class="badge {% if granularity == 'week' %}badge-accent{% endif %}"
+               style="text-decoration: none;">Weekly</a>
+            <a href="/analytics?days={{ current_range }}&granularity=month"
+               class="badge {% if granularity == 'month' %}badge-accent{% endif %}"
+               style="text-decoration: none;">Monthly</a>
+        </span>
+    </div>
+    <table style="width: 100%; border-collapse: collapse; font-size: 0.85rem;">
+        <thead>
+            <tr style="text-align: right; color: var(--text-secondary);">
+                <th style="text-align: left; padding: 0.25rem 0;">{{ 'Month' if granularity == 'month' else 'Week of' }}</th>
+                <th>Applications</th>
+                <th>Calls</th>
+                <th>Interviews</th>
+                <th>Offers</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in trail|reverse %}
+            <tr style="text-align: right; border-top: 1px solid var(--border);">
+                <td style="text-align: left; padding: 0.3rem 0;">{{ row[trail_field] }}</td>
+                <td>{{ row.applications }}</td>
+                <td>{{ row.calls }}</td>
+                <td>{{ row.interviews }}</td>
+                <td>{{ row.offers }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
 
 <!-- Stats Grid -->
 <div class="analytics-grid">

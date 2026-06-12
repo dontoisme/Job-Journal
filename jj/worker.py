@@ -3,7 +3,7 @@
 import json
 import signal
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Callable, Optional
 
 from rich.console import Console
@@ -38,102 +38,6 @@ def register_handler(task_type: str):
 # --------------------------------------------------------------------------
 # Task Handlers
 # --------------------------------------------------------------------------
-
-@register_handler('email_sync')
-def handle_email_sync(payload: dict) -> dict:
-    """Handle email sync task - check for confirmations and updates."""
-    try:
-        from jj.db import (
-            get_applications_for_update_check,
-            get_applications_missing_confirmation,
-            update_application,
-            update_application_email_confirmation,
-            update_application_latest_update,
-        )
-        from jj.gmail_checker import (
-            get_gmail_service,
-            search_updates,
-            verify_confirmations,
-        )
-
-        service = get_gmail_service()
-        if not service:
-            return {'error': 'Gmail not configured', 'confirmations': 0, 'updates': 0}
-
-        results = {
-            'confirmations_found': 0,
-            'updates_found': 0,
-            'applications_checked': 0,
-        }
-
-        # Check for confirmation emails
-        unconfirmed = get_applications_missing_confirmation()
-        if unconfirmed:
-            confirmations = verify_confirmations(service, unconfirmed)
-            for app_id, result in confirmations.items():
-                if result.confirmed:
-                    update_application_email_confirmation(
-                        app_id,
-                        confirmed=True,
-                        confirmed_at=result.confirmed_at,
-                        email_id=result.email_id,
-                    )
-                    log_event(
-                        'email_confirmed',
-                        entity_type='application',
-                        entity_id=app_id,
-                        new_value={'email_id': result.email_id},
-                    )
-                    results['confirmations_found'] += 1
-
-        # Check for updates
-        days = payload.get('days', 7)
-        to_check = get_applications_for_update_check()
-        if to_check:
-            updates = search_updates(service, to_check, days=days)
-            for app_id, update in updates.items():
-                update_application_latest_update(
-                    app_id,
-                    update_type=update.update_type,
-                    update_at=update.update_at,
-                    subject=update.subject,
-                    email_id=update.email_id,
-                )
-
-                # Auto-update status based on email type
-                if update.update_type == 'interview':
-                    update_application(app_id, status='interview')
-                elif update.update_type == 'rejection':
-                    update_application(app_id, status='rejected')
-
-                log_event(
-                    'email_update_received',
-                    entity_type='application',
-                    entity_id=app_id,
-                    new_value={
-                        'update_type': update.update_type,
-                        'subject': update.subject,
-                    },
-                )
-                results['updates_found'] += 1
-
-        results['applications_checked'] = len(unconfirmed) + len(to_check)
-        return results
-
-    except ImportError:
-        return {'error': 'Gmail module not available', 'confirmations': 0, 'updates': 0}
-    except Exception as e:
-        return {'error': str(e), 'confirmations': 0, 'updates': 0}
-
-
-@register_handler('schedule_email_sync')
-def handle_schedule_email_sync(payload: dict) -> dict:
-    """Schedule the next email sync task."""
-    # Schedule next sync in 1 hour
-    next_run = (datetime.now() + timedelta(hours=1)).isoformat()
-    task_id = create_task('email_sync', priority=5, scheduled_for=next_run)
-    return {'scheduled_task_id': task_id, 'scheduled_for': next_run}
-
 
 @register_handler('workflow_apply')
 def handle_workflow_apply(payload: dict) -> dict:
@@ -335,24 +239,6 @@ def worker_status():
             )
 
         console.print(table)
-
-
-def schedule_email_sync(hours: int = 1):
-    """Schedule recurring email sync."""
-    init_database()
-
-    # Create immediate sync task
-    task_id = create_task('email_sync', priority=5)
-    console.print(f"[green]Created email sync task (ID: {task_id})[/green]")
-
-    # Schedule next sync
-    next_run = (datetime.now() + timedelta(hours=hours)).isoformat()
-    create_task(
-        'schedule_email_sync',
-        priority=1,
-        scheduled_for=next_run,
-    )
-    console.print(f"[dim]Next sync scheduled for {next_run}[/dim]")
 
 
 def run_task_now(task_type: str, payload: Optional[dict] = None):
