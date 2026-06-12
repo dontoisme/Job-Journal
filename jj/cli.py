@@ -1971,6 +1971,81 @@ def app_round(
     )
 
 
+@app_cmd.command("prep")
+def app_prep(
+    url: str = typer.Option(None, "--url", "-u", help="Job posting URL (matches or creates context)"),
+    app_id: int = typer.Option(None, "--id", help="Existing application/prospect ID"),
+    archetype: str = typer.Option("general", "--archetype", "-a", help="Resume variant: growth, ai-agentic, health-tech, general"),
+):
+    """Emit the full autofill payload for apply-assist as JSON.
+
+    Bundles contact/profile fields, screening answers, the matching
+    archetype resume PDF path, and the tracker record (if any) so the
+    browser-assisted apply flow can fill an ATS form in one pass.
+    """
+    import json as json_mod
+
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    from jj.config import load_archetypes, load_profile
+    from jj.db import get_application, get_connection
+
+    profile = load_profile()
+
+    # Resolve archetype -> pdf_path (yaml may nest under 'archetypes')
+    arch_config = load_archetypes() or {}
+    variants = arch_config.get("archetypes", arch_config)
+    variant = variants.get(archetype)
+    if not variant:
+        console.print(f"[red]Unknown archetype '{archetype}'. Available: {', '.join(sorted(variants.keys()))}[/red]")
+        raise typer.Exit(1)
+    pdf_path = variant.get("pdf_path", "")
+    if not pdf_path or not Path(pdf_path).exists():
+        console.print(f"[red]Archetype PDF missing: {pdf_path}[/red]")
+        raise typer.Exit(1)
+
+    # Find the tracker record by id or URL
+    application = None
+    if app_id:
+        application = get_application(app_id)
+        if not application:
+            console.print(f"[red]Application {app_id} not found.[/red]")
+            raise typer.Exit(1)
+    elif url:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM applications WHERE job_url = ? LIMIT 1", (url,))
+            row = cursor.fetchone()
+            application = dict(row) if row else None
+
+    payload = {
+        "name": profile.get("name", {}),
+        "contact": profile.get("contact", {}),
+        "links": profile.get("links", {}),
+        "work_authorization": profile.get("work_authorization", ""),
+        "years_experience": profile.get("years_experience"),
+        "current_company": profile.get("current_company", ""),
+        "current_title": profile.get("current_title", ""),
+        "education": profile.get("education", {}),
+        "defaults": profile.get("defaults", {}),
+        "screening_answers": profile.get("screening_answers", {}),
+        "archetype": {"variant": archetype, "pdf_path": pdf_path},
+        "application": {
+            "id": application.get("id"),
+            "company": application.get("company"),
+            "position": application.get("position"),
+            "status": application.get("status"),
+            "fit_score": application.get("fit_score"),
+            "job_url": application.get("job_url"),
+        } if application else None,
+        "job_url": url or (application.get("job_url") if application else None),
+    }
+
+    print(json_mod.dumps(payload, indent=2))
+
+
 @app_cmd.command("status")
 def app_status(
     ghosted: bool = typer.Option(False, "--ghosted", "-g", help="Show only ghosted applications"),
