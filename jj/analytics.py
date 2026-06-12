@@ -26,6 +26,7 @@ _FUNNEL_EVIDENCE_SQL = """
     WHERE event_type = 'status_change'
       AND entity_type = 'application'
       AND COALESCE(json_extract(metadata, '$.source'), '') != 'migration'
+      AND COALESCE(json_extract(metadata, '$.invalidated'), 0) != 1
       AND json_extract(new_value, '$.status') IN
           ('recruiter_screen', 'hiring_manager', 'screening', 'interview', 'technical', 'offer')
 
@@ -630,6 +631,7 @@ def get_stage_progression_stats() -> dict[str, Any]:
               AND entity_type = 'application'
               AND json_extract(new_value, '$.status') IS NOT NULL
               AND COALESCE(json_extract(metadata, '$.source'), '') != 'migration'
+              AND COALESCE(json_extract(metadata, '$.invalidated'), 0) != 1
             GROUP BY json_extract(new_value, '$.status')
         """)
 
@@ -700,6 +702,7 @@ def get_event_conversion_funnel() -> dict[str, Any]:
                   AND entity_type = 'application'
                   AND json_extract(new_value, '$.status') NOT IN ('skipped', 'prospect', 'rejected', 'withdrawn')
                   AND COALESCE(json_extract(metadata, '$.source'), '') != 'migration'
+                  AND COALESCE(json_extract(metadata, '$.invalidated'), 0) != 1
             ),
             app_highest AS (
                 SELECT

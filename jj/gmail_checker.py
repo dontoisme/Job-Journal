@@ -87,16 +87,34 @@ class PairingResult:
     saved: bool = False
 
 
+# Unambiguous rejection phrases. These win over every other signal because
+# rejection emails routinely mention the interview they're closing out
+# ("thank you for taking the time to interview... we've decided to move
+# forward with other candidates").
+STRONG_REJECTION_SIGNALS = [
+    "move forward with other candidates",
+    "moving forward with other candidates",
+    "not moving forward",
+    "not to move forward",
+    "forward with other applicants",
+    "regret to inform",
+    "will not be pursuing",
+    "pursued other candidates",
+    "position has been filled",
+    "gone with another candidate",
+    "decided not to proceed",
+    "not selected",
+    "unfortunately",
+]
+
 # Resolution signal patterns for email classification
 RESOLUTION_SIGNALS = {
     'rejection': [
         "thank you for your interest",
-        "unfortunately", "not moving forward",
-        "other candidates", "position has been filled",
-        "wish you the best", "will not be pursuing",
-        "decided not to proceed", "gone with another candidate",
-        "regret to inform", "not a fit", "not the right fit",
-        "pursued other candidates", "best of luck",
+        "other candidates",
+        "wish you the best",
+        "not a fit", "not the right fit",
+        "best of luck",
     ],
     'screening': [
         "would like to schedule", "interested in speaking",
@@ -111,10 +129,12 @@ RESOLUTION_SIGNALS = {
         "next round", "panel", "on-site",
         "video interview", "meet our team",
     ],
+    # Offer requires explicit offer language; bare "offer"/"congratulations"
+    # match marketing email ("Your Nitro offer ends soon!")
     'offer': [
-        "offer", "compensation", "start date",
-        "background check", "we'd like to extend",
-        "pleased to offer", "congratulations",
+        "pleased to offer", "extend an offer", "we'd like to extend",
+        "offer letter", "formal offer", "offer of employment",
+        "compensation package", "background check", "start date",
     ]
 }
 
@@ -938,7 +958,13 @@ def classify_resolution_type(email: EmailMatch) -> Optional[str]:
 
     Returns one of: 'rejection', 'screening', 'interview', 'offer', or None
     """
-    combined = (email.subject + " " + email.snippet).lower()
+    # Use the full body when available; rejection language often appears
+    # past where the snippet cuts off
+    combined = (email.subject + " " + (email.body or email.snippet)).lower()
+
+    # Unambiguous rejection language wins regardless of other keywords
+    if any(sig in combined for sig in STRONG_REJECTION_SIGNALS):
+        return 'rejection'
 
     # Check each resolution type in order of specificity
     # (offer is most specific, rejection is most common)
