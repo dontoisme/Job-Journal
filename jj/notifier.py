@@ -492,3 +492,110 @@ def send_notification(new_jobs: list[dict[str, Any]], summary: dict[str, Any],
         "(preferred) or slack_webhook_url in ~/.job-journal/config.yaml"
     )
     return False
+
+
+# --- Daily digest ---
+
+
+def _prospect_to_job_dict(app: dict[str, Any]) -> dict[str, Any]:
+    """Adapt an applications-table prospect row to _format_job_block input."""
+    return {
+        "company": app.get("company", "?"),
+        "title": app.get("position", "?"),
+        "location": app.get("location") or "",
+        "score": app.get("fit_score") if app.get("fit_score") is not None else "unscored",
+        "score_type": "Fit",
+        "url": app.get("job_url") or "",
+    }
+
+
+def format_digest_payload(
+    fresh: list[dict[str, Any]],
+    backlog: list[dict[str, Any]],
+) -> dict:
+    """Build the daily digest Block Kit payload.
+
+    Fresh prospects (last 48h) first, then backlog picks so the existing
+    pile drains over time. Each job carries the [Go] score_job button.
+    """
+    today = datetime.now().strftime("%a %b %-d")
+    blocks: list[dict[str, Any]] = [{
+        "type": "header",
+        "text": {"type": "plain_text", "text": f"Daily Job Digest — {today}"},
+    }]
+
+    if fresh:
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "*New since yesterday:*"}})
+        for app in fresh:
+            blocks.append(_format_job_block(_prospect_to_job_dict(app)))
+        blocks.append({"type": "divider"})
+
+    if backlog:
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "*Worth a look from the backlog:*"}})
+        for app in backlog:
+            blocks.append(_format_job_block(_prospect_to_job_dict(app)))
+        blocks.append({"type": "divider"})
+
+    blocks.append({
+        "type": "context",
+        "elements": [{
+            "type": "mrkdwn",
+            "text": "_Tap *Go* to score + generate a resume, or browse everything at `jj serve` → /prospects_",
+        }],
+    })
+    return {"blocks": blocks}
+
+
+def send_digest(fresh: list[dict[str, Any]], backlog: list[dict[str, Any]]) -> bool:
+    """Send the daily digest to Slack. Prefers the bot path for buttons."""
+    payload = format_digest_payload(fresh, backlog)
+    total = len(fresh) + len(backlog)
+    fallback_text = f"Daily Job Digest: {total} prospect{'s' if total != 1 else ''} to review"
+
+    config = load_config()
+    monitor_config = config.get("monitor", {})
+
+    bot_token = monitor_config.get("slack_bot_token", "")
+    channel = monitor_config.get("slack_default_channel", "")
+    if bot_token and channel:
+        try:
+            from slack_sdk import WebClient
+            from slack_sdk.errors import SlackApiError
+        except ImportError:
+            logger.error("slack_sdk not installed. Run: pip install -e '.[slack]'")
+            return False
+        client = WebClient(token=bot_token)
+        try:
+            resp = client.chat_postMessage(
+                channel=channel,
+                text=fallback_text,
+                blocks=payload["blocks"],
+                unfurl_links=False,
+                unfurl_media=False,
+            )
+        except SlackApiError as e:
+            logger.error("Digest chat.postMessage failed: %s", e.response.get("error", str(e)))
+            return False
+        if resp.get("ok"):
+            logger.info("Daily digest sent via bot (%d prospects)", total)
+            return True
+        logger.warning("Digest chat.postMessage returned ok=false: %s", resp.data)
+        return False
+
+    webhook_url = monitor_config.get("slack_webhook_url", "")
+    if webhook_url:
+        data = json.dumps(payload).encode("utf-8")
+        req = Request(webhook_url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urlopen(req, timeout=10) as resp:
+                if resp.status == 200:
+                    logger.info("Daily digest sent via webhook (%d prospects)", total)
+                    return True
+                logger.warning("Slack returned status %d", resp.status)
+                return False
+        except URLError as e:
+            logger.error("Digest webhook failed: %s", e)
+            return False
+
+    logger.warning("No Slack delivery configured for digest.")
+    return False

@@ -3515,6 +3515,154 @@ def monitor_scan_apis(
         console.print("\n[yellow]Dry run — nothing saved to database.[/yellow]")
 
 
+@monitor_app.command("digest")
+def monitor_digest(
+    fresh: int = typer.Option(5, "--fresh", help="Max new prospects (last 48h)"),
+    backlog: int = typer.Option(5, "--backlog", help="Max backlog prospects (fit >= 70)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print without sending or marking"),
+):
+    """Send the daily prospect digest to Slack.
+
+    Top new prospects from the last 48 hours plus the highest-fit backlog
+    picks, each with a [Go] button that scores and generates a resume via
+    the Slack bot. Prospects appear in at most one digest.
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    from rich.table import Table
+
+    from jj.db import get_digest_prospects, log_event
+
+    picks = get_digest_prospects(fresh_limit=fresh, backlog_limit=backlog)
+    total = len(picks['fresh']) + len(picks['backlog'])
+
+    if total == 0:
+        console.print("[yellow]Nothing to digest: no new or undigested high-fit prospects.[/yellow]")
+        return
+
+    table = Table(title=f"Daily Digest ({total} prospects)")
+    table.add_column("Bucket")
+    table.add_column("Company")
+    table.add_column("Position")
+    table.add_column("Fit", justify="right")
+    for bucket, apps in [("new", picks['fresh']), ("backlog", picks['backlog'])]:
+        for app in apps:
+            table.add_row(bucket, app['company'], app['position'] or '?', str(app.get('fit_score') or '-'))
+    console.print(table)
+
+    if dry_run:
+        console.print("[dim]Dry run: nothing sent, nothing marked.[/dim]")
+        return
+
+    from jj.notifier import send_digest
+
+    if not send_digest(picks['fresh'], picks['backlog']):
+        console.print("[red]Digest send failed. Check Slack config in ~/.job-journal/config.yaml[/red]")
+        raise typer.Exit(1)
+
+    for app in picks['fresh'] + picks['backlog']:
+        log_event(
+            event_type='digest_included',
+            entity_type='application',
+            entity_id=app['id'],
+        )
+    log_event(
+        event_type='digest_sent',
+        entity_type='system',
+        metadata={'fresh': len(picks['fresh']), 'backlog': len(picks['backlog'])},
+    )
+    console.print(f"[green]Digest sent: {len(picks['fresh'])} new + {len(picks['backlog'])} backlog.[/green]")
+
+
+@monitor_app.command("install-digest")
+def monitor_install_digest(
+    hour: int = typer.Option(8, "--hour", help="Local hour (0-23) to send the daily digest"),
+    uninstall: bool = typer.Option(False, "--uninstall", help="Remove the digest LaunchAgent"),
+):
+    """Install (or uninstall) a LaunchAgent that sends the daily digest.
+
+    Runs 'jj monitor digest' once a day at the given hour.
+    """
+    import subprocess
+
+    plist_dir = Path.home() / "Library" / "LaunchAgents"
+    plist_path = plist_dir / "com.jj.daily-digest.plist"
+    log_dir = JJ_HOME / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    if uninstall:
+        if plist_path.exists():
+            subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+            plist_path.unlink()
+            console.print("[green]Daily digest LaunchAgent removed.[/green]")
+        else:
+            console.print("[yellow]Daily digest LaunchAgent not installed.[/yellow]")
+        return
+
+    import shutil
+    jj_path = shutil.which("jj")
+    if not jj_path:
+        console.print("[red]'jj' not found in PATH.[/red]")
+        raise typer.Exit(1)
+
+    project_dir = Path(__file__).resolve().parent.parent
+    launcher_path = project_dir / "scripts" / "digest-launcher.sh"
+
+    if not launcher_path.exists():
+        console.print(f"[red]Launcher script not found: {launcher_path}[/red]")
+        raise typer.Exit(1)
+
+    plist_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.jj.daily-digest</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{launcher_path}</string>
+    </array>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>{hour}</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>{log_dir}/daily-digest.log</string>
+    <key>StandardErrorPath</key>
+    <string>{log_dir}/daily-digest.log</string>
+    <key>WorkingDirectory</key>
+    <string>{project_dir}</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{Path(jj_path).parent}:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
+"""
+
+    plist_dir.mkdir(parents=True, exist_ok=True)
+
+    if plist_path.exists():
+        subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
+
+    plist_path.write_text(plist_content)
+    result = subprocess.run(["launchctl", "load", str(plist_path)], capture_output=True, text=True)
+
+    if result.returncode == 0:
+        console.print("[green]Daily digest LaunchAgent installed.[/green]")
+        console.print(f"  Schedule: daily at {hour:02d}:00")
+        console.print(f"  Log: {log_dir}/daily-digest.log")
+    else:
+        console.print(f"[red]launchctl load failed: {result.stderr}[/red]")
+        raise typer.Exit(1)
+
+
 @monitor_app.command("install-email-sync")
 def monitor_install_email_sync(
     hours: int = typer.Option(2, "--every", help="Run every N hours"),

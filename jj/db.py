@@ -1567,6 +1567,52 @@ def log_event(
         return cursor.lastrowid
 
 
+def get_digest_prospects(
+    fresh_limit: int = 5,
+    backlog_limit: int = 5,
+    backlog_min_fit: int = 70,
+) -> dict[str, list[dict[str, Any]]]:
+    """Pick prospects for the daily digest.
+
+    Fresh: best prospects discovered in the last 48 hours. Backlog: the
+    highest-fit older prospects, so the existing pile drains over time.
+    Prospects already included in a past digest (digest_included events)
+    are excluded from both lists.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        not_yet_digested = """
+            status = 'prospect'
+            AND id NOT IN (
+                SELECT entity_id FROM events
+                WHERE event_type = 'digest_included' AND entity_type = 'application'
+            )
+        """
+
+        cursor.execute(f"""
+            SELECT * FROM applications
+            WHERE {not_yet_digested}
+              AND created_at >= datetime('now', '-2 days')
+            ORDER BY COALESCE(fit_score, 0) DESC, created_at DESC
+            LIMIT ?
+        """, (fresh_limit,))
+        fresh = [dict(row) for row in cursor.fetchall()]
+
+        fresh_ids = [a['id'] for a in fresh] or [0]
+        placeholders = ','.join('?' * len(fresh_ids))
+        cursor.execute(f"""
+            SELECT * FROM applications
+            WHERE {not_yet_digested}
+              AND id NOT IN ({placeholders})
+              AND COALESCE(fit_score, 0) >= ?
+            ORDER BY fit_score DESC, created_at DESC
+            LIMIT ?
+        """, (*fresh_ids, backlog_min_fit, backlog_limit))
+        backlog = [dict(row) for row in cursor.fetchall()]
+
+    return {'fresh': fresh, 'backlog': backlog}
+
+
 def get_last_email_sync() -> Optional[dict[str, Any]]:
     """Get the most recent email_sync_run event, or None if never synced."""
     with get_connection() as conn:
