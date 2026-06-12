@@ -21,7 +21,7 @@ _FUNNEL_EVIDENCE_SQL = """
             WHEN json_extract(new_value, '$.status') = 'offer' THEN 'offers'
         END AS stage,
         entity_id AS app_id,
-        created_at AS ts
+        COALESCE(json_extract(metadata, '$.date'), created_at) AS ts
     FROM events
     WHERE event_type = 'status_change'
       AND entity_type = 'application'

@@ -1228,7 +1228,12 @@ def sync_application_emails(
                                 new_status,
                                 reason=f"Email resolution: {resolution_type}",
                                 source='email',
-                                metadata={'email_id': email.message_id}
+                                # 'date' is when the email arrived, so catch-up
+                                # syncs don't stamp old transitions as today
+                                metadata={
+                                    'email_id': email.message_id,
+                                    'date': email.date.isoformat(),
+                                }
                             )
                             if verbose:
                                 print(f"  Updated status to '{new_status}'")
