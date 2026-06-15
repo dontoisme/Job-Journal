@@ -28,6 +28,13 @@ MSK_BULLETS = [
     "Increasing experimentation velocity and decreasing time to learnings from multiple months to weeks",
 ]
 
+CLEARHEAD_KEY = "Clearhead / Accenture Interactive"
+CLEARHEAD_BULLETS = [
+    "Owned experimentation roadmaps and business metrics; delivered 400+ A/B tests with 36% win rate and 10x ROI",
+    "Shipped SONOS checkout redesign generating $12MM YoY revenue impact, from conception through launch",
+    "Managed cross-functional teams (Engineering, Design, Analytics) through agile product development for 15 enterprise clients",
+]
+
 # Approved MANGO-positioned summaries (high-comp senior leader; no banned
 # phrases, no em-dashes).
 SUMMARIES = {
@@ -75,6 +82,8 @@ def mutate_archetypes(data: dict) -> dict:
             rb[NEW_KEY] = rb.pop(OLD_KEY)
         # Add MSK as a role (lead by date); same 3 bullets across variants
         rb[MSK_KEY] = list(MSK_BULLETS)
+        # Add Clearhead (oldest main role) with corpus-valid bullets
+        rb[CLEARHEAD_KEY] = list(CLEARHEAD_BULLETS)
         # Reorder so MSK is first in the dict (cosmetic; output order is by date)
         az["role_bullets"] = {MSK_KEY: rb.pop(MSK_KEY), **rb}
     return data
@@ -126,7 +135,7 @@ def main():
             custom_summary=az["summary"],
             custom_skills=az["skills"],
             role_bullets=az["role_bullets"],
-            max_roles=6,
+            max_roles=7,
             generation_mode="archetype",
             output_dir=OUTPUT_DIR,
             auto_open=False,
