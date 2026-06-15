@@ -48,18 +48,19 @@ BRIEF_TIMEOUT_SEC = 900  # 15 min per brief, matches the scoring pipeline
 BRIEF_ALLOWED_TOOLS = "Bash,WebFetch,WebSearch,Read,Write,Grep,Glob"
 
 
-def run_research_brief(url: str, timeout: int = BRIEF_TIMEOUT_SEC) -> tuple[int, str, str]:
+def run_research_brief(app_id: int, timeout: int = BRIEF_TIMEOUT_SEC) -> tuple[int, str, str]:
     """Spawn a headless /research-brief run (why-now + why-me research).
 
-    The skill writes the brief to applications.research_brief for the matching
-    job_url. Returns (returncode, stdout, stderr). rc=127 if the claude CLI is
-    absent, 124 on timeout.
+    Invoked with ``--id`` so the skill resolves the application (and its
+    job_url) and persists the brief to applications.research_brief for that id.
+    Returns (returncode, stdout, stderr). rc=127 if the claude CLI is absent,
+    124 on timeout.
     """
     claude = shutil.which("claude")
     if not claude:
         return 127, "", "'claude' not found in PATH"
-    cmd = [claude, "-p", f"/research-brief {url}", "--allowedTools", BRIEF_ALLOWED_TOOLS]
-    logger.info("brief: /research-brief %s", url)
+    cmd = [claude, "-p", f"/research-brief --id {app_id}", "--allowedTools", BRIEF_ALLOWED_TOOLS]
+    logger.info("brief: /research-brief --id %s", app_id)
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return proc.returncode, proc.stdout, proc.stderr
@@ -113,14 +114,14 @@ def prep_apply_briefs(limit: int = 3, dry_run: bool = False) -> dict[str, Any]:
             summary["already"] += 1
             summary["items"].append({"app": label, "status": "already"})
             continue
-        if not url:
+        if not app_id:
             summary["skipped"] += 1
-            summary["items"].append({"app": label, "status": "skip_no_url"})
+            summary["items"].append({"app": label, "status": "skip_no_id"})
             continue
         if dry_run:
             summary["items"].append({"app": label, "status": "would_prep", "url": url})
             continue
-        rc, _out, err = run_research_brief(url)
+        rc, _out, err = run_research_brief(app_id)
         if rc != 0:
             summary["failed"] += 1
             summary["items"].append({"app": label, "status": f"fail_rc{rc}", "err": (err or "")[-200:]})

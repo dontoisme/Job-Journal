@@ -19,6 +19,11 @@ NOT an archetype add-on and NOT part of base resume generation.
 
 ## Inputs to gather first
 
+0. **Resolve the application.** If invoked with `--id <application_id>`, load
+   the record first to get its `job_url` and confirm the target for persistence
+   (`get_application(app_id)` from `jj.db`). If invoked with a bare URL, look up
+   the matching application by `job_url` so you have an id to persist to. Hold
+   onto the `app_id` — persisting at the end is mandatory when an id exists.
 1. **The JD.** WebFetch the URL (fall back to browser/paste). Capture the real
    responsibilities, must-haves, and the team/org it sits in.
 2. **Don's evidence.** Read `~/.job-journal/corpus.md` (roles, bullets, metrics)
@@ -87,8 +92,10 @@ CONFIDENCE & GAPS
 
 ## Persisting
 
-If an application id is known, store the brief on the record so `/apply-assist`
-and interview prep reuse it without re-researching:
+When an application id is known (always, if invoked with `--id` or the URL
+matched a tracker record), you MUST store the brief on the record so
+`/apply-assist` and interview prep reuse it without re-researching. This is the
+last required step, not optional:
 
 ```python
 from jj.db import update_application
