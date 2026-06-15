@@ -2055,6 +2055,7 @@ def app_prep(
         "current_title": profile.get("current_title", ""),
         "education": profile.get("education", {}),
         "defaults": profile.get("defaults", {}),
+        "eeo": profile.get("eeo", {}),
         "screening_answers": profile.get("screening_answers", {}),
         "archetype": {"variant": archetype, "pdf_path": resume_path, "master_path": pdf_path},
         "application": {

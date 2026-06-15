@@ -102,8 +102,10 @@ grounded, cited basis for the answers below.
 - Standard questions: answer verbatim from `screening_answers` / `defaults`.
 - **Salary**: if `screening_answers.salary_expectation` is empty, ASK DON
   before filling anything. Never invent a number.
-- **EEO self-identification** (gender, race, veteran, disability): leave blank
-  and point them out to Don at the end — they are his to answer.
+- **EEO self-identification** (gender, race, veteran, disability): fill from
+  `payload.eeo` (gender, race, veteran_status, disability_status), mapping each
+  to the form's closest option label. These are Don's own authorized defaults.
+  If a form asks something not covered by `payload.eeo`, leave it and flag it.
 - **"Why {company}?" / role-specific prompts**: use the brief's WHY {COMPANY}
   answer (a sourced demand driver tied to a real Don credential). Tighten to the
   form's length/word limit. Don's facts stay corpus-traceable; company claims
