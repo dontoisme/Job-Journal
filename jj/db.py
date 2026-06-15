@@ -1696,6 +1696,48 @@ def get_unscored_selected_prospects(
         return [dict(row) for row in cursor.fetchall()]
 
 
+def get_apply_ready_prospects(limit: int = 5) -> list[dict[str, Any]]:
+    """Prospects that are apply-ready: full-scored, high-fit, not yet applied.
+
+    Selection (Stage 3): status='prospect', never applied (applied_at IS NULL),
+    full-scored (notes LIKE 'Fit:%', i.e. a real corpus run, not 'Title Fit:'),
+    fit_score >= 80, and not already announced on the Slack apply-ready surface
+    (no 'apply_ready_notified' event). Target-company postings rank first (the
+    same is_target/target_priority match get_digest_prospects uses), then by
+    fit_score and recency, so a capped run surfaces the most valuable first.
+
+    These are the roles the apply-ready chain stages a research brief for and
+    hands off to /apply-assist for interactive autofill. Returns a list of
+    dicts.
+    """
+    target_company_clause = """
+        LOWER(company) IN (
+            SELECT LOWER(name) FROM companies
+            WHERE is_target = 1 AND target_priority >= 1
+        )
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT * FROM applications
+            WHERE status = 'prospect'
+              AND applied_at IS NULL
+              AND notes LIKE 'Fit:%'
+              AND COALESCE(fit_score, 0) >= 80
+              AND id NOT IN (
+                  SELECT entity_id FROM events
+                  WHERE event_type = 'apply_ready_notified'
+                    AND entity_type = 'application'
+              )
+            ORDER BY
+              CASE WHEN {target_company_clause} THEN 0 ELSE 1 END,
+              COALESCE(fit_score, 0) DESC,
+              created_at DESC
+            LIMIT ?
+        """, (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
 def get_last_email_sync() -> Optional[dict[str, Any]]:
     """Get the most recent email_sync_run event, or None if never synced."""
     with get_connection() as conn:

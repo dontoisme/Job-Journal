@@ -613,3 +613,146 @@ def send_digest(
 
     logger.warning("No Slack delivery configured for digest.")
     return False
+
+
+def _brief_snippet(brief: str | None, limit: int = 160) -> str:
+    """First meaningful line of a research brief, trimmed for a Slack snippet."""
+    if not brief:
+        return ""
+    # Skip structural lines: the ROLE header (company+title already shown) and
+    # bare section headers (e.g. "WHY NOW (demand drivers)") so the snippet is
+    # an actual content line.
+    skip_prefixes = ("ROLE:", "WHY NOW", "WHY ME", "RISKS", "SOURCES", "ANGLE")
+    for raw in brief.splitlines():
+        line = raw.strip().lstrip("#*->•").strip()
+        if not line:
+            continue
+        if line.upper().startswith(skip_prefixes):
+            continue
+        return line[: limit - 1] + "…" if len(line) > limit else line
+    return ""
+
+
+def _apply_ready_verdict(app: dict[str, Any]) -> str:
+    """Verdict for an apply-ready prospect, derived from its fit_score."""
+    return _verdict_for_score(app.get("fit_score") or 0)
+
+
+def format_apply_ready_payload(items: list[dict[str, Any]]) -> dict:
+    """Build the Slack apply-ready Block Kit payload.
+
+    Apply-ready = full-scored, high-fit, not-yet-applied prospects whose
+    research brief has been staged. Fill is interactive (the headless Go
+    pipeline has no browser), so each item hands off to /apply-assist rather
+    than carrying an auto-fill button. No-emoji, bold-header style to match
+    format_digest_payload.
+    """
+    today = datetime.now().strftime("%a %b %-d")
+    blocks: list[dict[str, Any]] = [{
+        "type": "header",
+        "text": {"type": "plain_text", "text": f"Apply-ready — {today}"},
+    }]
+    blocks.append({
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": "*Scored, brief staged, ready to apply:*",
+        },
+    })
+
+    for app in items:
+        company = app.get("company", "?")
+        title = app.get("position", "?")
+        score = app.get("fit_score")
+        score = score if score is not None else "?"
+        verdict = _apply_ready_verdict(app)
+        verdict_txt = f", {verdict}" if verdict else ""
+        url = app.get("job_url") or ""
+        app_id = app.get("id")
+
+        line1 = f"*{company}* — {title} _({score}{verdict_txt})_"
+        lines = [line1]
+        snippet = _brief_snippet(app.get("research_brief"))
+        if snippet:
+            lines.append(f"_{snippet}_")
+        line3_parts: list[str] = []
+        if url:
+            line3_parts.append(f"<{url}|View JD>")
+        if app_id is not None:
+            line3_parts.append(f"Run `/apply-assist --id {app_id}` to autofill")
+        if line3_parts:
+            lines.append(" — ".join(line3_parts))
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "\n".join(lines)},
+        })
+
+    blocks.append({"type": "divider"})
+    blocks.append({
+        "type": "context",
+        "elements": [{
+            "type": "mrkdwn",
+            "text": "_Fill runs in your live Chrome. `/apply-assist` fills to the Submit line and stops — you click Submit._",
+        }],
+    })
+    # Slack hard limit: 50 blocks per message.
+    if len(blocks) > 50:
+        blocks = blocks[:49] + [blocks[-1]]
+    return {"blocks": blocks}
+
+
+def send_apply_ready(items: list[dict[str, Any]]) -> bool:
+    """Send the apply-ready surface to Slack. Prefers the bot path."""
+    if not items:
+        logger.info("No apply-ready items to send.")
+        return False
+    payload = format_apply_ready_payload(items)
+    fallback_text = f"Apply-ready: {len(items)} role{'s' if len(items) != 1 else ''} staged for application"
+
+    config = load_config()
+    monitor_config = config.get("monitor", {})
+
+    bot_token = monitor_config.get("slack_bot_token", "")
+    channel = monitor_config.get("slack_default_channel", "")
+    if bot_token and channel:
+        try:
+            from slack_sdk import WebClient
+            from slack_sdk.errors import SlackApiError
+        except ImportError:
+            logger.error("slack_sdk not installed. Run: pip install -e '.[slack]'")
+            return False
+        client = WebClient(token=bot_token)
+        try:
+            resp = client.chat_postMessage(
+                channel=channel,
+                text=fallback_text,
+                blocks=payload["blocks"],
+                unfurl_links=False,
+                unfurl_media=False,
+            )
+        except SlackApiError as e:
+            logger.error("Apply-ready chat.postMessage failed: %s", e.response.get("error", str(e)))
+            return False
+        if resp.get("ok"):
+            logger.info("Apply-ready sent via bot (%d roles)", len(items))
+            return True
+        logger.warning("Apply-ready chat.postMessage returned ok=false: %s", resp.data)
+        return False
+
+    webhook_url = monitor_config.get("slack_webhook_url", "")
+    if webhook_url:
+        data = json.dumps(payload).encode("utf-8")
+        req = Request(webhook_url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+        try:
+            with urlopen(req, timeout=10) as resp:
+                if resp.status == 200:
+                    logger.info("Apply-ready sent via webhook (%d roles)", len(items))
+                    return True
+                logger.warning("Slack returned status %d", resp.status)
+                return False
+        except URLError as e:
+            logger.error("Apply-ready webhook failed: %s", e)
+            return False
+
+    logger.warning("No Slack delivery configured for apply-ready.")
+    return False
