@@ -550,6 +550,8 @@ def migrate_database() -> None:
         # Cached why-now/why-me research brief (from /research-brief), reused by
         # /apply-assist screening answers and interview prep.
         ("applications", "research_brief", "TEXT"),
+        # Per-company scan filter: restrict to US + senior+ roles (firehose boards)
+        ("companies", "filter_senior_us", "BOOLEAN DEFAULT 0"),
         # Pipeline resume tracking
         ("resumes", "generation_mode", "TEXT"),
         ("resumes", "pipeline_run_id", "INTEGER"),

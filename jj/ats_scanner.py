@@ -175,6 +175,31 @@ def _is_senior_pm_title(title: str) -> bool:
     return bool(_SENIOR_PM_RE.search(title or ""))
 
 
+# Foreign markers used to exclude non-US roles on US-only target boards.
+_FOREIGN_MARKERS = (
+    "united kingdom", "u.k.", " uk", "england", "scotland", "ireland", "dublin", "london",
+    "canada", "toronto", "vancouver", "montreal", "ontario",
+    "germany", "berlin", "munich", "france", "paris", "spain", "madrid", "barcelona",
+    "netherlands", "amsterdam", "portugal", "lisbon", "italy", "rome", "milan",
+    "switzerland", "zurich", "sweden", "stockholm", "denmark", "norway", "finland",
+    "poland", "warsaw", "krakow", "romania", "ukraine", "czech", "prague",
+    "india", "bangalore", "bengaluru", "hyderabad", "pune", "mumbai", "delhi", "gurgaon",
+    "singapore", "australia", "sydney", "melbourne", "new zealand",
+    "japan", "tokyo", "china", "beijing", "shanghai", "hong kong", "korea", "seoul",
+    "brazil", "mexico", "argentina", "colombia", "chile", "israel", "tel aviv",
+    "philippines", "manila", "vietnam", "indonesia", "thailand", "malaysia",
+    "dubai", "saudi", "egypt", "nigeria", "south africa", "luxembourg", "belgium",
+    "austria", "vienna", "greece", "turkey", "emea", "apac", "latam",
+)
+def _is_us_location(location: str) -> bool:
+    """Best-effort US-only check: keep unless the location names a known
+    foreign country/region/city. ATS location formats vary too much (full
+    state names, codes, bare 'Remote', empty) to reliably allow-list US, so on
+    these US-HQ target boards we keep everything that isn't clearly non-US.
+    """
+    return not any(m in (location or "").lower() for m in _FOREIGN_MARKERS)
+
+
 def scan_amazon(slug: Optional[str] = None) -> list[dict[str, Any]]:
     """Hit the public amazon.jobs search.json endpoint for senior product roles.
 
@@ -316,6 +341,14 @@ def scan_company(company: dict[str, Any]) -> list[dict[str, Any]]:
 
     jobs = scanner(slug)
 
+    # Optional per-company US + senior+ post-filter for high-volume target
+    # boards (e.g. Snowflake, Palantir, xAI), mirroring the Amazon adapter.
+    if company.get("filter_senior_us"):
+        jobs = [
+            j for j in jobs
+            if _is_senior_pm_title(j.get("title", "")) and _is_us_location(j.get("location", ""))
+        ]
+
     # Attach company info to each job
     for job in jobs:
         job["company_id"] = company.get("id")
@@ -375,7 +408,7 @@ def get_api_scannable_companies() -> list[dict[str, Any]]:
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(f"""
-            SELECT id, name, careers_url, ats_type
+            SELECT id, name, careers_url, ats_type, filter_senior_us
             FROM companies
             WHERE is_target = 1
               AND careers_url IS NOT NULL
