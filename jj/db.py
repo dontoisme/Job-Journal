@@ -1648,6 +1648,51 @@ def get_digest_prospects(
     return {'targets': targets, 'fresh': fresh, 'backlog': backlog}
 
 
+def get_unscored_selected_prospects(
+    limit: int = 10,
+    since: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Prospects that warrant a full LLM fit-score but only have a title score.
+
+    Selection policy (Stage 2): every high-priority target-company posting
+    (is_target=1 AND target_priority>=1), plus non-targets that clear the
+    title gate (title fit >= 65). Title-only prospects carry a 'Title Fit:'
+    note; full-scored ones carry 'Fit:'. Targets are ranked first, then by
+    score and recency, so a capped run drains the most valuable first.
+
+    If ``since`` (an ISO timestamp) is given, only prospects created at/after
+    it are considered. This implements the "net-new only" policy: existing
+    backlog stays title-only and is full-scored on demand via the Go button.
+    """
+    target_company_clause = """
+        LOWER(company) IN (
+            SELECT LOWER(name) FROM companies
+            WHERE is_target = 1 AND target_priority >= 1
+        )
+    """
+    since_clause = "AND created_at >= ?" if since else ""
+    params: list[Any] = [since] if since else []
+    params.append(limit)
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT * FROM applications
+            WHERE status = 'prospect'
+              AND notes LIKE 'Title Fit:%'
+              {since_clause}
+              AND (
+                {target_company_clause}
+                OR COALESCE(fit_score, 0) >= 65
+              )
+            ORDER BY
+              CASE WHEN {target_company_clause} THEN 0 ELSE 1 END,
+              COALESCE(fit_score, 0) DESC,
+              created_at DESC
+            LIMIT ?
+        """, tuple(params))
+        return [dict(row) for row in cursor.fetchall()]
+
+
 def get_last_email_sync() -> Optional[dict[str, Any]]:
     """Get the most recent email_sync_run event, or None if never synced."""
     with get_connection() as conn:
