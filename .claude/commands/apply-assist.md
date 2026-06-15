@@ -84,17 +84,29 @@ pasting a degraded version.
 
 ### 5. Screening questions
 
+First, **load the research brief** so "why us"/role answers are informed, not
+generic. Check the tracker record's `research_brief` field
+(`SELECT research_brief FROM applications WHERE id=?`). If empty and this is a
+high-value target (e.g. fit >= 80 or a priority target company), generate one
+with `/research-brief <job_url>` and persist it
+(`update_application(app_id, research_brief=<brief>)`) so it is reused here and
+for interview prep. The brief's WHY {COMPANY} answer and demand drivers are the
+grounded, cited basis for the answers below.
+
 - Standard questions: answer verbatim from `screening_answers` / `defaults`.
 - **Salary**: if `screening_answers.salary_expectation` is empty, ASK DON
   before filling anything. Never invent a number.
 - **EEO self-identification** (gender, race, veteran, disability): leave blank
   and point them out to Don at the end — they are his to answer.
-- Novel questions ("Why {company}?", role-specific prompts): draft a short
-  answer grounded ONLY in the corpus/resume facts (no invented metrics,
-  no em-dashes, no banned phrases per resume conventions), fill it in, and
-  flag it for Don's review in the summary.
+- **"Why {company}?" / role-specific prompts**: use the brief's WHY {COMPANY}
+  answer (a sourced demand driver tied to a real Don credential). Tighten to the
+  form's length/word limit. Don's facts stay corpus-traceable; company claims
+  must trace to a brief citation. No invented metrics, em-dashes, or banned
+  phrases. Flag for Don's review in the summary.
+- Other novel questions: draft grounded ONLY in corpus/resume facts (+ brief
+  for company context), fill in, flag for review.
 - Cover letter field: if required, draft per /apply conventions (Identity ->
-  Evidence -> Differentiation, interests table for hooks) and flag for review.
+  Evidence -> Differentiation) using the brief's why-now framing; flag for review.
 
 ### 6. HARD STOP before submit
 

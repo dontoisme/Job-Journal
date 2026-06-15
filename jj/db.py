@@ -547,6 +547,9 @@ def migrate_database() -> None:
         ("companies", "fit_notes", "TEXT"),
         # Job posting date
         ("applications", "posted_at", "TEXT"),
+        # Cached why-now/why-me research brief (from /research-brief), reused by
+        # /apply-assist screening answers and interview prep.
+        ("applications", "research_brief", "TEXT"),
         # Pipeline resume tracking
         ("resumes", "generation_mode", "TEXT"),
         ("resumes", "pipeline_run_id", "INTEGER"),
