@@ -73,12 +73,18 @@ sometimes swallow values.
 
 ### 4. Upload the resume
 
+`jj app prep` stages a per-application copy of the archetype named
+`Don Hogan - [title] - [company] - Resume.pdf` in a dated folder
+`~/Documents/Resumes/<YYYY-MM-DD>/` and returns it as `archetype.pdf_path`
+(the original archetype is `archetype.master_path`). Attach the per-application
+copy.
+
 Try `file_upload` with `archetype.pdf_path`. Some Chrome client versions
 reject host filesystem paths ("no longer accepts host filesystem paths") —
 when that happens, do NOT click the Attach button (it opens a native picker
 the assistant cannot see). Instead leave the attach for Don and put the exact
-PDF path in the final summary so he can pick it in one click:
-`~/Documents/Resumes/archetypes/...`. If the form also asks to paste a resume
+`archetype.pdf_path` (the dated per-application copy) in the final summary so he
+can pick it in one click. If the form also asks to paste a resume
 as text, skip it when optional; if required, say so to Don rather than
 pasting a degraded version.
 

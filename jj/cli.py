@@ -2020,6 +2020,31 @@ def app_prep(
             row = cursor.fetchone()
             application = dict(row) if row else None
 
+    # When we know the company/position, stage a per-application copy of the
+    # archetype resume named "Don Hogan - [title] - [company] - Resume.pdf" in a
+    # dated /Resumes/<YYYY-MM-DD>/ folder, and hand that path to apply-assist.
+    resume_path = pdf_path
+    if application and application.get("company") and application.get("position"):
+        import shutil
+        from datetime import date
+
+        name = profile.get("name", {})
+        full_name = f"{name.get('first', '')} {name.get('last', '')}".strip() or "Don Hogan"
+
+        def _safe(part: str) -> str:
+            return str(part or "").replace("/", "-").strip()
+
+        fname = f"{full_name} - {_safe(application['position'])} - {_safe(application['company'])} - Resume.pdf"
+        base = Path(profile.get("resume_output_dir", "~/Documents/Resumes")).expanduser()
+        dated_dir = base / date.today().isoformat()
+        dated_dir.mkdir(parents=True, exist_ok=True)
+        dest = dated_dir / fname
+        try:
+            shutil.copy2(pdf_path, dest)
+            resume_path = str(dest)
+        except OSError as e:
+            console.print(f"[yellow]Could not stage per-application resume copy: {e}[/yellow]")
+
     payload = {
         "name": profile.get("name", {}),
         "contact": profile.get("contact", {}),
@@ -2031,7 +2056,7 @@ def app_prep(
         "education": profile.get("education", {}),
         "defaults": profile.get("defaults", {}),
         "screening_answers": profile.get("screening_answers", {}),
-        "archetype": {"variant": archetype, "pdf_path": pdf_path},
+        "archetype": {"variant": archetype, "pdf_path": resume_path, "master_path": pdf_path},
         "application": {
             "id": application.get("id"),
             "company": application.get("company"),
