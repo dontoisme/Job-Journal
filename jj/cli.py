@@ -3314,6 +3314,8 @@ def monitor_scan_apis(
     notify: bool = typer.Option(True, "--notify/--no-notify", help="Send Slack notification"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show results without saving to DB"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all jobs found, not just new"),
+    score_new: bool = typer.Option(False, "--score-new/--no-score-new", help="Full-score selected new prospects after the scan (Stage 2)"),
+    score_limit: int = typer.Option(10, "--score-limit", help="Max prospects to full-score this run"),
 ):
     """Quick scan of ATS APIs (Greenhouse, Lever, Ashby) for new listings.
 
@@ -3586,6 +3588,16 @@ def monitor_scan_apis(
             }),
         )
 
+    # Stage 2: full-score the highest-value new prospects inline (capped).
+    if score_new and not dry_run:
+        from jj.scoring import score_new_prospects
+        console.print(f"\nFull-scoring up to {score_limit} selected prospect(s)...")
+        s = score_new_prospects(limit=score_limit)
+        console.print(
+            f"[green]Full-scored {s['scored']}[/green] | no change {s['no_change']} | "
+            f"failed {s['failed']} | skipped {s['skipped']} (of {s['selected']} selected)."
+        )
+
     if dry_run:
         console.print("\n[yellow]Dry run — nothing saved to database.[/yellow]")
 
@@ -3611,10 +3623,10 @@ def monitor_digest(
     from jj.db import get_digest_prospects, log_event
 
     picks = get_digest_prospects(fresh_limit=fresh, backlog_limit=backlog)
-    total = len(picks['fresh']) + len(picks['backlog'])
+    total = len(picks['targets']) + len(picks['fresh']) + len(picks['backlog'])
 
     if total == 0:
-        console.print("[yellow]Nothing to digest: no new or undigested high-fit prospects.[/yellow]")
+        console.print("[yellow]Nothing to digest: no target, new, or undigested high-fit prospects.[/yellow]")
         return
 
     table = Table(title=f"Daily Digest ({total} prospects)")
@@ -3622,7 +3634,7 @@ def monitor_digest(
     table.add_column("Company")
     table.add_column("Position")
     table.add_column("Fit", justify="right")
-    for bucket, apps in [("new", picks['fresh']), ("backlog", picks['backlog'])]:
+    for bucket, apps in [("target", picks['targets']), ("new", picks['fresh']), ("backlog", picks['backlog'])]:
         for app in apps:
             table.add_row(bucket, app['company'], app['position'] or '?', str(app.get('fit_score') or '-'))
     console.print(table)
@@ -3633,11 +3645,11 @@ def monitor_digest(
 
     from jj.notifier import send_digest
 
-    if not send_digest(picks['fresh'], picks['backlog']):
+    if not send_digest(picks['fresh'], picks['backlog'], picks['targets']):
         console.print("[red]Digest send failed. Check Slack config in ~/.job-journal/config.yaml[/red]")
         raise typer.Exit(1)
 
-    for app in picks['fresh'] + picks['backlog']:
+    for app in picks['targets'] + picks['fresh'] + picks['backlog']:
         log_event(
             event_type='digest_included',
             entity_type='application',
@@ -3646,9 +3658,52 @@ def monitor_digest(
     log_event(
         event_type='digest_sent',
         entity_type='system',
-        metadata={'fresh': len(picks['fresh']), 'backlog': len(picks['backlog'])},
+        metadata={'targets': len(picks['targets']), 'fresh': len(picks['fresh']), 'backlog': len(picks['backlog'])},
     )
-    console.print(f"[green]Digest sent: {len(picks['fresh'])} new + {len(picks['backlog'])} backlog.[/green]")
+    console.print(
+        f"[green]Digest sent: {len(picks['targets'])} target + "
+        f"{len(picks['fresh'])} new + {len(picks['backlog'])} backlog.[/green]"
+    )
+
+
+@monitor_app.command("score-new")
+def monitor_score_new(
+    limit: int = typer.Option(10, "--limit", "-n", help="Max prospects to full-score this run"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be scored, spawn nothing"),
+):
+    """Full-score the highest-value unscored prospects (Stage 2).
+
+    Runs the headless /slack-apply fit-score + archetype link on target-company
+    postings and non-targets clearing the title gate, capped per run. Drains the
+    title-only backlog into trustworthy fit scores over successive runs.
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    from rich.table import Table
+
+    from jj.scoring import score_new_prospects
+
+    summary = score_new_prospects(limit=limit, dry_run=dry_run)
+    if summary["selected"] == 0:
+        console.print("[yellow]No unscored selected prospects to score.[/yellow]")
+        return
+
+    table = Table(title=f"Score-new ({summary['selected']} selected, limit {limit})")
+    table.add_column("Status")
+    table.add_column("Prospect")
+    for it in summary["items"]:
+        table.add_row(it["status"], it["app"])
+    console.print(table)
+
+    if dry_run:
+        console.print("[dim]Dry run: nothing scored.[/dim]")
+        return
+    console.print(
+        f"[green]Scored {summary['scored']}[/green] | no change {summary['no_change']} | "
+        f"failed {summary['failed']} | skipped {summary['skipped']}."
+    )
 
 
 @monitor_app.command("install-digest")

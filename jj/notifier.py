@@ -3,7 +3,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 from urllib.request import Request, urlopen
 from urllib.error import URLError
 
@@ -512,17 +512,26 @@ def _prospect_to_job_dict(app: dict[str, Any]) -> dict[str, Any]:
 def format_digest_payload(
     fresh: list[dict[str, Any]],
     backlog: list[dict[str, Any]],
+    targets: Optional[list[dict[str, Any]]] = None,
 ) -> dict:
     """Build the daily digest Block Kit payload.
 
-    Fresh prospects (last 48h) first, then backlog picks so the existing
-    pile drains over time. Each job carries the [Go] score_job button.
+    Target-company postings (MANGO(A) + top-200) first so no target opening
+    is missed, then fresh prospects (last 48h), then backlog picks so the
+    existing pile drains over time. Each job carries the [Go] score_job button.
     """
+    targets = targets or []
     today = datetime.now().strftime("%a %b %-d")
     blocks: list[dict[str, Any]] = [{
         "type": "header",
         "text": {"type": "plain_text", "text": f"Daily Job Digest — {today}"},
     }]
+
+    if targets:
+        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "*Target companies — apply fast:*"}})
+        for app in targets:
+            blocks.append(_format_job_block(_prospect_to_job_dict(app), show_verdict=True))
+        blocks.append({"type": "divider"})
 
     if fresh:
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "*New since yesterday:*"}})
@@ -546,10 +555,15 @@ def format_digest_payload(
     return {"blocks": blocks}
 
 
-def send_digest(fresh: list[dict[str, Any]], backlog: list[dict[str, Any]]) -> bool:
+def send_digest(
+    fresh: list[dict[str, Any]],
+    backlog: list[dict[str, Any]],
+    targets: Optional[list[dict[str, Any]]] = None,
+) -> bool:
     """Send the daily digest to Slack. Prefers the bot path for buttons."""
-    payload = format_digest_payload(fresh, backlog)
-    total = len(fresh) + len(backlog)
+    targets = targets or []
+    payload = format_digest_payload(fresh, backlog, targets)
+    total = len(targets) + len(fresh) + len(backlog)
     fallback_text = f"Daily Job Digest: {total} prospect{'s' if total != 1 else ''} to review"
 
     config = load_config()

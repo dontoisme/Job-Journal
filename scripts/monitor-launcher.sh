@@ -49,10 +49,13 @@ fi
 echo "jj: $JJ_PATH"
 
 # Step 1: Always run the fast API scan first (~30 seconds)
-# This hits Greenhouse, Lever, and Ashby APIs directly for quick discovery
+# This hits Greenhouse, Lever, Ashby + custom (Amazon/Netflix) APIs for quick
+# discovery, then full-scores net-new selected prospects (Stage 2). The
+# net-new cutoff (config monitor.score_new_since) keeps this off the existing
+# backlog; --score-limit caps cost per run.
 cd "$PROJECT_DIR"
-echo "Running quick API scan..."
-jj monitor scan-apis 2>&1
+echo "Running quick API scan + net-new full-scoring..."
+jj monitor scan-apis --score-new --score-limit 8 2>&1
 API_EXIT=$?
 echo "API scan exit: $API_EXIT"
 
