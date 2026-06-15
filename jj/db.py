@@ -1696,15 +1696,17 @@ def get_unscored_selected_prospects(
         return [dict(row) for row in cursor.fetchall()]
 
 
-def get_apply_ready_prospects(limit: int = 5) -> list[dict[str, Any]]:
-    """Prospects that are apply-ready: full-scored, high-fit, not yet applied.
+def get_apply_ready_prospects(limit: int = 5, max_age_days: int = 31) -> list[dict[str, Any]]:
+    """Prospects that are apply-ready: full-scored, high-fit, recent, not applied.
 
     Selection (Stage 3): status='prospect', never applied (applied_at IS NULL),
     full-scored (notes LIKE 'Fit:%', i.e. a real corpus run, not 'Title Fit:'),
-    fit_score >= 80, and not already announced on the Slack apply-ready surface
-    (no 'apply_ready_notified' event). Target-company postings rank first (the
-    same is_target/target_priority match get_digest_prospects uses), then by
-    fit_score and recency, so a capped run surfaces the most valuable first.
+    fit_score >= 80, added within ``max_age_days`` (default 31 — older postings
+    are usually closed and not worth applying to), and not already announced on
+    the Slack apply-ready surface (no 'apply_ready_notified' event).
+    Target-company postings rank first (the same is_target/target_priority match
+    get_digest_prospects uses), then by fit_score and recency, so a capped run
+    surfaces the most valuable first.
 
     These are the roles the apply-ready chain stages a research brief for and
     hands off to /apply-assist for interactive autofill. Returns a list of
@@ -1724,6 +1726,7 @@ def get_apply_ready_prospects(limit: int = 5) -> list[dict[str, Any]]:
               AND applied_at IS NULL
               AND notes LIKE 'Fit:%'
               AND COALESCE(fit_score, 0) >= 80
+              AND created_at >= datetime('now', ?)
               AND id NOT IN (
                   SELECT entity_id FROM events
                   WHERE event_type = 'apply_ready_notified'
@@ -1734,7 +1737,7 @@ def get_apply_ready_prospects(limit: int = 5) -> list[dict[str, Any]]:
               COALESCE(fit_score, 0) DESC,
               created_at DESC
             LIMIT ?
-        """, (limit,))
+        """, (f"-{max_age_days} days", limit))
         return [dict(row) for row in cursor.fetchall()]
 
 
