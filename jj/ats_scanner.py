@@ -14,6 +14,7 @@ import logging
 import re
 from typing import Any, Optional
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 logger = logging.getLogger("jj.ats_scanner")
@@ -159,12 +160,133 @@ def scan_ashby(slug: str) -> list[dict[str, Any]]:
     return results
 
 
+# Senior+ product-leadership title gate, applied by the custom-ATS adapters
+# (Amazon/Netflix/...) which front firehose career sites. Keeps coverage at
+# the level being targeted (Principal/Senior/Staff/Group/Director/Head/VP)
+# rather than ingesting hundreds of mid-level reqs.
+_SENIOR_PM_RE = re.compile(
+    r"\b(principal|staff|senior|sr\.?|group|director|head|vice\s*president|vp)\b",
+    re.IGNORECASE,
+)
+
+
+def _is_senior_pm_title(title: str) -> bool:
+    """True if the title reads as a senior+ product-leadership role."""
+    return bool(_SENIOR_PM_RE.search(title or ""))
+
+
+def scan_amazon(slug: Optional[str] = None) -> list[dict[str, Any]]:
+    """Hit the public amazon.jobs search.json endpoint for senior product roles.
+
+    Amazon runs a custom ATS (not Greenhouse/Lever/Ashby), but exposes a
+    public JSON search endpoint. We query product-manager roles sorted by
+    most recent, paginate a few pages, and keep only US-based senior+ titles;
+    downstream title-filtering and dedup handle relevance and repeats.
+    No per-company slug is needed.
+
+    API: GET https://www.amazon.jobs/en/search.json?base_query=...&sort=recent
+    """
+    base = "https://www.amazon.jobs/en/search.json"
+    page_size = 100
+    max_pages = 3
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for page in range(max_pages):
+        params = urlencode({
+            "base_query": "product manager",
+            "sort": "recent",
+            "result_limit": page_size,
+            "offset": page * page_size,
+        })
+        data = _fetch_json(f"{base}?{params}")
+        jobs = data.get("jobs") if isinstance(data, dict) else None
+        if not jobs:
+            break
+        for job in jobs:
+            path = job.get("job_path", "")
+            title = job.get("title", "")
+            # US-only (Amazon reports country_code as "USA"), senior+ titles.
+            if job.get("country_code") != "USA":
+                continue
+            if not path or path in seen or not _is_senior_pm_title(title):
+                continue
+            seen.add(path)
+            results.append({
+                "title": title,
+                "url": f"https://www.amazon.jobs{path}",
+                "location": job.get("normalized_location", "") or job.get("location", ""),
+                "ats_job_id": str(job.get("id_icims", "") or job.get("id", "")),
+                "ats_type": "amazon",
+                "updated_at": job.get("posted_date"),
+            })
+        if len(jobs) < page_size:
+            break
+    return results
+
+
+def scan_netflix(slug: Optional[str] = None) -> list[dict[str, Any]]:
+    """Hit Netflix's Eightfold jobs API for product roles.
+
+    Netflix runs a custom (Eightfold-backed) ATS that exposes a public JSON
+    search endpoint. The API caps page size at 10, so we paginate. No senior
+    title gate is applied: Netflix uses flat titles ("Product Manager" is a
+    senior IC there), so downstream score_title_fit handles PM relevance.
+    No per-company slug is needed.
+
+    API: GET https://explore.jobs.netflix.net/api/apply/v2/jobs?query=...
+    """
+    base = "https://explore.jobs.netflix.net/api/apply/v2/jobs"
+    page_size = 10  # Eightfold caps results per page at 10
+    max_pages = 12
+    results: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    for page in range(max_pages):
+        params = urlencode({
+            "domain": "netflix.com",
+            "query": "product manager",
+            "start": page * page_size,
+            "num": page_size,
+            "sort_by": "relevance",
+        })
+        data = _fetch_json(f"{base}?{params}")
+        positions = data.get("positions") if isinstance(data, dict) else None
+        if not positions:
+            break
+        for job in positions:
+            jid = str(job.get("id", ""))
+            if not jid or jid in seen:
+                continue
+            seen.add(jid)
+            loc = job.get("location", "")
+            if isinstance(loc, dict):
+                loc = loc.get("name", "")
+            url = job.get("canonicalPositionUrl") or f"https://explore.jobs.netflix.net/careers/job/{jid}"
+            results.append({
+                "title": job.get("name", ""),
+                "url": url,
+                "location": loc,
+                "ats_job_id": str(job.get("ats_job_id", "") or jid),
+                "ats_type": "netflix",
+                "updated_at": job.get("t_update"),
+            })
+        if len(positions) < page_size:
+            break
+    return results
+
+
 # Scanner dispatch table
 _SCANNERS = {
     "greenhouse": scan_greenhouse,
     "lever": scan_lever,
     "ashby": scan_ashby,
+    "amazon": scan_amazon,
+    "netflix": scan_netflix,
 }
+
+# ATS types whose scanner needs no per-company slug (single fixed endpoint).
+_SLUGLESS_ATS = {"amazon", "netflix"}
 
 
 def scan_company(company: dict[str, Any]) -> list[dict[str, Any]]:
@@ -181,13 +303,17 @@ def scan_company(company: dict[str, Any]) -> list[dict[str, Any]]:
     if not scanner:
         return []
 
-    slug = extract_ats_slug(company.get("careers_url", ""), ats_type)
-    if not slug:
-        logger.warning("Could not extract slug for %s (%s): %s",
-                        company.get("name"), ats_type, company.get("careers_url"))
-        return []
+    if ats_type in _SLUGLESS_ATS:
+        slug = None
+        logger.info("Scanning %s via %s API", company.get("name"), ats_type)
+    else:
+        slug = extract_ats_slug(company.get("careers_url", ""), ats_type)
+        if not slug:
+            logger.warning("Could not extract slug for %s (%s): %s",
+                            company.get("name"), ats_type, company.get("careers_url"))
+            return []
+        logger.info("Scanning %s via %s API (slug: %s)", company.get("name"), ats_type, slug)
 
-    logger.info("Scanning %s via %s API (slug: %s)", company.get("name"), ats_type, slug)
     jobs = scanner(slug)
 
     # Attach company info to each job
@@ -239,21 +365,23 @@ def scan_all_api_companies(companies: list[dict[str, Any]]) -> dict[int, list[di
 def get_api_scannable_companies() -> list[dict[str, Any]]:
     """Load target companies that can be scanned via ATS APIs.
 
-    Returns companies where ats_type is greenhouse, lever, or ashby
-    and careers_url is set.
+    Returns companies whose ats_type has a registered scanner (greenhouse,
+    lever, ashby, amazon, ...) and careers_url is set. Slug-less adapters
+    (e.g. amazon) don't require a meaningful careers_url but it must be set.
     """
     from jj.db import get_connection
 
+    type_placeholders = ", ".join("?" * len(_SCANNERS))
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("""
+        cursor.execute(f"""
             SELECT id, name, careers_url, ats_type
             FROM companies
             WHERE is_target = 1
               AND careers_url IS NOT NULL
-              AND LOWER(ats_type) IN ('greenhouse', 'lever', 'ashby')
+              AND LOWER(ats_type) IN ({type_placeholders})
             ORDER BY target_priority DESC, name
-        """)
+        """, tuple(_SCANNERS.keys()))
         return [dict(row) for row in cursor.fetchall()]
 
 

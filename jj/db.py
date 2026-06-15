@@ -1571,13 +1571,18 @@ def get_digest_prospects(
     fresh_limit: int = 5,
     backlog_limit: int = 5,
     backlog_min_fit: int = 70,
+    targets_limit: int = 8,
+    targets_per_company: int = 3,
 ) -> dict[str, list[dict[str, Any]]]:
     """Pick prospects for the daily digest.
 
-    Fresh: best prospects discovered in the last 48 hours. Backlog: the
-    highest-fit older prospects, so the existing pile drains over time.
+    Targets: undigested postings at high-priority target companies
+    (MANGO(A) + top-200, companies.is_target=1 AND target_priority>=1),
+    surfaced regardless of fit so no target opening is missed. Fresh: best
+    non-target prospects from the last 48 hours. Backlog: the highest-fit
+    older non-target prospects, so the existing pile drains over time.
     Prospects already included in a past digest (digest_included events)
-    are excluded from both lists.
+    are excluded from all lists.
     """
     with get_connection() as conn:
         cursor = conn.cursor()
@@ -1588,18 +1593,48 @@ def get_digest_prospects(
                 WHERE event_type = 'digest_included' AND entity_type = 'application'
             )
         """
+        # High-priority target companies, matched by name (case-insensitive).
+        target_company_clause = """
+            LOWER(company) IN (
+                SELECT LOWER(name) FROM companies
+                WHERE is_target = 1 AND target_priority >= 1
+            )
+        """
 
+        # Targets lane: undigested target-company postings, best-fit first,
+        # capped per company so a firehose target (e.g. Amazon) can't crowd
+        # out the rest of the lane.
+        cursor.execute(f"""
+            SELECT * FROM (
+                SELECT *, ROW_NUMBER() OVER (
+                    PARTITION BY LOWER(company)
+                    ORDER BY COALESCE(fit_score, 0) DESC, created_at DESC
+                ) AS _rn
+                FROM applications
+                WHERE {not_yet_digested}
+                  AND {target_company_clause}
+            )
+            WHERE _rn <= ?
+            ORDER BY COALESCE(fit_score, 0) DESC, created_at DESC
+            LIMIT ?
+        """, (targets_per_company, targets_limit))
+        targets = [dict(row) for row in cursor.fetchall()]
+        target_ids = [a['id'] for a in targets] or [0]
+        t_ph = ','.join('?' * len(target_ids))
+
+        # Fresh: best non-target prospects from the last 48h.
         cursor.execute(f"""
             SELECT * FROM applications
             WHERE {not_yet_digested}
+              AND id NOT IN ({t_ph})
               AND created_at >= datetime('now', '-2 days')
             ORDER BY COALESCE(fit_score, 0) DESC, created_at DESC
             LIMIT ?
-        """, (fresh_limit,))
+        """, (*target_ids, fresh_limit))
         fresh = [dict(row) for row in cursor.fetchall()]
 
-        fresh_ids = [a['id'] for a in fresh] or [0]
-        placeholders = ','.join('?' * len(fresh_ids))
+        exclude_ids = target_ids + [a['id'] for a in fresh]
+        placeholders = ','.join('?' * len(exclude_ids))
         cursor.execute(f"""
             SELECT * FROM applications
             WHERE {not_yet_digested}
@@ -1607,10 +1642,10 @@ def get_digest_prospects(
               AND COALESCE(fit_score, 0) >= ?
             ORDER BY fit_score DESC, created_at DESC
             LIMIT ?
-        """, (*fresh_ids, backlog_min_fit, backlog_limit))
+        """, (*exclude_ids, backlog_min_fit, backlog_limit))
         backlog = [dict(row) for row in cursor.fetchall()]
 
-    return {'fresh': fresh, 'backlog': backlog}
+    return {'targets': targets, 'fresh': fresh, 'backlog': backlog}
 
 
 def get_last_email_sync() -> Optional[dict[str, Any]]:

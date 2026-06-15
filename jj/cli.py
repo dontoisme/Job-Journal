@@ -3611,10 +3611,10 @@ def monitor_digest(
     from jj.db import get_digest_prospects, log_event
 
     picks = get_digest_prospects(fresh_limit=fresh, backlog_limit=backlog)
-    total = len(picks['fresh']) + len(picks['backlog'])
+    total = len(picks['targets']) + len(picks['fresh']) + len(picks['backlog'])
 
     if total == 0:
-        console.print("[yellow]Nothing to digest: no new or undigested high-fit prospects.[/yellow]")
+        console.print("[yellow]Nothing to digest: no target, new, or undigested high-fit prospects.[/yellow]")
         return
 
     table = Table(title=f"Daily Digest ({total} prospects)")
@@ -3622,7 +3622,7 @@ def monitor_digest(
     table.add_column("Company")
     table.add_column("Position")
     table.add_column("Fit", justify="right")
-    for bucket, apps in [("new", picks['fresh']), ("backlog", picks['backlog'])]:
+    for bucket, apps in [("target", picks['targets']), ("new", picks['fresh']), ("backlog", picks['backlog'])]:
         for app in apps:
             table.add_row(bucket, app['company'], app['position'] or '?', str(app.get('fit_score') or '-'))
     console.print(table)
@@ -3633,11 +3633,11 @@ def monitor_digest(
 
     from jj.notifier import send_digest
 
-    if not send_digest(picks['fresh'], picks['backlog']):
+    if not send_digest(picks['fresh'], picks['backlog'], picks['targets']):
         console.print("[red]Digest send failed. Check Slack config in ~/.job-journal/config.yaml[/red]")
         raise typer.Exit(1)
 
-    for app in picks['fresh'] + picks['backlog']:
+    for app in picks['targets'] + picks['fresh'] + picks['backlog']:
         log_event(
             event_type='digest_included',
             entity_type='application',
@@ -3646,9 +3646,12 @@ def monitor_digest(
     log_event(
         event_type='digest_sent',
         entity_type='system',
-        metadata={'fresh': len(picks['fresh']), 'backlog': len(picks['backlog'])},
+        metadata={'targets': len(picks['targets']), 'fresh': len(picks['fresh']), 'backlog': len(picks['backlog'])},
     )
-    console.print(f"[green]Digest sent: {len(picks['fresh'])} new + {len(picks['backlog'])} backlog.[/green]")
+    console.print(
+        f"[green]Digest sent: {len(picks['targets'])} target + "
+        f"{len(picks['fresh'])} new + {len(picks['backlog'])} backlog.[/green]"
+    )
 
 
 @monitor_app.command("install-digest")
