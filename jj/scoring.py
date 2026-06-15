@@ -44,6 +44,97 @@ def run_full_score(url: str, timeout: int = SCORE_TIMEOUT_SEC) -> tuple[int, str
         return 1, "", str(e)
 
 
+BRIEF_TIMEOUT_SEC = 900  # 15 min per brief, matches the scoring pipeline
+BRIEF_ALLOWED_TOOLS = "Bash,WebFetch,WebSearch,Read,Write,Grep,Glob"
+
+
+def run_research_brief(url: str, timeout: int = BRIEF_TIMEOUT_SEC) -> tuple[int, str, str]:
+    """Spawn a headless /research-brief run (why-now + why-me research).
+
+    The skill writes the brief to applications.research_brief for the matching
+    job_url. Returns (returncode, stdout, stderr). rc=127 if the claude CLI is
+    absent, 124 on timeout.
+    """
+    claude = shutil.which("claude")
+    if not claude:
+        return 127, "", "'claude' not found in PATH"
+    cmd = [claude, "-p", f"/research-brief {url}", "--allowedTools", BRIEF_ALLOWED_TOOLS]
+    logger.info("brief: /research-brief %s", url)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return proc.returncode, proc.stdout, proc.stderr
+    except subprocess.TimeoutExpired:
+        logger.error("brief timeout after %ds: %s", timeout, url)
+        return 124, "", f"Timed out after {timeout}s"
+    except Exception as e:  # noqa: BLE001 - report any launch failure to caller
+        logger.exception("brief subprocess failed")
+        return 1, "", str(e)
+
+
+def _has_research_brief(app_id: int) -> bool:
+    """True if the application now carries a non-empty research_brief."""
+    from jj.db import get_connection
+
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT research_brief FROM applications WHERE id = ?", (app_id,)
+        ).fetchone()
+    brief = (row["research_brief"] or "").strip() if row else ""
+    return bool(brief)
+
+
+def prep_apply_briefs(limit: int = 3, dry_run: bool = False) -> dict[str, Any]:
+    """Generate research briefs for apply-ready prospects missing one (Stage 3).
+
+    For each apply-ready prospect (see db.get_apply_ready_prospects) whose
+    research_brief is empty, spawn a headless /research-brief run so the brief
+    is ready before Don applies. Capped per run to keep cost bounded. Returns a
+    summary dict: selected, prepared, already, no_change, failed, skipped.
+    """
+    from jj.db import get_apply_ready_prospects
+
+    picks = get_apply_ready_prospects(limit=limit)
+    summary: dict[str, Any] = {
+        "selected": len(picks),
+        "prepared": 0,
+        "already": 0,
+        "no_change": 0,
+        "failed": 0,
+        "skipped": 0,
+        "items": [],
+    }
+
+    for p in picks:
+        url = p.get("job_url") or ""
+        app_id = p.get("id")
+        label = f"{p.get('company', '?')} — {p.get('position', '?')}"
+        existing = (p.get("research_brief") or "").strip()
+        if existing:
+            summary["already"] += 1
+            summary["items"].append({"app": label, "status": "already"})
+            continue
+        if not url:
+            summary["skipped"] += 1
+            summary["items"].append({"app": label, "status": "skip_no_url"})
+            continue
+        if dry_run:
+            summary["items"].append({"app": label, "status": "would_prep", "url": url})
+            continue
+        rc, _out, err = run_research_brief(url)
+        if rc != 0:
+            summary["failed"] += 1
+            summary["items"].append({"app": label, "status": f"fail_rc{rc}", "err": (err or "")[-200:]})
+        elif app_id and _has_research_brief(app_id):
+            summary["prepared"] += 1
+            summary["items"].append({"app": label, "status": "prepared"})
+        else:
+            # Clean exit but no brief written — typically a dead/stale JD URL.
+            summary["no_change"] += 1
+            summary["items"].append({"app": label, "status": "no_change"})
+
+    return summary
+
+
 def _is_full_scored(app_id: int) -> bool:
     """True if the application now carries a full 'Fit:' note (not 'Title Fit:')."""
     from jj.db import get_connection

@@ -3706,6 +3706,82 @@ def monitor_score_new(
     )
 
 
+@monitor_app.command("apply-ready")
+def monitor_apply_ready(
+    limit: int = typer.Option(3, "--limit", "-n", help="Max apply-ready prospects this run"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="List only; spawn nothing, send nothing, mark nothing"),
+    no_send: bool = typer.Option(False, "--no-send", help="Prep briefs but skip the Slack message and the notified marker"),
+):
+    """Stage apply-ready roles and hand them off for interactive autofill (Stage 3).
+
+    Apply-ready = full-scored, high-fit (>= 80), not-yet-applied prospects that
+    have not been announced. For each, a research brief is prepped headlessly
+    (so it is ready before you apply), then a Slack "apply-ready" message is
+    sent. The actual browser autofill is interactive: run `/apply-assist
+    --id <id>` from your machine, which fills the form and stops at Submit — it
+    never auto-submits.
+
+    The headless Go pipeline has no browser, so this chain only stages and
+    notifies; it never opens or fills a form.
+    """
+    if not JJ_HOME.exists():
+        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    from rich.table import Table
+
+    from jj.db import get_apply_ready_prospects, log_event
+    from jj.scoring import prep_apply_briefs
+
+    picks = get_apply_ready_prospects(limit=limit)
+    if not picks:
+        console.print("[yellow]Nothing apply-ready: no unannounced, full-scored, high-fit prospects.[/yellow]")
+        return
+
+    table = Table(title=f"Apply-ready ({len(picks)} prospects, limit {limit})")
+    table.add_column("Company")
+    table.add_column("Position")
+    table.add_column("Fit", justify="right")
+    table.add_column("Brief")
+    for app in picks:
+        has_brief = "yes" if (app.get("research_brief") or "").strip() else "no"
+        table.add_row(app["company"], app["position"] or "?", str(app.get("fit_score") or "-"), has_brief)
+    console.print(table)
+
+    if dry_run:
+        console.print("[dim]Dry run: no briefs prepped, nothing sent, nothing marked.[/dim]")
+        return
+
+    # Prep research briefs (headless /research-brief) for any missing one.
+    brief_summary = prep_apply_briefs(limit=limit, dry_run=False)
+    console.print(
+        f"[green]Briefs prepared {brief_summary['prepared']}[/green] | "
+        f"already {brief_summary['already']} | no change {brief_summary['no_change']} | "
+        f"failed {brief_summary['failed']} | skipped {brief_summary['skipped']}."
+    )
+
+    # Re-read so the Slack surface shows freshly prepped briefs.
+    picks = get_apply_ready_prospects(limit=limit)
+
+    if no_send:
+        console.print("[dim]--no-send: briefs prepped, Slack message skipped, nothing marked.[/dim]")
+        return
+
+    from jj.notifier import send_apply_ready
+
+    if not send_apply_ready(picks):
+        console.print("[red]Apply-ready send failed. Check Slack config in ~/.job-journal/config.yaml[/red]")
+        raise typer.Exit(1)
+
+    for app in picks:
+        log_event(
+            event_type="apply_ready_notified",
+            entity_type="application",
+            entity_id=app["id"],
+        )
+    console.print(f"[green]Apply-ready sent: {len(picks)} role{'s' if len(picks) != 1 else ''} staged.[/green]")
+
+
 @monitor_app.command("install-digest")
 def monitor_install_digest(
     hour: int = typer.Option(8, "--hour", help="Local hour (0-23) to send the daily digest"),

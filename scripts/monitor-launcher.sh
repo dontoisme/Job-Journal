@@ -59,6 +59,23 @@ jj monitor scan-apis --score-new --score-limit 8 2>&1
 API_EXIT=$?
 echo "API scan exit: $API_EXIT"
 
+# Step 1b: Stage apply-ready roles (Stage 3) — gated + low limit.
+# Surfaces full-scored, high-fit (>=80), not-yet-applied prospects: preps a
+# research brief headlessly and posts a Slack apply-ready hand-off. It does NOT
+# fill forms (headless = no browser); the actual autofill is interactive via
+# /apply-assist, which fills to Submit and stops. Bounded by --limit; each
+# brief prep can spawn a claude -p call, so keep the cap small. Set
+# JJ_APPLY_READY=0 to disable.
+APPLY_READY_EXIT=0
+if [ "${JJ_APPLY_READY:-1}" = "1" ]; then
+    echo "Staging apply-ready roles..."
+    jj monitor apply-ready --limit "${JJ_APPLY_READY_LIMIT:-2}" 2>&1
+    APPLY_READY_EXIT=$?
+    echo "Apply-ready exit: $APPLY_READY_EXIT"
+else
+    echo "Skipping apply-ready (JJ_APPLY_READY=0)"
+fi
+
 # Step 2: Run full /monitor only at 6am and 6pm (deep scan with corpus scoring + resume gen)
 # At other hours, the quick API scan above is sufficient
 CURRENT_HOUR=$(date '+%H')
@@ -77,5 +94,6 @@ else
 fi
 
 EXIT_CODE=$((API_EXIT > FULL_EXIT ? API_EXIT : FULL_EXIT))
+EXIT_CODE=$((APPLY_READY_EXIT > EXIT_CODE ? APPLY_READY_EXIT : EXIT_CODE))
 echo "=== Monitor complete: $(date '+%Y-%m-%d %H:%M:%S') (exit: $EXIT_CODE) ==="
 exit $EXIT_CODE
