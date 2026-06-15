@@ -56,7 +56,8 @@ Map payload values onto the form:
 
 | Form field | Payload source |
 |---|---|
-| First/Last/Full/Preferred name | `name.*` |
+| Legal name (gov-ID name) | `name.legal` (e.g. "Don Ruben Hogan") |
+| First/Last/Full/Preferred name | `name.*` (first, last, preferred) |
 | Email / Phone | `contact.email` / `contact.phone` |
 | Location / City | `contact.location` |
 | LinkedIn / GitHub / Website | `links.*` |
