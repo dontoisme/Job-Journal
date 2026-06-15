@@ -180,7 +180,7 @@ def infer_company_domain(company: str) -> Optional[str]:
         "PostHog" → "posthog.com"
         "Babylist" → "babylist.com"
         "Outdoorsy/Roamly" → "outdoorsy.com" (takes first part)
-        "Memorial Sloan Kettering" → "mskcc.org" (needs manual mapping)
+        "Alphabet" → "abc.xyz" (needs manual mapping)
         "Acme Corp" → "acme.com"
     """
     # First check if we have it stored
