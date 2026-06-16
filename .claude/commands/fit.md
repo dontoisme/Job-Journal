@@ -15,8 +15,7 @@ When the user invokes `/fit` with a job URL, follow these steps:
 
 ### Step 1: Fetch JD
 
-1. Use **WebFetch** to fetch the full job description
-   - Prompt: "Extract the full job description. Include: job title, company name, required skills, years of experience, responsibilities, qualifications, salary/compensation if listed, location/remote policy. Return all text content."
+1. Use **WebFetch** to extract the full JD: title, company, required skills, years, responsibilities, qualifications, salary, location/remote.
    - If WebFetch fails (403, etc.), try the browser tools (`mcp__claude-in-chrome__navigate` + `mcp__claude-in-chrome__get_page_text`)
    - If both fail, ask the user to paste the JD text
 2. Save the JD text to a temp file for the `--jd` flag:
