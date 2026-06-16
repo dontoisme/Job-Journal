@@ -114,8 +114,13 @@ grounded, cited basis for the answers below.
   phrases. Flag for Don's review in the summary.
 - Other novel questions: draft grounded ONLY in corpus/resume facts (+ brief
   for company context), fill in, flag for review.
-- Cover letter field: if required, draft per /apply conventions (Identity ->
-  Evidence -> Differentiation) using the brief's why-now framing; flag for review.
+- Cover letter field (present at all — required OR optional): call
+  **`/cover-letter --id N`** to draft a tailored letter and save an attachable
+  `.docx` + paste-ready `.txt` to the dated folder. Present the full draft for
+  Don's review (this is his deeper-review artifact). Then, on his go-ahead only:
+  for a text/paste field, paste the `.txt`; for a file field, give the `.docx`
+  path for him to attach (same host-path caveat as the resume). Never submit it
+  for him. Skip only when the form has no cover letter field.
 
 ### 6. HARD STOP before submit
 
