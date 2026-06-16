@@ -59,37 +59,46 @@ jj monitor scan-apis --score-new --score-limit "${JJ_SCORE_LIMIT:-3}" 2>&1
 API_EXIT=$?
 echo "API scan exit: $API_EXIT"
 
-# Step 1b: Stage apply-ready roles (Stage 3) — gated + low limit.
+# The deep scan + apply-ready prep run once/day at this hour (must be one of
+# the LaunchAgent's scheduled hours, currently 9/12/15). Override via env.
+DEEP_SCAN_HOUR="${JJ_DEEP_SCAN_HOUR:-09}"
+CURRENT_HOUR=$(date '+%H')
+
+# Step 1b: Stage apply-ready roles (Stage 3) — once/day, gated + low limit.
 # Surfaces full-scored, high-fit (>=80), not-yet-applied prospects: preps a
 # research brief headlessly and posts a Slack apply-ready hand-off. It does NOT
 # fill forms (headless = no browser); the actual autofill is interactive via
 # /apply-assist, which fills to Submit and stops. Bounded by --limit; each
-# brief prep can spawn a claude -p call, so keep the cap small. Set
-# JJ_APPLY_READY=0 to disable.
+# brief prep can spawn a claude -p call, so keep the cap small. Apply-ready
+# prospects are already in the DB from scoring, so a once/day cadence is fine.
+# Set JJ_APPLY_READY=0 to disable.
 APPLY_READY_EXIT=0
-if [ "${JJ_APPLY_READY:-1}" = "1" ]; then
+if [ "${JJ_APPLY_READY:-1}" = "1" ] && [ "$CURRENT_HOUR" = "$DEEP_SCAN_HOUR" ]; then
     echo "Staging apply-ready roles..."
     jj monitor apply-ready --limit "${JJ_APPLY_READY_LIMIT:-2}" 2>&1
     APPLY_READY_EXIT=$?
     echo "Apply-ready exit: $APPLY_READY_EXIT"
 else
-    echo "Skipping apply-ready (JJ_APPLY_READY=0)"
+    echo "Skipping apply-ready (hour $CURRENT_HOUR — only runs at $DEEP_SCAN_HOUR; or JJ_APPLY_READY=0)"
 fi
 
-# Step 2: Run full /monitor only at 6am and 6pm (deep scan with corpus scoring + resume gen)
-# At other hours, the quick API scan above is sufficient
-CURRENT_HOUR=$(date '+%H')
-if [ "$CURRENT_HOUR" = "06" ] || [ "$CURRENT_HOUR" = "18" ]; then
+# Step 2: Run full /monitor once/day at DEEP_SCAN_HOUR (deep scan with corpus
+# scoring + resume gen — scrapes non-API/Workday companies + VC boards that the
+# API scan above does not cover). Pinned to Sonnet to bound cost. At other hours
+# the quick API scan + Stage 2 scoring is sufficient.
+if [ "$CURRENT_HOUR" = "$DEEP_SCAN_HOUR" ]; then
     echo "Full monitor run (hour $CURRENT_HOUR)..."
     # -p: non-interactive output mode (prints result, no TUI)
     # --allowedTools: restrict to only the tools the monitor needs
+    # --model sonnet: cost control for the once/day deep scan
     claude -p "Run /monitor" \
         --allowedTools "Bash,WebFetch,Read,Grep,Glob" \
+        --model "${JJ_MONITOR_MODEL:-sonnet}" \
         2>&1
     FULL_EXIT=$?
     echo "Full monitor exit: $FULL_EXIT"
 else
-    echo "Skipping full monitor (hour $CURRENT_HOUR — only runs at 06 and 18)"
+    echo "Skipping full monitor (hour $CURRENT_HOUR — only runs at $DEEP_SCAN_HOUR)"
     FULL_EXIT=0
 fi
 
