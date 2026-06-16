@@ -55,7 +55,7 @@ echo "jj: $JJ_PATH"
 # backlog; --score-limit caps cost per run.
 cd "$PROJECT_DIR"
 echo "Running quick API scan + net-new full-scoring..."
-jj monitor scan-apis --score-new --score-limit 8 2>&1
+jj monitor scan-apis --score-new --score-limit "${JJ_SCORE_LIMIT:-3}" 2>&1
 API_EXIT=$?
 echo "API scan exit: $API_EXIT"
 

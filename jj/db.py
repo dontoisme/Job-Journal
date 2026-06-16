@@ -1661,7 +1661,7 @@ def get_unscored_selected_prospects(
 
     Selection policy (Stage 2): every high-priority target-company posting
     (is_target=1 AND target_priority>=1), plus non-targets that clear the
-    title gate (title fit >= 65). Title-only prospects carry a 'Title Fit:'
+    title gate (title fit >= 72). Title-only prospects carry a 'Title Fit:'
     note; full-scored ones carry 'Fit:'. Targets are ranked first, then by
     score and recency, so a capped run drains the most valuable first.
 
@@ -1687,7 +1687,7 @@ def get_unscored_selected_prospects(
               {since_clause}
               AND (
                 {target_company_clause}
-                OR COALESCE(fit_score, 0) >= 65
+                OR COALESCE(fit_score, 0) >= 72
               )
             ORDER BY
               CASE WHEN {target_company_clause} THEN 0 ELSE 1 END,
