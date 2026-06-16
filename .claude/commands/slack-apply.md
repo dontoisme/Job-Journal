@@ -35,8 +35,7 @@ Follow the exact same workflow as `/score` Steps 1-6, adapted for a single URL:
 
 #### Step 1: Fetch JD
 
-1. Use **WebFetch** to fetch the full job description
-   - Prompt: "Extract the full job description. Include: job title, company name, required skills, years of experience, responsibilities, qualifications, salary/compensation if listed, location/remote policy. Return all text content."
+1. Use **WebFetch** to extract the full JD: title, company, required skills, years, responsibilities, qualifications, salary, location/remote.
 2. Detect ATS type:
    ```python
    from jj.db import detect_ats_type

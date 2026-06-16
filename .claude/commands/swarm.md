@@ -175,8 +175,7 @@ For each **new** listing that **passed the title pre-filter** in Phase 2d:
 
 ### 3a. Fetch Full JD
 
-Use **WebFetch** to get the full job description from each listing URL:
-- Prompt: "Extract the full job description. Include: job title, company name, required skills, years of experience, responsibilities, qualifications, salary/compensation if listed, location/remote policy. Return all text content."
+Use **WebFetch** to extract the full JD from each listing URL: title, company, required skills, years, responsibilities, qualifications, salary, location/remote.
 
 If WebFetch fails, log and skip (score = 0, verdict = "Unable to fetch").
 

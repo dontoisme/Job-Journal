@@ -60,8 +60,7 @@ conn.close()
 
 For each new URL:
 
-1. Use **WebFetch** to fetch the full job description
-   - Prompt: "Extract the full job description. Include: job title, company name, required skills, years of experience, responsibilities, qualifications, salary/compensation if listed, location/remote policy. Return all text content. If the page is a JavaScript app shell with no job content, say NO CONTENT — JS-rendered."
+1. Use **WebFetch** to extract the full JD: title, company, required skills, years, responsibilities, qualifications, salary, location/remote. If the page is a JS app shell with no job content, say NO CONTENT — JS-rendered.
 2. **Browser fallback for JS-rendered pages** — some career sites (notably
    `google.com/about/careers`, Workday, custom SPAs) return only an app shell to
    WebFetch. If WebFetch reports NO CONTENT / a cross-host redirect / empty body,

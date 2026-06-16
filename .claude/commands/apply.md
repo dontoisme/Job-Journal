@@ -43,8 +43,8 @@ a structured assessment:
 |----------|-----|----------|
 | Skills | 35 | JD must-haves present in corpus |
 | Experience | 25 | Seniority + scope match |
-| Domain | 30 | Industry/problem-space fit |
-| Location | 10 | Remote/US/Austin-friendly |
+| Domain | 25 | Industry/problem-space fit |
+| Location | 15 | Remote/US/Austin-friendly |
 
 ```
 ## Fit Assessment — <company>, <title>
