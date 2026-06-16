@@ -61,15 +61,17 @@ conn.close()
 For each new URL:
 
 1. Use **WebFetch** to fetch the full job description
-   - Prompt: "Extract the full job description. Include: job title, company name, required skills, years of experience, responsibilities, qualifications, salary/compensation if listed, location/remote policy. Return all text content."
-2. Detect ATS type from URL:
-   ```python
-   from jj.db import detect_ats_type
-   ats_type = detect_ats_type(url)
-   ```
-3. Extract: company name, job title, location, salary (if visible)
+   - Prompt: "Extract the full job description. Include: job title, company name, required skills, years of experience, responsibilities, qualifications, salary/compensation if listed, location/remote policy. Return all text content. If the page is a JavaScript app shell with no job content, say NO CONTENT — JS-rendered."
+2. **Browser fallback for JS-rendered pages** — some career sites (notably
+   `google.com/about/careers`, Workday, custom SPAs) return only an app shell to
+   WebFetch. If WebFetch reports NO CONTENT / a cross-host redirect / empty body,
+   load the Chrome tools, `navigate` to the URL, and read the rendered JD with
+   `get_page_text`. If that also fails, ask the user to paste the JD.
+3. Detect ATS type from the URL host (`greenhouse`, `lever`, `ashby`,
+   `teamtailor`, `workday`, `amazon.jobs`, `google`, else `custom`).
+4. Extract: company name, job title, location, salary (if visible)
 
-If WebFetch fails, report: `Could not fetch [url] — skipping.`
+If no JD can be obtained by any method, report: `Could not read [url] — skipping.`
 
 ### Step 4: Detect Archetype
 
@@ -221,7 +223,7 @@ from jj.db import create_application, update_application
 notes_text = (
     f"Fit: {score}% ({verdict}). Archetype: {archetype}. "
     f"Skills: {skills_score}/35, Exp: {exp_score}/25, "
-    f"Domain: {domain_score}/25, Location: {loc_score}/15. "
+    f"Domain: {domain_score}/30, Location: {loc_score}/10. "
     f"{brief_reasoning}"
 )
 
