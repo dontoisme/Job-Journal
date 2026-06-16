@@ -253,18 +253,8 @@ For each new job from Phase 1:
 
    **Story bank:** Save new STAR+R stories (deduplicate by `source_entry_ids`):
    ```python
-   from jj.db import create_story, get_stories
-   existing = get_stories()
-   for story in generated_stories:
-       is_dup = any(s.get("source_entry_ids") == story["source_entry_ids"] for s in existing if s.get("source_entry_ids"))
-       if not is_dup:
-           create_story(
-               title=story["title"], situation=story["situation"],
-               task=story["task"], action=story["action"],
-               result=story["result"], reflection=story["reflection"],
-               source_entry_ids=story.get("source_entry_ids"),
-               jd_requirements_matched=story.get("requirements_matched"),
-           )
+   from jj.db import save_new_stories
+   save_new_stories(generated_stories)  # dedups by source_entry_ids automatically
    ```
 
 ### 2c. Deduplicate Before Inserting

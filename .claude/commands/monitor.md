@@ -297,9 +297,9 @@ If WebFetch fails on any JD, keep the title-fit score and `score_type: "Title Fi
 
 ### 2h. Auto-Resume Generation (Corpus Fit 65+)
 
-For new prospects scoring **65+ on corpus fit**, generate a tailored resume. Cap at **3 resumes per monitor run** to stay within runtime budget.
+For new prospects scoring **65+ on corpus fit**, generate a tailored resume. Cap at **1 resume per monitor run** to stay within runtime and token budget — archetype resumes are already linked, and the Slack [Go] pipeline generates the final tailored resume on demand, so deferring extra auto-gen loses nothing.
 
-For each qualifying prospect (highest scores first, up to 3):
+For each qualifying prospect (highest scores first, up to 1):
 
 1. Read the JD text (already fetched in 2g)
 2. Select the best variant by matching JD keywords against known variant definitions
@@ -444,7 +444,7 @@ If WebFetch fails, keep title-fit score.
 
 ### 3g. Auto-Resume Generation (VC Board Prospects with Corpus Fit 65+)
 
-Same logic as Phase 2h. Shares the **same cap of 3 total resumes per run** across both company and VC board prospects. If 3 resumes were already generated in Phase 2h, skip this phase.
+Same logic as Phase 2h. Shares the **same cap of 1 total resume per run** across both company and VC board prospects. If a resume was already generated in Phase 2h, skip this phase.
 
 ---
 

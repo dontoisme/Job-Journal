@@ -11,15 +11,57 @@ This is the same headless /slack-apply path the Slack "Go" button uses;
 it writes a real 'Fit:' note + fit_score and links a best-fit archetype,
 which de-pollutes the digest ranking and makes target cards trustworthy.
 """
+import json
 import logging
+import os
 import shutil
 import subprocess
+from datetime import date
+from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger("jj.scoring")
 
 SCORE_TIMEOUT_SEC = 900  # 15 min per job, matches the Slack pipeline
 ALLOWED_TOOLS = "Bash,WebFetch,WebSearch,Read,Write,Grep,Glob"
+
+# Burst safety net: hard ceiling on /slack-apply spawns per calendar day across
+# all Stage 2 runs. A large net-new ingest (e.g. a first Amazon scrape) can
+# otherwise spike token cost in a single day. Overridable via env.
+DEFAULT_SCORE_DAILY_LIMIT = 15
+_DAILY_COUNT_PATH = Path.home() / ".job-journal" / "logs" / "score-daily-count.json"
+
+
+def _score_daily_limit() -> int:
+    """Per-day spawn ceiling (env JJ_SCORE_DAILY_LIMIT, default 15)."""
+    raw = os.environ.get("JJ_SCORE_DAILY_LIMIT")
+    if raw is None:
+        return DEFAULT_SCORE_DAILY_LIMIT
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return DEFAULT_SCORE_DAILY_LIMIT
+
+
+def _read_daily_count(today: str) -> int:
+    """Spawns already recorded today (0 if file missing/stale/unreadable)."""
+    try:
+        data = json.loads(_DAILY_COUNT_PATH.read_text())
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return 0
+    return int(data.get(today, 0)) if data.get("date") == today else 0
+
+
+def _bump_daily_count(today: str, n: int = 1) -> int:
+    """Record ``n`` more spawns for ``today``; return the new total."""
+    current = _read_daily_count(today)
+    new_total = current + n
+    try:
+        _DAILY_COUNT_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _DAILY_COUNT_PATH.write_text(json.dumps({"date": today, today: new_total}))
+    except OSError:
+        logger.warning("could not persist score-daily-count.json")
+    return new_total
 
 
 def run_full_score(url: str, timeout: int = SCORE_TIMEOUT_SEC) -> tuple[int, str, str]:
@@ -177,6 +219,10 @@ def score_new_prospects(
         "items": [],
     }
 
+    today = date.today().isoformat()
+    daily_limit = _score_daily_limit()
+    daily_count = _read_daily_count(today)
+
     for p in picks:
         url = p.get("job_url") or ""
         app_id = p.get("id")
@@ -188,7 +234,16 @@ def score_new_prospects(
         if dry_run:
             summary["items"].append({"app": label, "status": "would_score", "url": url})
             continue
+        if daily_count >= daily_limit:
+            logger.warning(
+                "daily score cap reached (%d); skipping remaining %s",
+                daily_limit, label,
+            )
+            summary["skipped"] += 1
+            summary["items"].append({"app": label, "status": "skip_daily_cap"})
+            continue
         rc, _out, err = run_full_score(url)
+        daily_count = _bump_daily_count(today)
         if rc != 0:
             summary["failed"] += 1
             summary["items"].append({"app": label, "status": f"fail_rc{rc}", "err": (err or "")[-200:]})

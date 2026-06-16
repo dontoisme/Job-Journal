@@ -111,8 +111,8 @@ Score (0-100) using the 4-category rubric:
 |----------|--------|------------------|
 | **Skills Match** | 35 pts | JD required skills vs corpus skills |
 | **Experience Level** | 25 pts | Seniority alignment (title, years) |
-| **Domain Fit** | 30 pts | Domain tag overlap |
-| **Location/Remote** | 10 pts | Location compatibility with profile |
+| **Domain Fit** | 25 pts | Domain tag overlap |
+| **Location/Remote** | 15 pts | Location compatibility with profile |
 
 Assign verdict:
 
@@ -131,7 +131,7 @@ from jj.db import create_application, update_application
 notes_text = (
     f"Fit: {score}% ({verdict}). Archetype: {archetype}. "
     f"Skills: {skills_score}/35, Exp: {exp_score}/25, "
-    f"Domain: {domain_score}/30, Location: {loc_score}/10. "
+    f"Domain: {domain_score}/25, Location: {loc_score}/15. "
     f"{brief_reasoning}"
 )
 
@@ -171,7 +171,7 @@ For jobs scoring 65+, generate the evaluation report and STAR+R stories (same as
 - Save STAR+R stories to story bank (deduplicate by `source_entry_ids`)
 
 ```python
-from jj.db import create_evaluation_report, create_story, get_stories
+from jj.db import create_evaluation_report, save_new_stories
 
 report_id = create_evaluation_report(
     application_id=app_id,
@@ -186,6 +186,9 @@ report_id = create_evaluation_report(
     comp_research=comp_research_text,
     jd_url=url, jd_snapshot=jd_text,
 )
+
+# Save STAR+R stories (Block 3) to the story bank; dedups by source_entry_ids.
+save_new_stories(generated_stories)
 ```
 
 ### Phase 2: Apply Gate

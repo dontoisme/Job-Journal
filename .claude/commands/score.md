@@ -61,15 +61,17 @@ conn.close()
 For each new URL:
 
 1. Use **WebFetch** to fetch the full job description
-   - Prompt: "Extract the full job description. Include: job title, company name, required skills, years of experience, responsibilities, qualifications, salary/compensation if listed, location/remote policy. Return all text content."
-2. Detect ATS type from URL:
-   ```python
-   from jj.db import detect_ats_type
-   ats_type = detect_ats_type(url)
-   ```
-3. Extract: company name, job title, location, salary (if visible)
+   - Prompt: "Extract the full job description. Include: job title, company name, required skills, years of experience, responsibilities, qualifications, salary/compensation if listed, location/remote policy. Return all text content. If the page is a JavaScript app shell with no job content, say NO CONTENT — JS-rendered."
+2. **Browser fallback for JS-rendered pages** — some career sites (notably
+   `google.com/about/careers`, Workday, custom SPAs) return only an app shell to
+   WebFetch. If WebFetch reports NO CONTENT / a cross-host redirect / empty body,
+   load the Chrome tools, `navigate` to the URL, and read the rendered JD with
+   `get_page_text`. If that also fails, ask the user to paste the JD.
+3. Detect ATS type from the URL host (`greenhouse`, `lever`, `ashby`,
+   `teamtailor`, `workday`, `amazon.jobs`, `google`, else `custom`).
+4. Extract: company name, job title, location, salary (if visible)
 
-If WebFetch fails, report: `Could not fetch [url] — skipping.`
+If no JD can be obtained by any method, report: `Could not read [url] — skipping.`
 
 ### Step 4: Detect Archetype
 
@@ -112,8 +114,8 @@ Score each job (0-100) using the 4-category rubric:
 |----------|--------|------------------|
 | **Skills Match** | 35 pts | JD required skills vs corpus skills |
 | **Experience Level** | 25 pts | Seniority alignment (title, years) |
-| **Domain Fit** | 30 pts | Domain tag overlap (AI, growth, health-tech, platform, consumer) |
-| **Location/Remote** | 10 pts | Location compatibility with profile preferences |
+| **Domain Fit** | 25 pts | Domain tag overlap (AI, growth, health-tech, platform, consumer) |
+| **Location/Remote** | 15 pts | Location compatibility with profile preferences |
 
 Assign verdict:
 
@@ -184,29 +186,12 @@ report_id = create_evaluation_report(
 For each STAR+R story generated in the evaluation report (Block 3), save it to the story bank for reuse across future evaluations and interview prep:
 
 ```python
-from jj.db import create_story, get_stories
+from jj.db import save_new_stories
 
-# Check for duplicates — don't create a story if one with the same source entries exists
-existing_stories = get_stories()
-
-for story in generated_stories:
-    # Skip if a story with the same source_entry_ids already exists
-    is_duplicate = any(
-        s.get("source_entry_ids") == story["source_entry_ids"]
-        for s in existing_stories
-        if s.get("source_entry_ids")
-    )
-    if not is_duplicate:
-        create_story(
-            title=story["title"],
-            situation=story["situation"],
-            task=story["task"],
-            action=story["action"],
-            result=story["result"],
-            reflection=story["reflection"],
-            source_entry_ids=story.get("source_entry_ids"),
-            jd_requirements_matched=story.get("requirements_matched"),
-        )
+# Dedups by source_entry_ids automatically; each story dict uses the
+# create_story fields (title/situation/task/action/result/reflection/
+# source_entry_ids/requirements_matched). Returns the count created.
+save_new_stories(generated_stories)
 ```
 
 ### Step 6: Insert or Update Prospect
