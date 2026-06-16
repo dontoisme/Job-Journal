@@ -107,7 +107,7 @@ def run_research_brief(app_id: int, timeout: int = BRIEF_TIMEOUT_SEC) -> tuple[i
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         return proc.returncode, proc.stdout, proc.stderr
     except subprocess.TimeoutExpired:
-        logger.error("brief timeout after %ds: %s", timeout, url)
+        logger.error("brief timeout after %ds: app %s", timeout, app_id)
         return 124, "", f"Timed out after {timeout}s"
     except Exception as e:  # noqa: BLE001 - report any launch failure to caller
         logger.exception("brief subprocess failed")
@@ -174,6 +174,171 @@ def prep_apply_briefs(limit: int = 3, dry_run: bool = False) -> dict[str, Any]:
             # Clean exit but no brief written — typically a dead/stale JD URL.
             summary["no_change"] += 1
             summary["items"].append({"app": label, "status": "no_change"})
+
+    return summary
+
+
+STAGE_TIMEOUT_SEC = 900  # 15 min per tailored resume, matches the brief budget
+STAGE_ALLOWED_TOOLS = "Bash,WebFetch,Read,Grep,Glob"  # no browser; headless gen
+TAILOR_FIT_THRESHOLD = 85  # >= this -> disciplined per-JD tailor; else archetype
+
+
+def run_stage_resume(app_id: int, timeout: int = STAGE_TIMEOUT_SEC) -> tuple[int, str, str]:
+    """Spawn a headless /stage-resume run (disciplined per-JD tailor for top picks).
+
+    The skill resolves the application, generates a tailored resume via
+    generate_resume_programmatic, and persists resume_id + staged_resume_path.
+    Returns (returncode, stdout, stderr). rc=127 if the claude CLI is absent.
+    """
+    claude = shutil.which("claude")
+    if not claude:
+        return 127, "", "'claude' not found in PATH"
+    cmd = [claude, "-p", f"/stage-resume --id {app_id}", "--allowedTools", STAGE_ALLOWED_TOOLS]
+    logger.info("stage: /stage-resume --id %s", app_id)
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return proc.returncode, proc.stdout, proc.stderr
+    except subprocess.TimeoutExpired:
+        logger.error("stage timeout after %ds: app %s", timeout, app_id)
+        return 124, "", f"Timed out after {timeout}s"
+    except Exception as e:  # noqa: BLE001
+        logger.exception("stage subprocess failed")
+        return 1, "", str(e)
+
+
+def _archetype_from_notes(notes: Optional[str]) -> str:
+    """Parse 'Archetype: <variant>' from a full-score note; default 'general'."""
+    import re
+
+    m = re.search(r"Archetype:\s*([a-z\-]+)", notes or "", re.IGNORECASE)
+    return m.group(1).lower() if m else "general"
+
+
+def stage_archetype_resume(application: dict[str, Any], archetype: str = "general") -> Optional[str]:
+    """Copy the best-fit archetype PDF to a dated per-application file; return its path.
+
+    Mirrors the staging in `jj app prep` so apply-ready prospects carry a resume
+    file before the Slack notification fires. Returns None if the archetype PDF
+    or company/position are missing, or the copy fails.
+    """
+    import shutil as _shutil
+    from datetime import date as _date
+
+    from jj.config import load_archetypes, load_profile
+
+    company = application.get("company")
+    position = application.get("position")
+    if not (company and position):
+        return None
+
+    arch_config = load_archetypes() or {}
+    variants = arch_config.get("archetypes", arch_config)
+    variant = variants.get(archetype) or variants.get("general")
+    pdf_path = (variant or {}).get("pdf_path", "")
+    if not pdf_path or not Path(pdf_path).exists():
+        return None
+
+    profile = load_profile()
+    name = profile.get("name", {})
+    full_name = f"{name.get('first', '')} {name.get('last', '')}".strip() or "Don Hogan"
+
+    def _safe(part: str) -> str:
+        return str(part or "").replace("/", "-").strip()
+
+    fname = f"{full_name} - {_safe(position)} - {_safe(company)} - Resume.pdf"
+    base = Path(profile.get("resume_output_dir", "~/Documents/Resumes")).expanduser()
+    dated = base / _date.today().isoformat()
+    try:
+        dated.mkdir(parents=True, exist_ok=True)
+        dest = dated / fname
+        _shutil.copy2(pdf_path, dest)
+        return str(dest)
+    except OSError:
+        logger.exception("archetype resume staging failed for app %s", application.get("id"))
+        return None
+
+
+def _staged_resume_path(app_id: int) -> str:
+    """The application's persisted staged_resume_path (empty if none)."""
+    from jj.db import get_connection
+
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT staged_resume_path FROM applications WHERE id = ?", (app_id,)
+        ).fetchone()
+    return (row["staged_resume_path"] or "").strip() if row else ""
+
+
+def prep_apply_packages(limit: int = 2, dry_run: bool = False) -> dict[str, Any]:
+    """Stage the full pre-browser package (research brief + resume) before Slack.
+
+    For each apply-ready prospect: ensure a research brief (reusing
+    run_research_brief), then stage a resume by fit -- a disciplined per-JD tailor
+    via /stage-resume for fit >= TAILOR_FIT_THRESHOLD, otherwise a best-fit
+    archetype copy. The tailored path persists resume_id + staged_resume_path
+    itself; the archetype path is persisted here. Failures never block the Slack
+    post (apply-assist stages on demand as a fallback). Returns a summary dict.
+    """
+    from jj.db import get_apply_ready_prospects, update_application
+
+    picks = get_apply_ready_prospects(limit=limit)
+    summary: dict[str, Any] = {
+        "selected": len(picks),
+        "briefs": 0,
+        "resumes": 0,
+        "tailored": 0,
+        "archetype": 0,
+        "failed": 0,
+        "items": [],
+    }
+
+    for p in picks:
+        app_id = p.get("id")
+        fit = p.get("fit_score") or 0
+        item: dict[str, Any] = {"app": f"{p.get('company', '?')} — {p.get('position', '?')}", "id": app_id}
+        if not app_id:
+            item["status"] = "skip_no_id"
+            summary["items"].append(item)
+            continue
+        if dry_run:
+            item["status"] = "would_prep"
+            item["resume_mode"] = "tailored" if fit >= TAILOR_FIT_THRESHOLD else "archetype"
+            summary["items"].append(item)
+            continue
+
+        # 1. Research brief (skip if already present)
+        if (p.get("research_brief") or "").strip():
+            item["brief"] = "already"
+        else:
+            rc, _out, _err = run_research_brief(app_id)
+            if rc == 0 and _has_research_brief(app_id):
+                summary["briefs"] += 1
+                item["brief"] = "prepared"
+            else:
+                item["brief"] = f"fail_rc{rc}"
+
+        # 2. Resume staging by fit, with archetype fallback
+        staged = ""
+        if fit >= TAILOR_FIT_THRESHOLD:
+            rc, _out, _err = run_stage_resume(app_id)
+            staged = _staged_resume_path(app_id)
+            if rc == 0 and staged:
+                summary["tailored"] += 1
+                item["resume"] = "tailored"
+        if not staged:
+            path = stage_archetype_resume(p, _archetype_from_notes(p.get("notes")))
+            if path:
+                update_application(app_id, staged_resume_path=path)
+                staged = path
+                summary["archetype"] += 1
+                item.setdefault("resume", "archetype")
+        if staged:
+            summary["resumes"] += 1
+            item["staged_resume_path"] = staged
+        else:
+            summary["failed"] += 1
+            item.setdefault("resume", "fail")
+        summary["items"].append(item)
 
     return summary
 
