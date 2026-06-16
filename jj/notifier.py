@@ -638,14 +638,19 @@ def _apply_ready_verdict(app: dict[str, Any]) -> str:
     return _verdict_for_score(app.get("fit_score") or 0)
 
 
+# Action ID for the apply-ready "Open & Apply" button. Must match the handler
+# dispatch in jj/slack_bot.py (imported there).
+OPEN_APPLY_ACTION_ID = "open_apply"
+
+
 def format_apply_ready_payload(items: list[dict[str, Any]]) -> dict:
     """Build the Slack apply-ready Block Kit payload.
 
-    Apply-ready = full-scored, high-fit, not-yet-applied prospects whose
-    research brief has been staged. Fill is interactive (the headless Go
-    pipeline has no browser), so each item hands off to /apply-assist rather
-    than carrying an auto-fill button. No-emoji, bold-header style to match
-    format_digest_payload.
+    Apply-ready = full-scored, high-fit, not-yet-applied prospects whose research
+    brief AND resume have been staged before the post. Each item carries an
+    "Open & Apply" button (opens the JD page in Chrome on the host Mac and hands
+    off to /apply-assist) plus a "View JD" link. No-emoji, bold-header style to
+    match format_digest_payload.
     """
     today = datetime.now().strftime("%a %b %-d")
     blocks: list[dict[str, Any]] = [{
@@ -675,17 +680,34 @@ def format_apply_ready_payload(items: list[dict[str, Any]]) -> dict:
         snippet = _brief_snippet(app.get("research_brief"))
         if snippet:
             lines.append(f"_{snippet}_")
-        line3_parts: list[str] = []
-        if url:
-            line3_parts.append(f"<{url}|View JD>")
-        if app_id is not None:
-            line3_parts.append(f"Run `/apply-assist --id {app_id}` to autofill")
-        if line3_parts:
-            lines.append(" — ".join(line3_parts))
+        staged = (app.get("staged_resume_path") or "").strip()
+        if staged:
+            lines.append(f"Resume staged: `{staged.rsplit('/', 1)[-1]}`")
+        else:
+            lines.append("_Resume not staged — `/apply-assist` will stage it on open._")
         blocks.append({
             "type": "section",
             "text": {"type": "mrkdwn", "text": "\n".join(lines)},
         })
+
+        # Per-item CTA row: open the JD page (server-side) + view the JD.
+        elements: list[dict[str, Any]] = []
+        if app_id is not None:
+            elements.append({
+                "type": "button",
+                "text": {"type": "plain_text", "text": "Open & Apply"},
+                "style": "primary",
+                "action_id": OPEN_APPLY_ACTION_ID,
+                "value": str(app_id),
+            })
+        if url:
+            elements.append({
+                "type": "button",
+                "text": {"type": "plain_text", "text": "View JD"},
+                "url": url,
+            })
+        if elements:
+            blocks.append({"type": "actions", "elements": elements})
 
     blocks.append({"type": "divider"})
     blocks.append({

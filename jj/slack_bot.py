@@ -43,6 +43,7 @@ except ImportError as e:
     raise
 
 from jj.config import load_config
+from jj.notifier import OPEN_APPLY_ACTION_ID
 
 logger = logging.getLogger("jj.slack_bot")
 
@@ -600,6 +601,69 @@ def _extract_thread_ts(payload: dict) -> Optional[str]:
     return container.get("message_ts")
 
 
+def _on_open_apply(
+    web: WebClient,
+    app_id_str: str,
+    channel: Optional[str],
+    thread_ts: Optional[str],
+    user: Optional[str],
+    authorized_users: list[str],
+) -> None:
+    """Apply-ready "Open & Apply" CTA: open the JD page in Chrome on the host Mac
+    and hand off to /apply-assist with the staged resume path. The headless bot
+    cannot drive the browser, so it opens the page and surfaces the command."""
+    if not channel:
+        return
+    if authorized_users and user not in authorized_users:
+        logger.info("%s user=%s not in allowlist", V_DENY, user)
+        _post_ephemeral(web, channel=channel, user=user,
+                        text=":lock: Not authorized — this button is restricted.")
+        return
+    try:
+        app_id = int(app_id_str)
+    except (TypeError, ValueError):
+        logger.warning("open_apply: bad app id %r", app_id_str)
+        return
+
+    from jj.db import get_application
+    app = get_application(app_id)
+    if not app:
+        _post_message(web, channel=channel, thread_ts=thread_ts,
+                      text=f":warning: Application {app_id} not found.")
+        return
+
+    company = app.get("company", "?")
+    position = app.get("position", "?")
+    url = app.get("job_url") or ""
+    staged = (app.get("staged_resume_path") or "").strip()
+
+    # Open the application page in Chrome on the Mac the bot runs on.
+    opened = False
+    if url:
+        try:
+            subprocess.run(["open", url], check=False, timeout=10)
+            opened = True
+        except Exception:  # noqa: BLE001
+            logger.exception("open_apply: failed to open %s", url)
+
+    if user:
+        _post_ephemeral(web, channel=channel, user=user,
+                        text=":rocket: Opening the application page…")
+
+    lines = [
+        f":inbox_tray: Opened *{position}* @ *{company}* in Chrome."
+        if opened else
+        f":warning: Couldn't auto-open <{url}|the JD> — open it manually."
+    ]
+    if staged:
+        lines.append(f":page_facing_up: Resume staged: `{staged}`")
+    else:
+        lines.append(":page_facing_up: No staged resume — `/apply-assist` will stage one on open.")
+    lines.append(f"Run `/apply-assist --id {app_id}` to autofill (fills to Submit, then you review + submit).")
+    _post_message(web, channel=channel, thread_ts=thread_ts, text="\n".join(lines))
+    logger.info("%s open_apply app=%s opened=%s", V_CLICK, app_id, opened)
+
+
 def _on_block_actions(web: WebClient, req: SocketModeRequest, authorized_users: list[str]) -> None:
     payload = req.payload
     actions = payload.get("actions", []) or []
@@ -611,7 +675,11 @@ def _on_block_actions(web: WebClient, req: SocketModeRequest, authorized_users: 
     thread_ts = _extract_thread_ts(payload)
 
     for action in actions:
-        if action.get("action_id") != ACTION_ID:
+        action_id = action.get("action_id")
+        if action_id == OPEN_APPLY_ACTION_ID:
+            _on_open_apply(web, action.get("value", "") or "", channel, thread_ts, user, authorized_users)
+            continue
+        if action_id != ACTION_ID:
             continue
 
         url = action.get("value", "") or ""
