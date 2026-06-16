@@ -60,7 +60,19 @@ PHASE_TIMEOUTS = {
     "phase3": 600,   # 10 min: apply improvements + generate final
     "phase4": 300,   # 5 min: final eval (no WebSearch)
 }
-PIPELINE_EVAL_MODEL = "opus"
+def _pipeline_eval_model() -> str:
+    """Model for the pipeline resume-eval phases (Phase 2 + 4).
+
+    Defaults to Sonnet (the rubric is structured scoring; Sonnet matches Opus
+    within tolerance per the eval_ab.py A/B check). Override via config.yaml:
+        pipeline:
+          eval_model: opus   # restore Opus if A/B shows degradation
+    """
+    cfg = load_config() or {}
+    return (cfg.get("pipeline", {}) or {}).get("eval_model") or "sonnet"
+
+
+PIPELINE_EVAL_MODEL = _pipeline_eval_model()
 
 # --- Log verb prefixes (Rich markup) ---
 # Primary events — designed to pop visually:
@@ -337,8 +349,8 @@ def _run_pipeline(url: str) -> tuple[int, str, str]:
     elapsed = int(time.time() - t0)
     logger.info("%s Phase 1 done in %ds (app %d)", V_DONE, elapsed, app_id)
 
-    # Phase 2: Opus 4.7 evaluation (legacy pipeline, only if Phase 1 produced PIPELINE_PHASE1)
-    logger.info("%s Phase 2/4: Opus evaluation", V_NOTE)
+    # Phase 2: resume evaluation (legacy pipeline, only if Phase 1 produced PIPELINE_PHASE1)
+    logger.info("%s Phase 2/4: eval (%s)", V_NOTE, PIPELINE_EVAL_MODEL)
     rc2, stdout2, stderr2 = _run_phase_subprocess(
         f"/resume-eval {app_id}",
         timeout=PHASE_TIMEOUTS["phase2"],
