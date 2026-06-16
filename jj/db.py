@@ -4539,6 +4539,47 @@ def create_story(
         return cursor.lastrowid
 
 
+def save_new_stories(stories: list[dict[str, Any]]) -> int:
+    """Persist STAR+R stories, skipping any whose source_entry_ids already exist.
+
+    Encapsulates the story-bank dedup that the /score, /slack-apply, /pipeline,
+    and /fit skills used to inline. Each story dict uses the create_story
+    fields; accepts either ``jd_requirements_matched`` or ``requirements_matched``
+    for the tag list. Returns the count of newly created stories.
+    """
+    if not stories:
+        return 0
+    # get_stories() returns source_entry_ids already parsed to a list; key on
+    # its JSON form so equal id-sets compare equal.
+    seen = {
+        json.dumps(s["source_entry_ids"])
+        for s in get_stories()
+        if s.get("source_entry_ids")
+    }
+    created = 0
+    for story in stories:
+        sids = story.get("source_entry_ids")
+        if sids is not None and json.dumps(sids) in seen:
+            continue
+        create_story(
+            title=story["title"],
+            situation=story["situation"],
+            task=story["task"],
+            action=story["action"],
+            result=story["result"],
+            reflection=story.get("reflection"),
+            source_entry_ids=sids,
+            jd_requirements_matched=(
+                story.get("jd_requirements_matched")
+                or story.get("requirements_matched")
+            ),
+        )
+        if sids is not None:
+            seen.add(json.dumps(sids))
+        created += 1
+    return created
+
+
 def get_stories(requirement_tags: Optional[list[str]] = None) -> list[dict[str, Any]]:
     """Get stories, optionally filtered by JD requirement overlap."""
     with get_connection() as conn:

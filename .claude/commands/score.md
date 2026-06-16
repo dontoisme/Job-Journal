@@ -114,8 +114,8 @@ Score each job (0-100) using the 4-category rubric:
 |----------|--------|------------------|
 | **Skills Match** | 35 pts | JD required skills vs corpus skills |
 | **Experience Level** | 25 pts | Seniority alignment (title, years) |
-| **Domain Fit** | 30 pts | Domain tag overlap (AI, growth, health-tech, platform, consumer) |
-| **Location/Remote** | 10 pts | Location compatibility with profile preferences |
+| **Domain Fit** | 25 pts | Domain tag overlap (AI, growth, health-tech, platform, consumer) |
+| **Location/Remote** | 15 pts | Location compatibility with profile preferences |
 
 Assign verdict:
 
@@ -186,29 +186,12 @@ report_id = create_evaluation_report(
 For each STAR+R story generated in the evaluation report (Block 3), save it to the story bank for reuse across future evaluations and interview prep:
 
 ```python
-from jj.db import create_story, get_stories
+from jj.db import save_new_stories
 
-# Check for duplicates — don't create a story if one with the same source entries exists
-existing_stories = get_stories()
-
-for story in generated_stories:
-    # Skip if a story with the same source_entry_ids already exists
-    is_duplicate = any(
-        s.get("source_entry_ids") == story["source_entry_ids"]
-        for s in existing_stories
-        if s.get("source_entry_ids")
-    )
-    if not is_duplicate:
-        create_story(
-            title=story["title"],
-            situation=story["situation"],
-            task=story["task"],
-            action=story["action"],
-            result=story["result"],
-            reflection=story["reflection"],
-            source_entry_ids=story.get("source_entry_ids"),
-            jd_requirements_matched=story.get("requirements_matched"),
-        )
+# Dedups by source_entry_ids automatically; each story dict uses the
+# create_story fields (title/situation/task/action/result/reflection/
+# source_entry_ids/requirements_matched). Returns the count created.
+save_new_stories(generated_stories)
 ```
 
 ### Step 6: Insert or Update Prospect
@@ -223,7 +206,7 @@ from jj.db import create_application, update_application
 notes_text = (
     f"Fit: {score}% ({verdict}). Archetype: {archetype}. "
     f"Skills: {skills_score}/35, Exp: {exp_score}/25, "
-    f"Domain: {domain_score}/30, Location: {loc_score}/10. "
+    f"Domain: {domain_score}/25, Location: {loc_score}/15. "
     f"{brief_reasoning}"
 )
 
