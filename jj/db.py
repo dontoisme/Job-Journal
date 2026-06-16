@@ -550,6 +550,9 @@ def migrate_database() -> None:
         # Cached why-now/why-me research brief (from /research-brief), reused by
         # /apply-assist screening answers and interview prep.
         ("applications", "research_brief", "TEXT"),
+        # Resume staged pre-Slack for apply-ready prospects (archetype copy or
+        # disciplined tailor); surfaced in the apply-ready notification + CTA.
+        ("applications", "staged_resume_path", "TEXT"),
         # Per-company scan filter: restrict to US + senior+ roles (firehose boards)
         ("companies", "filter_senior_us", "BOOLEAN DEFAULT 0"),
         # Pipeline resume tracking

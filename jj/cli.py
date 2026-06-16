@@ -3757,7 +3757,7 @@ def monitor_apply_ready(
     from rich.table import Table
 
     from jj.db import get_apply_ready_prospects, log_event
-    from jj.scoring import prep_apply_briefs
+    from jj.scoring import TAILOR_FIT_THRESHOLD, prep_apply_packages
 
     picks = get_apply_ready_prospects(limit=limit)
     if not picks:
@@ -3769,24 +3769,26 @@ def monitor_apply_ready(
     table.add_column("Position")
     table.add_column("Fit", justify="right")
     table.add_column("Brief")
+    table.add_column("Resume")
     for app in picks:
         has_brief = "yes" if (app.get("research_brief") or "").strip() else "no"
-        table.add_row(app["company"], app["position"] or "?", str(app.get("fit_score") or "-"), has_brief)
+        resume_mode = "tailored" if (app.get("fit_score") or 0) >= TAILOR_FIT_THRESHOLD else "archetype"
+        table.add_row(app["company"], app["position"] or "?", str(app.get("fit_score") or "-"), has_brief, resume_mode)
     console.print(table)
 
     if dry_run:
-        console.print("[dim]Dry run: no briefs prepped, nothing sent, nothing marked.[/dim]")
+        console.print("[dim]Dry run: nothing prepped, nothing sent, nothing marked.[/dim]")
         return
 
-    # Prep research briefs (headless /research-brief) for any missing one.
-    brief_summary = prep_apply_briefs(limit=limit, dry_run=False)
+    # Stage the full pre-browser package (brief + resume) before announcing.
+    pkg = prep_apply_packages(limit=limit, dry_run=False)
     console.print(
-        f"[green]Briefs prepared {brief_summary['prepared']}[/green] | "
-        f"already {brief_summary['already']} | no change {brief_summary['no_change']} | "
-        f"failed {brief_summary['failed']} | skipped {brief_summary['skipped']}."
+        f"[green]Packages staged[/green] | briefs {pkg['briefs']} | "
+        f"resumes {pkg['resumes']} (tailored {pkg['tailored']}, archetype {pkg['archetype']}) | "
+        f"failed {pkg['failed']}."
     )
 
-    # Re-read so the Slack surface shows freshly prepped briefs.
+    # Re-read so the Slack surface shows freshly staged briefs + resumes.
     picks = get_apply_ready_prospects(limit=limit)
 
     if no_send:
