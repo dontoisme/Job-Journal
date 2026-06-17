@@ -740,14 +740,16 @@ def _segments_to_text_and_requests(
     requests: list[dict] = []
 
     # Document-wide styles
-    # Page margins: 0.6in = 43.2pt
+    # Page margins: 0.5in = 36pt. Tightened from 0.6in so a long (7-role)
+    # resume's last lines don't orphan onto a near-empty extra page; the wider
+    # text column also reduces line wraps. Still within ATS-safe bounds.
     requests.append({
         "updateDocumentStyle": {
             "documentStyle": {
-                "marginTop": {"magnitude": 43.2, "unit": "PT"},
-                "marginBottom": {"magnitude": 43.2, "unit": "PT"},
-                "marginLeft": {"magnitude": 43.2, "unit": "PT"},
-                "marginRight": {"magnitude": 43.2, "unit": "PT"},
+                "marginTop": {"magnitude": 36, "unit": "PT"},
+                "marginBottom": {"magnitude": 36, "unit": "PT"},
+                "marginLeft": {"magnitude": 36, "unit": "PT"},
+                "marginRight": {"magnitude": 36, "unit": "PT"},
             },
             "fields": "marginTop,marginBottom,marginLeft,marginRight",
         }
@@ -770,7 +772,9 @@ def _segments_to_text_and_requests(
         "updateParagraphStyle": {
             "range": {"startIndex": 1, "endIndex": 1 + text_len},
             "paragraphStyle": {
-                "lineSpacing": 115,
+                # 1.10 (was 1.15): a mild tightening so a full-length resume's
+                # last section doesn't tip onto a third page; still readable.
+                "lineSpacing": 110,
                 "spaceAbove": {"magnitude": 0, "unit": "PT"},
                 "spaceBelow": {"magnitude": 0, "unit": "PT"},
             },
@@ -909,6 +913,23 @@ def _segments_to_text_and_requests(
                         "indentStart": {"magnitude": 14.4, "unit": "PT"},
                     },
                     "fields": "indentFirstLine,indentStart",
+                }
+            })
+
+        elif seg.kind == "blank":
+            # Spacer paragraphs sit between roles and before section headers.
+            # At the default 10pt/1.15 each empty line is ~11.5pt tall; ~11 of
+            # them added ~1.5in of whitespace, splitting roles across the page
+            # break and orphaning the Skills block onto a near-empty page 3.
+            # Shrinking the paragraph mark to 4pt keeps clear visual separation
+            # (combined with section/role spaceAbove) while fitting a normal
+            # resume on two pages. The range targets the blank paragraph's
+            # newline mark (empty text -> seg_start == seg_end).
+            requests.append({
+                "updateTextStyle": {
+                    "range": {"startIndex": seg_start, "endIndex": seg_start + 1},
+                    "textStyle": {"fontSize": {"magnitude": 4, "unit": "PT"}},
+                    "fields": "fontSize",
                 }
             })
 
