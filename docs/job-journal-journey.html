@@ -1441,8 +1441,8 @@
     <h1>Job hunting is a full-time job.<br>So I <em>automated mine.</em></h1>
     <p class="hero-sub">One product manager. No team. I built a system that finds open roles before I wake up, scores them against my real experience, generates tailored resumes, reads the responses, and sends me a Slack message with the results.</p>
     <div class="hero-stats">
-      <div class="hero-stat"><div class="hero-stat-num">24</div><div class="hero-stat-label">Data Tables</div></div>
-      <div class="hero-stat"><div class="hero-stat-num">13</div><div class="hero-stat-label">AI Workflows</div></div>
+      <div class="hero-stat"><div class="hero-stat-num">27</div><div class="hero-stat-label">Data Tables</div></div>
+      <div class="hero-stat"><div class="hero-stat-num">21</div><div class="hero-stat-label">AI Workflows</div></div>
       <div class="hero-stat"><div class="hero-stat-num">30+</div><div class="hero-stat-label">Commands</div></div>
       <div class="hero-stat"><div class="hero-stat-num">3</div><div class="hero-stat-label">Autonomy Tiers</div></div>
     </div>
@@ -1870,7 +1870,7 @@
     <div class="chapter-header">
       <div class="chapter-overline teal">Chapter 3 &mdash; Resume Generation</div>
       <h2 class="chapter-title">AI writes most resumes.<br>This one only selects from real work.</h2>
-      <p class="chapter-lead">The hardest problem in AI-assisted job search is trust. Can you be sure the resume is accurate? This system solves it by refusing to write anything. Instead, it draws from a verified library of real accomplishments, ranks them for relevance against each job description, and assembles a tailored resume. A validation step blocks the entire document if any content cannot be traced back to the source library.</p>
+      <p class="chapter-lead">The hardest problem in AI-assisted job search is trust. Can you be sure the resume is accurate? This system solves it by refusing to write anything. Instead, it maintains a set of pre-built archetype resumes &mdash; each assembled from a verified library of real accomplishments for a different kind of role &mdash; and selects the best-matching archetype for every application. For high-fit roles, a disciplined refinement step re-ranks and tailors those bullets to the specific job description before the resume is staged. A validation step blocks the entire document if any content cannot be traced back to the source library.</p>
     </div>
 
     <div class="visual-block">
@@ -2125,7 +2125,7 @@
     <div class="chapter-header">
       <div class="chapter-overline green">Chapter 5 &mdash; Three-Tier Pipeline</div>
       <h2 class="chapter-title">Choose your level of control.<br>Or let go entirely.</h2>
-      <p class="chapter-lead">Some days you want to review every listing yourself. Other days you want the system to handle everything while you sleep. Three pipeline tiers let you choose: hands-on review when you want it, parallel agents for daily sweeps, or a fully autonomous engine that runs at 6 AM and noon &mdash; finding jobs, generating resumes, and notifying you on Slack, all without touching a keyboard.</p>
+      <p class="chapter-lead">Some days you want to review every listing yourself. Other days you want the system to handle everything while you sleep. Three pipeline tiers let you choose: hands-on review when you want it, parallel agents for daily sweeps, or a fully autonomous engine that runs at 6 AM and noon &mdash; finding jobs, staging resumes, and sending a Slack message with [Open] and [Apply] buttons that launch browser autofill, all without touching a keyboard until the Submit button.</p>
     </div>
 
     <div class="visual-block">
@@ -2198,9 +2198,10 @@
                 <span class="pv-step">Delta</span><span class="pv-step-arrow">&rarr;</span>
                 <span class="pv-step">Filter</span><span class="pv-step-arrow">&rarr;</span>
                 <span class="pv-step">Score</span><span class="pv-step-arrow">&rarr;</span>
-                <span class="pv-step">Resume(cap:3)</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Resume(cap:1)</span><span class="pv-step-arrow">&rarr;</span>
                 <span class="pv-step">JSON</span><span class="pv-step-arrow">&rarr;</span>
-                <span class="pv-step">Slack</span>
+                <span class="pv-step">Apply-Ready</span><span class="pv-step-arrow">&rarr;</span>
+                <span class="pv-step">Slack [Open][Apply]</span>
               </div>
             </div>
           </div>
@@ -2271,7 +2272,7 @@
         <span class="tier-desc">Runs while you sleep.</span>
         <div class="tier-badges">
           <span class="badge green">zero interaction</span>
-          <span class="badge green">cap: 3 resumes/run</span>
+          <span class="badge green">cap: 1 resume/run</span>
           <span class="badge green">~10-15 min</span>
         </div>
       </div>
@@ -2290,10 +2291,13 @@
         <span class="flow-h-arrow">&rarr;</span>
         <span class="flow-h-step">Log results</span>
         <span class="flow-h-arrow">&rarr;</span>
-        <span class="flow-h-step">Slack notification</span>
+        <span class="flow-h-step">Apply-ready staging</span>
+        <span class="flow-h-arrow">&rarr;</span>
+        <span class="flow-h-step">Slack [Open] / [Apply]</span>
       </div>
       <div class="tier-meta">
         <span>Scheduled at 6 AM and noon, every day</span>
+        <span>Apply-ready roles ship a pre-staged resume and a Slack [Apply] button that launches /apply-assist browser autofill</span>
         <span>Logs every run for full accountability</span>
         <span>Handles failures gracefully &mdash; never crashes silently</span>
       </div>
@@ -2306,7 +2310,7 @@
     <div class="chapter-header">
       <div class="chapter-overline purple">Chapter 6 &mdash; Architecture</div>
       <h2 class="chapter-title">Tell it what you need<br>in plain English. It handles the rest.</h2>
-      <p class="chapter-lead">The system is designed in three clean layers. At the top, 13 AI-powered workflows understand natural language instructions &mdash; "find me PM roles at health-tech companies" or "generate resumes for today's top matches." These translate into a complete toolkit of 30+ specialized commands. Everything flows down to a database that tracks every company, every application, and every email response.</p>
+      <p class="chapter-lead">The system is designed in three clean layers. At the top, 21 AI-powered workflows understand natural language instructions &mdash; "find me PM roles at health-tech companies" or "generate resumes for today's top matches." These translate into a complete toolkit of 30+ specialized commands. Everything flows down to a database that tracks every company, every application, and every email response.</p>
     </div>
 
     <div class="visual-block">
@@ -2333,7 +2337,7 @@
           @keyframes av-up{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
         </style>
         <div class="av-layer av-p">
-          <div class="av-layer-head"><span class="av-layer-title">Claude Code Skills</span><span class="av-layer-count">13 prompt-driven skills</span></div>
+          <div class="av-layer-head"><span class="av-layer-title">Claude Code Skills</span><span class="av-layer-count">21 prompt-driven skills</span></div>
           <div class="av-chips">
             <div class="av-chip"><span class="av-chip-name">/apply</span><span class="av-chip-sub">end-to-end</span></div>
             <div class="av-chip"><span class="av-chip-name">/pipeline</span><span class="av-chip-sub">batch review</span></div>
@@ -2348,6 +2352,14 @@
             <div class="av-chip"><span class="av-chip-name">/vc-boards</span><span class="av-chip-sub">portfolio</span></div>
             <div class="av-chip"><span class="av-chip-name">/start-today</span><span class="av-chip-sub">daily kickoff</span></div>
             <div class="av-chip"><span class="av-chip-name">/learn</span><span class="av-chip-sub">outcomes</span></div>
+            <div class="av-chip"><span class="av-chip-name">/apply-assist</span><span class="av-chip-sub">browser autofill</span></div>
+            <div class="av-chip"><span class="av-chip-name">/slack-apply</span><span class="av-chip-sub">headless apply</span></div>
+            <div class="av-chip"><span class="av-chip-name">/cover-letter</span><span class="av-chip-sub">tailored letter</span></div>
+            <div class="av-chip"><span class="av-chip-name">/research-brief</span><span class="av-chip-sub">why-now/why-me</span></div>
+            <div class="av-chip"><span class="av-chip-name">/stage-resume</span><span class="av-chip-sub">disciplined tailor</span></div>
+            <div class="av-chip"><span class="av-chip-name">/resume-eval</span><span class="av-chip-sub">eval agent</span></div>
+            <div class="av-chip"><span class="av-chip-name">/resume-refine</span><span class="av-chip-sub">apply fixes</span></div>
+            <div class="av-chip"><span class="av-chip-name">/setup</span><span class="av-chip-sub">onboarding</span></div>
           </div>
         </div>
         <div class="av-arrow">&darr; orchestrate</div>
@@ -2371,7 +2383,7 @@
         <div class="av-layer av-o">
           <div class="av-layer-head"><span class="av-layer-title">Data Layer</span><span class="av-layer-count">Single DB + 3 integrations</span></div>
           <div class="av-chips">
-            <div class="av-chip"><svg width="14" height="16" viewBox="0 0 14 16" fill="none" style="margin-bottom:2px"><ellipse cx="7" cy="3" rx="6" ry="2" stroke="#ff6b35" stroke-width=".8"/><path d="M1 3v10c0 1.1 2.69 2 6 2s6-.9 6-2V3" stroke="#ff6b35" stroke-width=".8"/></svg><span class="av-chip-name">SQLite</span><span class="av-chip-sub">24 tables</span></div>
+            <div class="av-chip"><svg width="14" height="16" viewBox="0 0 14 16" fill="none" style="margin-bottom:2px"><ellipse cx="7" cy="3" rx="6" ry="2" stroke="#ff6b35" stroke-width=".8"/><path d="M1 3v10c0 1.1 2.69 2 6 2s6-.9 6-2V3" stroke="#ff6b35" stroke-width=".8"/></svg><span class="av-chip-name">SQLite</span><span class="av-chip-sub">27 tables</span></div>
             <div class="av-chip"><svg width="14" height="12" viewBox="0 0 14 12" fill="none" style="margin-bottom:2px"><rect x="1" y="1" width="12" height="10" rx="1.5" stroke="#ff6b35" stroke-width=".8"/><path d="M1 3l6 4 6-4" stroke="#ff6b35" stroke-width=".7" opacity=".5"/></svg><span class="av-chip-name">Gmail</span><span class="av-chip-sub">read-only</span></div>
             <div class="av-chip"><svg width="14" height="16" viewBox="0 0 14 16" fill="none" style="margin-bottom:2px"><rect x="2" y="1" width="10" height="14" rx="1.5" stroke="#ff6b35" stroke-width=".8"/><line x1="4.5" y1="5" x2="9.5" y2="5" stroke="#ff6b35" stroke-width=".5" opacity=".4"/><line x1="4.5" y1="7.5" x2="9.5" y2="7.5" stroke="#ff6b35" stroke-width=".5" opacity=".4"/></svg><span class="av-chip-name">Google Docs</span><span class="av-chip-sub">resume assembly</span></div>
             <div class="av-chip"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="margin-bottom:2px"><path d="M7 1C4 1 1 3 1 6c0 2 1 3 2 4l-1 3 3-1c.7.3 1.3.5 2 .5 3 0 6-2 6-5.5S10 1 7 1z" stroke="#ff6b35" stroke-width=".8"/></svg><span class="av-chip-name">Slack</span><span class="av-chip-sub">notifications</span></div>
@@ -2383,7 +2395,7 @@
     <!-- Skills Layer -->
     <div class="stack-layer purple-bg">
       <div class="stack-label" style="color:var(--purple);">Layer 1 &mdash; AI Workflows</div>
-      <div class="stack-desc">13 AI-powered workflows that handle everything from finding jobs to generating resumes</div>
+      <div class="stack-desc">21 AI-powered workflows that handle everything from finding jobs to submitting applications</div>
       <div class="chip-grid">
         <span class="chip">/apply <span class="sub">end-to-end application</span></span>
         <span class="chip">/pipeline <span class="sub">batch review</span></span>
@@ -2398,6 +2410,14 @@
         <span class="chip">/vc-boards <span class="sub">VC portfolio scan</span></span>
         <span class="chip">/start-today <span class="sub">daily kickoff</span></span>
         <span class="chip">/learn <span class="sub">outcome learning</span></span>
+        <span class="chip">/apply-assist <span class="sub">browser autofill</span></span>
+        <span class="chip">/slack-apply <span class="sub">headless apply</span></span>
+        <span class="chip">/cover-letter <span class="sub">tailored cover letter</span></span>
+        <span class="chip">/research-brief <span class="sub">why-now / why-me</span></span>
+        <span class="chip">/stage-resume <span class="sub">disciplined tailor</span></span>
+        <span class="chip">/resume-eval <span class="sub">resume eval agent</span></span>
+        <span class="chip">/resume-refine <span class="sub">apply eval fixes</span></span>
+        <span class="chip">/setup <span class="sub">guided onboarding</span></span>
       </div>
     </div>
     <div class="stack-arrow-row">&darr; orchestrate</div>
@@ -2517,7 +2537,7 @@
             </div>
           </div>
           <div class="dmv-cluster dmv-c6">
-            <div class="dmv-cluster-head"><span class="dmv-cluster-name">System</span><span class="dmv-cluster-count">6 tables</span></div>
+            <div class="dmv-cluster-head"><span class="dmv-cluster-name">System</span><span class="dmv-cluster-count">9 tables</span></div>
             <div class="dmv-tables">
               <div class="dmv-table">tasks</div>
               <div class="dmv-table">events</div>
@@ -2525,6 +2545,9 @@
               <div class="dmv-table">twc_payment_requests</div>
               <div class="dmv-table">interview_sessions</div>
               <div class="dmv-table">interests</div>
+              <div class="dmv-table">pipeline_runs</div>
+              <div class="dmv-table">evaluation_reports</div>
+              <div class="dmv-table">stories</div>
             </div>
           </div>
         </div>
@@ -2574,13 +2597,16 @@
         <div class="schema-table">geo_companies</div>
       </div>
       <div class="schema-cluster">
-        <div class="schema-cluster-name" style="color:var(--gold);">System <span class="count">(6)</span></div>
+        <div class="schema-cluster-name" style="color:var(--gold);">System <span class="count">(9)</span></div>
         <div class="schema-table">tasks</div>
         <div class="schema-table">events</div>
         <div class="schema-table">monitor_runs</div>
         <div class="schema-table">twc_payment_requests</div>
         <div class="schema-table">interview_sessions</div>
         <div class="schema-table">interests</div>
+        <div class="schema-table">pipeline_runs</div>
+        <div class="schema-table">evaluation_reports</div>
+        <div class="schema-table">stories</div>
       </div>
     </div>
   </section>
@@ -2588,8 +2614,8 @@
   <!-- ═══════════ FOOTER ═══════════ -->
   <footer class="footer">
     <div class="footer-pills">
-      <span class="footer-pill"><span class="num">24</span> Data Tables</span>
-      <span class="footer-pill"><span class="num">13</span> AI Workflows</span>
+      <span class="footer-pill"><span class="num">27</span> Data Tables</span>
+      <span class="footer-pill"><span class="num">21</span> AI Workflows</span>
       <span class="footer-pill"><span class="num">30+</span> Commands</span>
       <span class="footer-pill"><span class="num">3</span> Autonomy Tiers</span>
       <span class="footer-pill"><span class="num">11</span> Modules</span>
