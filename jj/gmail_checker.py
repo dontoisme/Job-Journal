@@ -788,7 +788,11 @@ def search_updates(
 
     # Import db functions if saving
     if save_to_db:
-        from jj.db import update_application_latest_update, transition_application_status, TERMINAL_STATUSES
+        from jj.db import (
+            TERMINAL_STATUSES,
+            transition_application_status,
+            update_application_latest_update,
+        )
 
     results = []
     seen_message_ids = set()

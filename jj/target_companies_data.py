@@ -10,7 +10,6 @@ returns 0 jobs — no harm done.
 
 from jj.db import get_or_create_company
 
-
 # fmt: off
 TARGET_COMPANIES = [
     # =====================================================================

@@ -31,10 +31,10 @@ import time
 from typing import Any, Optional
 
 try:
-    from slack_sdk.web import WebClient
     from slack_sdk.socket_mode import SocketModeClient
     from slack_sdk.socket_mode.request import SocketModeRequest
     from slack_sdk.socket_mode.response import SocketModeResponse
+    from slack_sdk.web import WebClient
 except ImportError as e:
     print(
         f"ERROR: slack_sdk not installed. Run: pip install -e '.[slack]'\n{e}",
@@ -275,7 +275,7 @@ def _parse_app_id(stdout: str) -> Optional[int]:
 
 def _degrade_pipeline(app_id: int, phase: int, error: str = "") -> None:
     """Graceful degradation: link the best available resume when a phase fails."""
-    from jj.db import get_pipeline_run_by_app, update_pipeline_run, update_application
+    from jj.db import get_pipeline_run_by_app, update_application, update_pipeline_run
 
     pipeline = get_pipeline_run_by_app(app_id)
     if not pipeline:
@@ -461,7 +461,7 @@ def _format_result_message(
     if pipeline and pipeline.get("pipeline_status") == "archetype":
         if resume_id:
             doc_url = _lookup_resume_doc_url(resume_id)
-            line += f"\n:page_facing_up: Archetype resume linked"
+            line += "\n:page_facing_up: Archetype resume linked"
             if doc_url:
                 line += f" — <{doc_url}|Google Doc>"
             line += "\n:file_folder: `~/Documents/Resumes/archetypes/`"

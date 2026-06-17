@@ -717,6 +717,7 @@ async def applications_page(request: Request, status: str = None, pairing: str =
 async def email_activity_page(request: Request, days: int = 30):
     """Email sync activity feed — shows discovered emails grouped by day."""
     from itertools import groupby
+
     from jj.db import get_email_sync_feed
 
     feed = get_email_sync_feed(days=days)
@@ -1010,6 +1011,7 @@ async def api_archive_prospect(app_id: int):
 async def api_mark_applied(app_id: int):
     """Mark a prospect as applied."""
     from datetime import datetime
+
     from jj.db import transition_application_status, update_application
     success = transition_application_status(
         app_id, "applied", reason="Marked applied from prospect board", source="web"
@@ -1256,7 +1258,6 @@ async def archive_application(app_id: int):
         return JSONResponse({"error": "Application not found"}, status_code=404)
 
     from jj.db import transition_application_status
-    old_status = app.get('status')
     success = transition_application_status(
         app_id, 'skipped', reason='Archived via dashboard', source='web'
     )
