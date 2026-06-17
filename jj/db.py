@@ -4378,7 +4378,7 @@ def get_email_sync_feed(days: int = 30) -> list[dict[str, Any]]:
         cursor = conn.cursor()
 
         noise_clause = " AND ".join(
-            f"ae.sender NOT LIKE ?" for _ in _NOISE_SENDER_PATTERNS
+            "ae.sender NOT LIKE ?" for _ in _NOISE_SENDER_PATTERNS
         )
 
         cursor.execute(

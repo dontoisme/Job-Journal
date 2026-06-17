@@ -43,6 +43,10 @@ pip install -e ".[dev]"      # Testing and linting
 
 ## With Claude Code
 
+**New here?** Paste the install prompt in [docs/getting-started-with-claude.md](docs/getting-started-with-claude.md)
+into Claude Code from the repo root — it installs the tool, sets up your profile,
+builds your corpus, and walks you through your first application with your own details.
+
 Job Journal is designed around Claude Code slash commands as the primary interface:
 
 | Skill | Purpose |

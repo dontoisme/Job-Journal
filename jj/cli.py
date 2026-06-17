@@ -3022,7 +3022,8 @@ def notify_slack_cmd(
       email_sync: {confirmations_found, resolutions_found, applications_checked}  (optional)
     """
     import json
-    from jj.notifier import notify_slack, send_notification, format_slack_message
+
+    from jj.notifier import notify_slack
 
     config = load_config()
     webhook_url = config.get("monitor", {}).get("slack_webhook_url", "")
@@ -3045,8 +3046,8 @@ def notify_slack_cmd(
         # Send raw text message
         payload = {"text": message}
         data = json.dumps(payload).encode("utf-8")
-        from urllib.request import Request, urlopen
         from urllib.error import URLError
+        from urllib.request import Request, urlopen
         req = Request(webhook_url, data=data, headers={"Content-Type": "application/json"}, method="POST")
         try:
             with urlopen(req, timeout=10) as resp:
@@ -3171,7 +3172,7 @@ def monitor_install(
     result = subprocess.run(["launchctl", "load", str(plist_path)], capture_output=True, text=True)
 
     if result.returncode == 0:
-        console.print(f"[green]LaunchAgent installed.[/green]")
+        console.print("[green]LaunchAgent installed.[/green]")
         console.print(f"  Schedule: {', '.join(f'{h}:00' for h in hour_list)}")
         console.print(f"  Log: {log_dir}/monitor.log")
         console.print(f"  Plist: {plist_path}")
@@ -3326,7 +3327,7 @@ def monitor_seed_companies():
     )
 
     # Report total scannable
-    from jj.ats_scanner import get_api_scannable_companies, get_api_scannable_boards
+    from jj.ats_scanner import get_api_scannable_boards, get_api_scannable_companies
     scannable_companies = len(get_api_scannable_companies())
     scannable_boards = len(get_api_scannable_boards())
     console.print(
@@ -3359,15 +3360,15 @@ def monitor_scan_apis(
         raise typer.Exit(1)
 
     from jj.ats_scanner import (
-        get_api_scannable_companies,
         get_api_scannable_boards,
-        scan_all_api_companies,
+        get_api_scannable_companies,
         scan_all_api_boards,
+        scan_all_api_companies,
     )
     from jj.db import (
+        complete_monitor_run,
         create_application,
         create_monitor_run,
-        complete_monitor_run,
         find_duplicate_application,
         increment_investor_board_search,
         increment_search_count,
@@ -4045,7 +4046,7 @@ def monitor_install_bot(
     if not cfg.get("slack_app_token"):
         missing.append("slack_app_token (xapp-...)")
     if missing:
-        console.print(f"[red]Missing in ~/.job-journal/config.yaml monitor section:[/red]")
+        console.print("[red]Missing in ~/.job-journal/config.yaml monitor section:[/red]")
         for m in missing:
             console.print(f"  - {m}")
         console.print("See docs/slack-bot-setup.md for how to create the Slack app.")
@@ -4228,7 +4229,7 @@ def monitor_install_dashboard(
 
     if result.returncode == 0:
         console.print("[green]Dashboard LaunchAgent installed (KeepAlive=true).[/green]")
-        console.print(f"  URL:   http://localhost:8000")
+        console.print("  URL:   http://localhost:8000")
         console.print(f"  Log:   {log_dir}/dashboard.log")
         console.print(f"  Plist: {plist_path}")
         console.print("  Tail:  jj monitor dashboard-log -f")
@@ -4265,13 +4266,12 @@ def monitor_stats(
     company: Optional[int] = typer.Option(None, "--company", "-c", help="Show stats for a specific company ID"),
 ):
     """Show monitor analytics: run history, company yield, failure rates."""
-    import json
 
     if not JJ_HOME.exists():
         console.print("[red]Job Journal not initialized.[/red]")
         raise typer.Exit(1)
 
-    from jj.db import get_monitor_analytics, get_company_scrape_stats, init_database
+    from jj.db import get_company_scrape_stats, get_monitor_analytics, init_database
     init_database()
 
     if company:

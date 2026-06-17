@@ -4,8 +4,8 @@ import json
 import logging
 from datetime import datetime
 from typing import Any, Optional
-from urllib.request import Request, urlopen
 from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 from jj.config import load_config
 
@@ -160,7 +160,7 @@ def _build_blocks_payload(
 
     dominant_type, show_verdict, strong, good, moderate, other = _tier_jobs(new_jobs)
 
-    MAX_LISTED = 25
+    max_listed = 25
     listed = 0
     blocks: list[dict[str, Any]] = []
 
@@ -175,7 +175,7 @@ def _build_blocks_payload(
     def _add_tier(tier_jobs: list[dict[str, Any]], label: str, verdict: bool, cap: int) -> int:
         """Append a tier header + job blocks. Returns number appended."""
         nonlocal listed
-        if not tier_jobs or listed >= MAX_LISTED:
+        if not tier_jobs or listed >= max_listed:
             return 0
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*{label}:*"}})
         appended = 0
@@ -188,15 +188,15 @@ def _build_blocks_payload(
         blocks.append({"type": "divider"})
         return appended
 
-    _add_tier(strong, _score_label(dominant_type, 80), show_verdict, MAX_LISTED)
+    _add_tier(strong, _score_label(dominant_type, 80), show_verdict, max_listed)
 
     good_threshold = 65 if dominant_type == "Corpus Fit" else 50
-    _add_tier(good, _score_label(dominant_type, good_threshold), show_verdict, MAX_LISTED)
+    _add_tier(good, _score_label(dominant_type, good_threshold), show_verdict, max_listed)
 
-    _add_tier(moderate, _score_label(dominant_type, 50), show_verdict, MAX_LISTED)
+    _add_tier(moderate, _score_label(dominant_type, 50), show_verdict, max_listed)
 
-    if other and listed < MAX_LISTED:
-        other_cap = min(listed + 5, MAX_LISTED)
+    if other and listed < max_listed:
+        other_cap = min(listed + 5, max_listed)
         _add_tier(
             other[: other_cap - listed],
             f"Other ({len(other)} listing{'s' if len(other) != 1 else ''})",
@@ -283,39 +283,39 @@ def format_slack_message(new_jobs: list[dict[str, Any]], summary: dict[str, Any]
 
     # Cap total listed jobs to stay under Slack's ~3,000 char text limit.
     # ~100 chars/line × 25 lines ≈ 2,500 chars, leaving room for header/footer.
-    MAX_LISTED = 25
+    max_listed = 25
     listed = 0
 
     if strong:
         lines.append(f"*{_score_label(dominant_type, 80)}:*")
         for j in strong:
-            if listed >= MAX_LISTED:
+            if listed >= max_listed:
                 break
             lines.append(_format_job_line(j, show_verdict=show_verdict))
             listed += 1
         lines.append("")
 
-    if good and listed < MAX_LISTED:
+    if good and listed < max_listed:
         threshold = 65 if dominant_type == "Corpus Fit" else 50
         lines.append(f"*{_score_label(dominant_type, threshold)}:*")
         for j in good:
-            if listed >= MAX_LISTED:
+            if listed >= max_listed:
                 break
             lines.append(_format_job_line(j, show_verdict=show_verdict))
             listed += 1
         lines.append("")
 
-    if moderate and listed < MAX_LISTED:
+    if moderate and listed < max_listed:
         lines.append(f"*{_score_label(dominant_type, 50)}:*")
         for j in moderate:
-            if listed >= MAX_LISTED:
+            if listed >= max_listed:
                 break
             lines.append(_format_job_line(j, show_verdict=show_verdict))
             listed += 1
         lines.append("")
 
-    if other and listed < MAX_LISTED:
-        remaining_slots = min(5, MAX_LISTED - listed)
+    if other and listed < max_listed:
+        remaining_slots = min(5, max_listed - listed)
         lines.append(f"*Other ({len(other)} listing{'s' if len(other) != 1 else ''}):*")
         for j in other[:remaining_slots]:
             lines.append(_format_job_line(j, show_verdict=False))

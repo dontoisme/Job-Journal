@@ -3,7 +3,6 @@
 import json
 import signal
 import time
-from datetime import datetime
 from typing import Callable, Optional
 
 from rich.console import Console
