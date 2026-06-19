@@ -28,6 +28,11 @@ company claims generic (no unsourced specifics).
 
 ## 2. Draft rules (same integrity bar as resumes and briefs)
 
+- **Voice first.** Read `~/.job-journal/voice_profile.md` and skim
+  `~/.job-journal/writing_samples.jsonl` before drafting. Write the letter in
+  Don's voice — plain-spoken, direct, the occasional metaphor, honest about gaps —
+  not generic cover-letter copy. Calibrate slang to the company's register. The
+  facts stay corpus/brief-traceable; only the voice changes.
 - **Structure:** Identity-First — Identity → Evidence → Differentiation. 3-4 short
   paragraphs, ~250-350 words total.
 - **Open** `Dear Hiring Team,` — never fabricate a hiring manager's name.
