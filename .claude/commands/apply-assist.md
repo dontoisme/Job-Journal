@@ -100,6 +100,14 @@ with `/research-brief <job_url>` and persist it
 for interview prep. The brief's WHY {COMPANY} answer and demand drivers are the
 grounded, cited basis for the answers below.
 
+- **Draft in Don's voice.** Before writing any free-form answer (why-us,
+  open-ended essays, novel prompts), read `~/.job-journal/voice_profile.md` (his
+  style guide) and skim `~/.job-journal/writing_samples.jsonl` for his closest
+  past answer. Draft in HIS voice from the start — plain-spoken, direct, the
+  occasional metaphor, honest about gaps — not generic AI copy he has to rewrite.
+  Calibrate slang to the company's register (looser for scrappy startups, dialed
+  down for buttoned-up enterprises). Facts stay corpus/brief-traceable; only the
+  voice changes.
 - Standard questions: answer verbatim from `screening_answers` / `defaults`.
 - **Salary**: if `screening_answers.salary_expectation` is empty, ASK DON
   before filling anything. Never invent a number.
@@ -155,6 +163,35 @@ create_application(company, position, status='applied', job_url=url,
 
 Confirm to Don: "Tracked. The email sync will pair the confirmation
 automatically."
+
+### 8. Capture Don's final answers (voice library)
+
+After Don confirms he submitted, grab his FINAL edited free-form answers from the
+form (the textareas — what he actually wrote, not your drafts) and append them to
+`~/.job-journal/writing_samples.jsonl`. His real writing is the highest-value
+training data for matching his voice next time. Use the browser `javascript_tool`
+to read each textarea's `.value`, then:
+
+```python
+import json
+from pathlib import Path
+from jj.config import JJ_HOME
+store = Path(JJ_HOME) / "writing_samples.jsonl"
+with store.open("a") as f:
+    for prompt, answer in captured:           # (question label, Don's final text)
+        if not (answer or "").strip():
+            continue
+        f.write(json.dumps({
+            "captured_at": "<YYYY-MM-DD>", "type": "screening_answer",
+            "company": company, "role": position, "app_id": app_id,
+            "prompt": prompt, "answer": answer,
+            "topic_tags": [], "voice_tags": [],   # tag what you can
+        }, ensure_ascii=False) + "\n")
+```
+
+Only capture genuine free-form prose (essays, why-us, open prompts) — skip
+name/email/standard fields. Confirm to Don: "Saved N answers to your voice
+library." If the form was already closed/navigated away, skip silently.
 
 ## Guardrails
 
