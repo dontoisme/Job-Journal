@@ -215,11 +215,201 @@ def _score_bullet_relevance(
     return min(matches / len(jd_keywords), 1.0)
 
 
+def _format_category_name(cat_key: str) -> str:
+    """Format a skill-category key into a display name (e.g. 'ai-&-orchestration'
+    -> 'AI & Orchestration'). Shared by the skills resolver and the matched-skills
+    builder so both render categories identically."""
+    name = cat_key.replace("-", " ").replace("_", " ").title()
+    for acronym in ["Ai", "Api", "Ehr", "Cdp", "Sql", "Iam", "Sso", "Llm", "Ux", "Plg", "Ats", "Gtm"]:
+        name = name.replace(acronym, acronym.upper())
+    return name
+
+
+# ---------------------------------------------------------------------------
+# "Matched" resume format helpers (deterministic, no Google/DB import needed
+# for the pure ones — see jj/matched-resume skill for orchestration).
+#
+# These power an additive resume format that mirrors a JD's exact skill
+# wording, orders bullets to tell a matching story, and compresses the main
+# Experience section to the last ~5 years (older roles fall back to Earlier
+# Experience and lend their skills to the skills section). Bullets always stay
+# corpus-verbatim — these helpers only SELECT, RELABEL SKILLS, and REORDER.
+# ---------------------------------------------------------------------------
+
+
+def split_roles_by_window(
+    roles: list[dict],
+    today: datetime,
+    max_years_lookback: int = 5,
+    min_roles: int = 4,
+) -> tuple[list[dict], list[dict]]:
+    """Split date-ordered roles into (main, earlier) by a recency window.
+
+    Roles whose start_date falls within ``max_years_lookback`` years of
+    ``today`` go to the main set. If that yields fewer than ``min_roles``, the
+    most-recent out-of-window roles are promoted until the floor is met (this is
+    what keeps a strong near-cutoff role in the main section). ``roles`` must be
+    ordered most-recent-first and have project roles already excluded.
+
+    Pure function (no DB/network) so it is unit-testable with in-memory dicts.
+    """
+    cutoff = f"{today.year - max_years_lookback:04d}-{today.month:02d}"
+
+    def _start(r: dict) -> str:
+        return (r.get("start_date") or "")[:7]
+
+    in_window = [r for r in roles if _start(r) >= cutoff]
+    out_window = [r for r in roles if _start(r) < cutoff]
+
+    if len(in_window) < min_roles and out_window:
+        need = min_roles - len(in_window)
+        promoted = out_window[:need]
+        in_window = in_window + promoted
+        out_window = out_window[need:]
+
+    return in_window, out_window
+
+
+def roles_to_earlier_dicts(roles: list[dict]) -> list[dict]:
+    """Render role records as title-only Earlier Experience dicts
+    (company/title/location/dates) for ``generate_resume_programmatic``."""
+    return [
+        {
+            "company": r.get("company", ""),
+            "title": r.get("title", ""),
+            "location": r.get("location", ""),
+            "dates": format_date_range(
+                r.get("start_date"), r.get("end_date"), r.get("is_current", False)
+            ),
+        }
+        for r in roles
+    ]
+
+
+def build_matched_skills(
+    jd_skill_terms: list[str],
+    skills_by_category: dict[str, list[str]],
+    extra_skill_pool: Optional[list[str]] = None,
+    max_categories: int = 5,
+    threshold: float = 0.82,
+) -> dict[str, list[str]]:
+    """Build a skills section that mirrors the JD's exact wording, substantiated
+    only by skills Don actually has.
+
+    For each JD skill term, fuzzy-match against Don's canonical skills
+    (``skills_by_category``) plus ``extra_skill_pool`` (e.g. tags from roles that
+    dropped out of the 5-year window). Only when a term matches the substantiated
+    pool is it emitted — in the JD's exact wording. Categories are ordered by how
+    many JD terms they satisfy. A term with no backing is never emitted (no
+    keyword stuffing). Pure function — unit-testable without DB/network.
+
+    Returns a dict shaped for ``custom_skills`` (display category -> [terms]).
+    """
+    import difflib
+
+    pool: list[tuple[str, Optional[str], str]] = []  # (normalized, category_key, canonical)
+    for cat, names in skills_by_category.items():
+        for n in names:
+            pool.append((n.lower(), cat, n))
+    for s in (extra_skill_pool or []):
+        pool.append((str(s).lower(), None, str(s)))
+
+    matched: dict[str, list[str]] = {}
+    cat_first_seen: list[str] = []
+    seen_terms: set[str] = set()
+
+    for term in jd_skill_terms:
+        t = term.strip()
+        tl = t.lower()
+        if not tl or tl in seen_terms:
+            continue
+        best_cat: Optional[str] = None
+        best_ratio = 0.0
+        best_is_real_category = False
+        for norm, cat, _canonical in pool:
+            if tl == norm or (len(tl) >= 4 and (tl in norm or norm in tl)):
+                ratio = 1.0
+            else:
+                ratio = difflib.SequenceMatcher(None, tl, norm).ratio()
+            # Prefer a real category over a bare dropped-role tag on ties.
+            if ratio > best_ratio or (ratio == best_ratio and cat and not best_is_real_category):
+                best_ratio = ratio
+                best_cat = cat
+                best_is_real_category = cat is not None
+        if best_ratio >= threshold:
+            display = _format_category_name(best_cat) if best_cat else "Core Skills"
+            if display not in matched:
+                matched[display] = []
+                cat_first_seen.append(display)
+            matched[display].append(t)  # JD's exact wording
+            seen_terms.add(tl)
+
+    # Order categories by JD-match count (desc), first-seen as the tiebreaker.
+    ordered = sorted(cat_first_seen, key=lambda d: (-len(matched[d]), cat_first_seen.index(d)))
+    return {d: matched[d] for d in ordered[:max_categories]}
+
+
+def order_bullets_for_story(
+    jd_ranked_bullets: list[str],
+    jd_requirements: list[str],
+) -> list[str]:
+    """Reorder already-JD-ranked corpus bullets to lead with the bullet that best
+    answers each JD requirement, in the JD's priority order. Remaining bullets
+    keep their incoming (relevance) order. The result is always a permutation of
+    the input (no bullet is added, dropped, or rewritten). Pure function."""
+    if not jd_requirements:
+        return list(jd_ranked_bullets)
+
+    remaining = list(jd_ranked_bullets)
+    ordered: list[str] = []
+    for req in jd_requirements:
+        req_kw = _extract_jd_keywords(req)
+        if not req_kw:
+            continue
+        best_idx: Optional[int] = None
+        best_score = 0.0
+        for i, b in enumerate(remaining):
+            score = _score_bullet_relevance(b, [], req_kw)
+            if score > best_score:
+                best_score = score
+                best_idx = i
+        if best_idx is not None and best_score > 0:
+            ordered.append(remaining.pop(best_idx))
+
+    ordered.extend(remaining)
+    return ordered
+
+
+def collect_skill_pool_from_roles(role_ids: list[int]) -> list[str]:
+    """Gather the tag vocabulary demonstrated by the given roles' corpus entries.
+
+    Used to feed ``build_matched_skills`` with skills from roles that dropped out
+    of the 5-year window, so compression does not silently lose substantiated
+    skills. Reads the DB (not a pure helper)."""
+    import json
+
+    from jj.db import get_entries_for_role_ordered
+
+    pool: set[str] = set()
+    for rid in role_ids:
+        for e in get_entries_for_role_ordered(rid, limit=None):
+            tags = e.get("tags")
+            if isinstance(tags, str):
+                try:
+                    tags = json.loads(tags)
+                except (ValueError, TypeError):
+                    tags = []
+            for t in (tags or []):
+                pool.add(str(t))
+    return sorted(pool)
+
+
 def assemble_template_data(
     variant: str = "general",
     max_roles: int = 5,
     max_bullets_per_role: int = 6,
     jd_text: Optional[str] = None,
+    role_companies: Optional[list[str]] = None,
 ) -> ResumeTemplateData:
     """Assemble all data needed to populate a resume template from the corpus.
 
@@ -228,6 +418,10 @@ def assemble_template_data(
         max_roles: Maximum number of roles to include
         max_bullets_per_role: Maximum bullets per role
         jd_text: Optional job description text for relevance-based bullet ranking
+        role_companies: Optional explicit ordered list of company names to include
+            in the main Experience section. When provided, overrides the default
+            recency top-N selection (the "matched" format uses this to control the
+            5-year window). Unknown/project companies are ignored.
 
     Returns:
         ResumeTemplateData with all information needed for template population
@@ -252,10 +446,16 @@ def assemble_template_data(
 
     # Get roles ordered by date (most recent first), excluding project roles
     all_roles_unfiltered = get_roles_ordered_by_date(limit=None)
-    all_roles = [
+    non_project_roles = [
         r for r in all_roles_unfiltered
         if "project" not in r.get("company", "").lower()
-    ][:max_roles]
+    ]
+    if role_companies:
+        # Explicit selection (matched format): honor caller order, skip unknowns.
+        by_company = {r.get("company", ""): r for r in non_project_roles}
+        all_roles = [by_company[c] for c in role_companies if c in by_company][:max_roles]
+    else:
+        all_roles = non_project_roles[:max_roles]
 
     roles: list[RoleData] = []
     for role in all_roles:
@@ -1048,6 +1248,7 @@ def generate_resume_programmatic(
     max_roles: int = 5,
     max_bullets_per_role: int = 6,
     jd_text: Optional[str] = None,
+    role_companies: Optional[list[str]] = None,
     output_dir: Optional[Path] = None,
     auto_open: bool = True,
     keep_google_doc: bool = True,
@@ -1082,6 +1283,8 @@ def generate_resume_programmatic(
         max_roles: Maximum number of roles to include
         max_bullets_per_role: Maximum bullets per role
         jd_text: Optional job description text for relevance-based bullet ranking
+        role_companies: Optional explicit ordered company list for the main
+            Experience section (matched format; overrides recency top-N selection)
         output_dir: Directory for PDF output
         auto_open: Whether to open the PDF after generation
         keep_google_doc: Whether to keep the Google Doc
@@ -1110,6 +1313,7 @@ def generate_resume_programmatic(
             max_roles=max_roles,
             max_bullets_per_role=max_bullets_per_role,
             jd_text=jd_text,
+            role_companies=role_companies,
         )
     except Exception as e:
         return ResumeGenerationResult(success=False, error=f"Error assembling corpus data: {e}")
@@ -1153,14 +1357,6 @@ def generate_resume_programmatic(
     # Resolve skills (limit to 5 categories)
     max_skill_categories = 5
     resolved_skills: dict[str, list[str]] = {}
-
-    def _format_category_name(cat_key: str) -> str:
-        """Format a skill category key into a display name."""
-        name = cat_key.replace("-", " ").replace("_", " ").title()
-        # Fix common acronym casing
-        for acronym in ["Ai", "Api", "Ehr", "Cdp", "Sql", "Iam", "Sso"]:
-            name = name.replace(acronym, acronym.upper())
-        return name
 
     if custom_skills:
         resolved_skills = dict(list(custom_skills.items())[:max_skill_categories])
