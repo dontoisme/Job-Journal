@@ -129,6 +129,13 @@
         </div>
         {% endif %}
 
+        {% if prospect.research_brief %}
+        <div class="card" id="research-brief" style="margin-top: 1rem;">
+            <h2 style="margin-top: 0;">Research Brief</h2>
+            <div style="white-space: pre-wrap;">{{ prospect.research_brief }}</div>
+        </div>
+        {% endif %}
+
         <!-- Raw notes -->
         {% if prospect.notes %}
         <div class="card" style="margin-top: 1rem;">

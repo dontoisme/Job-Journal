@@ -353,9 +353,16 @@ def get_recent_activity(limit: int = 10):
     return activities[:limit]
 
 
-def get_application_counts():
-    """Get counts by status for dashboard."""
+def get_application_counts(include_prospects: bool = True):
+    """Get counts by status for dashboard.
+
+    Prospects (status='prospect') are counted in the total by default. Pass
+    include_prospects=False to exclude them (used by the /applications view's
+    opt-in checkbox).
+    """
     apps = get_applications()
+    if not include_prospects:
+        apps = [a for a in apps if a.get("status") != "prospect"]
     counts = {
         "applied": 0,
         "recruiter_screen": 0,
@@ -676,7 +683,7 @@ async def dashboard(request: Request):
 
 
 @app.get("/applications", response_class=HTMLResponse)
-async def applications_page(request: Request, status: str = None, pairing: str = None):
+async def applications_page(request: Request, status: str = None, pairing: str = None, include_prospects: bool = False):
     """Applications tracker page."""
     # If filtering by pairing status, use the new pairing function
     if pairing:
@@ -700,7 +707,12 @@ async def applications_page(request: Request, status: str = None, pairing: str =
             app['resolution_date'] = paired.get('resolution_date')
             app['latest_resolution_type'] = paired.get('latest_resolution_type')
 
-    counts = get_application_counts()
+    # Prospects (status='prospect') are excluded from the list and counts by
+    # default; the /applications "Include prospects" checkbox opts them back in.
+    if not include_prospects:
+        apps = [a for a in apps if a.get("status") != "prospect"]
+
+    counts = get_application_counts(include_prospects=include_prospects)
     pairing_stats = get_pairing_stats()
 
     return templates.TemplateResponse("applications.html", {
@@ -710,6 +722,7 @@ async def applications_page(request: Request, status: str = None, pairing: str =
         "current_status": status,
         "current_pairing": pairing,
         "pairing_stats": pairing_stats,
+        "include_prospects": include_prospects,
     })
 
 

@@ -57,6 +57,10 @@
                 <span style="color: var(--success);">📄 Resume ready</span>
                 {% endif %}
                 {% endif %}
+                {% if prospect.research_brief %}
+                 ·
+                <a href="/prospects/{{ prospect.id }}#research-brief" class="badge" style="font-size: 0.7rem; color: var(--accent); text-decoration: none;" title="Research brief on file">📋 Brief ✓</a>
+                {% endif %}
             </div>
             {% if prospect.salary_range %}
             <div class="prospect-meta">{{ prospect.salary_range }}</div>
