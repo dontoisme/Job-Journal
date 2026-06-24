@@ -3104,9 +3104,20 @@ def compute_pairing_status(app_id: int) -> tuple[str, int]:
 
 
 def update_application_pairing_status(app_id: int) -> bool:
-    """Update the pairing_status and days_waiting for an application."""
+    """Update the pairing_status and days_waiting for an application.
+
+    Also stamps last_email_check so the dashboard's freshness signal reflects
+    the pairing sync (the LaunchAgent-driven path). UTC matches the
+    CURRENT_TIMESTAMP format the legacy verify/updates path wrote.
+    """
     status, days_waiting = compute_pairing_status(app_id)
-    return update_application(app_id, pairing_status=status, days_waiting=days_waiting)
+    checked_at = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    return update_application(
+        app_id,
+        pairing_status=status,
+        days_waiting=days_waiting,
+        last_email_check=checked_at,
+    )
 
 
 def get_applications_with_pairing_status(

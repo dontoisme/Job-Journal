@@ -760,6 +760,7 @@ def _build_resume_segments(
     resolved_skills: dict[str, list[str]],
     show_consulting: bool,
     earlier_roles: Optional[list[dict]] = None,
+    track_record: bool = False,
 ) -> list[_Segment]:
     """Build the ordered list of text segments for a resume.
 
@@ -769,6 +770,9 @@ def _build_resume_segments(
         show_consulting: Whether to include the consulting section
         earlier_roles: Optional list of dicts with company, title, location, dates
                        (rendered as title-only entries with no bullets)
+        track_record: When True, omit the SUMMARY and SKILLS sections to produce
+                       an exec-audience "track-record" resume that leads straight
+                       into dense, quantified experience bullets.
 
     Returns:
         Ordered list of _Segment objects
@@ -797,14 +801,16 @@ def _build_resume_segments(
     if links_line:
         segments.append(_Segment(links_line, "links"))
 
-    # Summary (join multiple lines into a single paragraph)
-    segments.append(_Segment("", "blank"))
-    segments.append(_Segment("SUMMARY", "section_header"))
-    if data.summary:
-        # Collapse newlines into spaces for a single-paragraph summary
-        summary_text = " ".join(data.summary.split("\n"))
-        summary_text = " ".join(summary_text.split())  # Normalize whitespace
-        segments.append(_Segment(summary_text, "summary"))
+    # Summary (join multiple lines into a single paragraph).
+    # Omitted entirely for track-record format.
+    if not track_record:
+        segments.append(_Segment("", "blank"))
+        segments.append(_Segment("SUMMARY", "section_header"))
+        if data.summary:
+            # Collapse newlines into spaces for a single-paragraph summary
+            summary_text = " ".join(data.summary.split("\n"))
+            summary_text = " ".join(summary_text.split())  # Normalize whitespace
+            segments.append(_Segment(summary_text, "summary"))
 
     # Experience
     segments.append(_Segment("", "blank"))
@@ -907,8 +913,8 @@ def _build_resume_segments(
         if details:
             segments.append(_Segment(details, "edu_details"))
 
-    # Skills
-    if resolved_skills:
+    # Skills (omitted for track-record format)
+    if resolved_skills and not track_record:
         segments.append(_Segment("", "blank"))
         segments.append(_Segment("SKILLS", "section_header"))
         for display_name, skill_list in resolved_skills.items():
@@ -1244,6 +1250,7 @@ def generate_resume_programmatic(
     skill_categories: Optional[list[str]] = None,
     custom_skills: Optional[dict[str, list[str]]] = None,
     role_bullets: Optional[dict[str, list[str]]] = None,
+    project_bullets: Optional[list[str]] = None,
     earlier_roles: Optional[list[dict]] = None,
     max_roles: int = 5,
     max_bullets_per_role: int = 6,
@@ -1255,6 +1262,7 @@ def generate_resume_programmatic(
     export_pdf: bool = True,
     generation_mode: Optional[str] = None,
     pipeline_run_id: Optional[int] = None,
+    track_record: bool = False,
 ) -> ResumeGenerationResult:
     """Generate an ATS-friendly resume programmatically (no template).
 
@@ -1276,8 +1284,12 @@ def generate_resume_programmatic(
         skill_categories: Ordered list of skill category keys to include
         custom_skills: Custom skills dict (display name -> skill list)
         role_bullets: Custom bullet selection per role (company -> bullet texts).
-              In strict mode, matched by prefix against corpus DB.
+              In strict mode, matched by exact text then prefix against corpus DB.
               In optimized mode, used verbatim (caller is responsible for accuracy).
+        project_bullets: Optional ordered list of project bullet texts that replaces
+              the assembled Projects section (used verbatim). Lets callers control
+              project order (e.g. float the most role-relevant project first) and,
+              in optimized mode, lightly tailor project phrasing.
         earlier_roles: Optional list of dicts with keys: company, title, location,
               dates. Rendered as an "EARLIER EXPERIENCE" section with no bullets.
         max_roles: Maximum number of roles to include
@@ -1335,16 +1347,31 @@ def generate_resume_programmatic(
                     new_bullets = []
                     new_entry_ids = []
                     for bullet_text in custom_texts:
-                        prefix = bullet_text[:60]
+                        # Prefer an exact match so near-duplicate corpus bullets
+                        # sharing a 60-char prefix don't collide; fall back to prefix.
                         row = conn.execute(
-                            "SELECT id, text FROM entries WHERE text LIKE ? AND role_id = ?",
-                            (prefix + "%", role.role_id),
+                            "SELECT id, text FROM entries WHERE text = ? AND role_id = ?",
+                            (bullet_text, role.role_id),
                         ).fetchone()
+                        if row is None:
+                            prefix = bullet_text[:60]
+                            row = conn.execute(
+                                "SELECT id, text FROM entries WHERE text LIKE ? AND role_id = ?",
+                                (prefix + "%", role.role_id),
+                            ).fetchone()
                         if row:
                             new_bullets.append(row["text"])
                             new_entry_ids.append(row["id"])
                     role.bullets = new_bullets
                     role.entry_ids = new_entry_ids
+
+    # Override projects with an explicit, ordered bullet list (verbatim as given).
+    # Lets callers float the most role-relevant project to the top and, in
+    # optimized mode, lightly tailor project phrasing. Replaces assembled projects.
+    if project_bullets:
+        data.projects = [
+            ProjectData(name="Projects", bullets=list(project_bullets), entry_ids=[])
+        ]
 
     # Override summary
     if custom_summary:
@@ -1389,7 +1416,9 @@ def generate_resume_programmatic(
         )
 
     # Build document segments
-    segments = _build_resume_segments(data, resolved_skills, show_consulting, earlier_roles)
+    segments = _build_resume_segments(
+        data, resolved_skills, show_consulting, earlier_roles, track_record=track_record
+    )
 
     # Convert to text + formatting requests
     full_text, formatting_requests = _segments_to_text_and_requests(segments)
