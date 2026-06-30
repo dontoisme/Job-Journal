@@ -755,6 +755,23 @@ class _Segment:
     bold_prefix_len: int = 0  # For skills_line: bold up to the colon
 
 
+def _format_title_line(title: str) -> str:
+    """Render a role title as 'Title | Function' for the new role-first header.
+
+    DB titles encode role + function with a comma (e.g. "Principal Product
+    Manager, Growth"). Per the resume consult, the title line should read
+    "Role | Function", so the first ", " is promoted to " | ". Titles with no
+    function part (e.g. "Web Optimization Manager") and slash forms
+    (e.g. "Founder / Builder") are returned unchanged.
+    """
+    if not title:
+        return title
+    parts = title.split(", ", 1)
+    if len(parts) == 2:
+        return f"{parts[0]} | {parts[1]}"
+    return title
+
+
 def _build_resume_segments(
     data: ResumeTemplateData,
     resolved_skills: dict[str, list[str]],
@@ -812,6 +829,18 @@ def _build_resume_segments(
             summary_text = " ".join(summary_text.split())  # Normalize whitespace
             segments.append(_Segment(summary_text, "summary"))
 
+    # Skills (moved up to sit directly under the summary, per resume consult).
+    # Omitted for track-record format.
+    if resolved_skills and not track_record:
+        segments.append(_Segment("", "blank"))
+        segments.append(_Segment("SKILLS", "section_header"))
+        for display_name, skill_list in resolved_skills.items():
+            skills_str = ", ".join(skill_list)
+            # Add colon if display name doesn't already have one
+            label = display_name if display_name.endswith(":") else f"{display_name}:"
+            line = f"{label} {skills_str}"
+            segments.append(_Segment(line, "skills_line", bold_prefix_len=len(label)))
+
     # Experience
     segments.append(_Segment("", "blank"))
     segments.append(_Segment("EXPERIENCE", "section_header"))
@@ -828,18 +857,23 @@ def _build_resume_segments(
         if not role.company and not role.title:
             continue  # Skip empty role slots
 
-        # Role header line 1: "Company, Location | Date Range"
-        header_parts = [role.company]
+        # Role-first header (per resume consult): title is the prominent line.
+        #   Line 1 (role_header, bold):   "Title | Function"
+        #   Line 2 (role_title, italic):  "Company, Location | Date Range"
+        # Segment KINDS keep their original styling (role_header=bold,
+        # role_title=italic); only the content payload is swapped.
+        company_parts = [role.company]
         if role.location:
-            header_parts[0] += f", {role.location}"
+            company_parts[0] += f", {role.location}"
         if role.date_range:
-            header_parts.append(role.date_range)
-        header = " | ".join(header_parts)
-        segments.append(_Segment(header, "role_header"))
-
-        # Role title on its own line
+            company_parts.append(role.date_range)
+        company_line = " | ".join(company_parts)
         if role.title:
-            segments.append(_Segment(role.title, "role_title"))
+            segments.append(_Segment(_format_title_line(role.title), "role_header"))
+            segments.append(_Segment(company_line, "role_title"))
+        else:
+            # No title: keep company (with location/dates) as the bold line 1.
+            segments.append(_Segment(company_line, "role_header"))
 
         # Bullets (use text prefix, not Google Docs list formatting)
         for bullet in role.bullets:
@@ -854,15 +888,17 @@ def _build_resume_segments(
     if consulting_role and consulting_role.company:
         segments.append(_Segment("", "blank"))
         segments.append(_Segment("AI CONSULTING", "section_header"))
-        header_parts = [consulting_role.company]
+        company_parts = [consulting_role.company]
         if consulting_role.location:
-            header_parts[0] += f", {consulting_role.location}"
+            company_parts[0] += f", {consulting_role.location}"
         if consulting_role.date_range:
-            header_parts.append(consulting_role.date_range)
-        header = " | ".join(header_parts)
-        segments.append(_Segment(header, "role_header"))
+            company_parts.append(consulting_role.date_range)
+        company_line = " | ".join(company_parts)
         if consulting_role.title:
-            segments.append(_Segment(consulting_role.title, "role_title"))
+            segments.append(_Segment(_format_title_line(consulting_role.title), "role_header"))
+            segments.append(_Segment(company_line, "role_title"))
+        else:
+            segments.append(_Segment(company_line, "role_header"))
         for bullet in consulting_role.bullets:
             if bullet:
                 segments.append(_Segment(f"• {bullet}", "bullet"))
@@ -881,14 +917,17 @@ def _build_resume_segments(
         segments.append(_Segment("", "blank"))
         segments.append(_Segment("EARLIER EXPERIENCE", "section_header"))
         for er in earlier_roles:
-            header_parts = [er.get("company", "")]
+            company_parts = [er.get("company", "")]
             if er.get("location"):
-                header_parts[0] += f", {er['location']}"
+                company_parts[0] += f", {er['location']}"
             if er.get("dates"):
-                header_parts.append(er["dates"])
-            segments.append(_Segment(" | ".join(header_parts), "role_header"))
+                company_parts.append(er["dates"])
+            company_line = " | ".join(company_parts)
             if er.get("title"):
-                segments.append(_Segment(er["title"], "role_title"))
+                segments.append(_Segment(_format_title_line(er["title"]), "role_header"))
+                segments.append(_Segment(company_line, "role_title"))
+            else:
+                segments.append(_Segment(company_line, "role_header"))
 
     # Education
     education = profile.get("education", {})
@@ -912,17 +951,6 @@ def _build_resume_segments(
         details = education.get("details", "")
         if details:
             segments.append(_Segment(details, "edu_details"))
-
-    # Skills (omitted for track-record format)
-    if resolved_skills and not track_record:
-        segments.append(_Segment("", "blank"))
-        segments.append(_Segment("SKILLS", "section_header"))
-        for display_name, skill_list in resolved_skills.items():
-            skills_str = ", ".join(skill_list)
-            # Add colon if display name doesn't already have one
-            label = display_name if display_name.endswith(":") else f"{display_name}:"
-            line = f"{label} {skills_str}"
-            segments.append(_Segment(line, "skills_line", bold_prefix_len=len(label)))
 
     return segments
 
