@@ -4,7 +4,11 @@
 {% block page_title %}Applications{% endblock %}
 
 {% block page_actions %}
-<div style="display: flex; gap: 0.5rem;">
+<div style="display: flex; gap: 0.75rem; align-items: center;">
+    <label style="display: flex; align-items: center; gap: 0.35rem; font-size: 0.8rem; color: var(--text-secondary); cursor: pointer;">
+        <input type="checkbox" id="include-prospects" {% if include_prospects %}checked{% endif %} onchange="toggleProspects(this.checked)">
+        Include prospects
+    </label>
     <span class="badge badge-muted">{{ applications|length }} total</span>
 </div>
 {% endblock %}
@@ -230,6 +234,16 @@ tr.updated {
 </style>
 
 <script>
+function toggleProspects(checked) {
+    const url = new URL(window.location.href);
+    if (checked) {
+        url.searchParams.set('include_prospects', 'true');
+    } else {
+        url.searchParams.delete('include_prospects');
+    }
+    window.location.href = url.toString();
+}
+
 async function updateStatus(selectElement) {
     const appId = selectElement.dataset.appId;
     const newStatus = selectElement.value;
