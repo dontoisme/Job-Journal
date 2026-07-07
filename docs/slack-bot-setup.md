@@ -30,10 +30,12 @@ The Applied/Pass/Stage-resume buttons carry the application id when known, else
 the job URL; `_resolve_application()` handles both.
 
 **Slash command:**
-- **`/score <job url> [more urls]`** — triage-scores each URL against the corpus
-  headlessly and saves it as a prospect, then posts the fit result with
+- **`/score <job url> [more urls]`** — runs the headless `/slack-apply` flow for
+  each URL (score against the corpus, save as a prospect, and stage an archetype
+  resume for strong fits), then posts the fit result with
   `[Stage resume] [Applied] [Pass] [View JD]` buttons. Lets you score a role from
-  Slack mobile without touching the Mac.
+  Slack mobile without touching the Mac. (v1 runs the full score+resume flow like
+  the `[Go]` button; a lighter triage-only mode may come later.)
 
 ## One-time Slack app configuration (api.slack.com/apps → your app)
 
@@ -73,9 +75,10 @@ jj monitor bot-log -f   # tail ~/.job-journal/logs/slack-bot.log
 
 ## Known limitation
 
-Headless scoring shells out to `claude -p "/score <url>"` with a restricted
+Headless scoring shells out to `claude -p "/slack-apply <url>"` with a restricted
 toolset (`Bash,WebFetch,WebSearch,Read,Write,Grep,Glob`) — **no Chrome/browser
 tools**. JS-rendered ATS pages (Ashby, Workday, google careers) that need the
-browser `get_page_text` fallback will fail to fetch headlessly; `/score` (slash
-command and the existing Go button) works for Greenhouse/Lever/static JD pages.
-For JS-heavy pages, score from the Mac where the browser fallback is available.
+browser `get_page_text` fallback will fail to fetch headlessly; the `/score`
+slash command and the existing Go button both work for Greenhouse/Lever/static JD
+pages. For JS-heavy pages, score from the Mac where the browser fallback is
+available.

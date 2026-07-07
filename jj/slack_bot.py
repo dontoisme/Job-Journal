@@ -596,21 +596,22 @@ def _handle_pipeline_job(web: WebClient, job: dict) -> None:
     _post_message(web, channel=channel, thread_ts=thread_ts, text=text)
 
 
-def _handle_score_triage_job(web: WebClient, job: dict) -> None:
-    """Slash-command /score: run headless triage scoring, then post the fit
-    result with [Stage resume] [Applied] [Pass] [View JD] buttons."""
+def _handle_slack_apply_job(web: WebClient, job: dict) -> None:
+    """Slash-command /score: run the headless /slack-apply flow (score + stage an
+    archetype resume for strong fits), then post the fit result with
+    [Stage resume] [Applied] [Pass] [View JD] buttons."""
     url = job["url"]
     channel = job["channel"]
     thread_ts = job.get("thread_ts")
 
     t0 = time.time()
-    rc, stdout, stderr = _run_score_subprocess(url)
+    rc, stdout, stderr = _run_slack_apply_subprocess(url)
     elapsed = int(time.time() - t0)
 
     app = _lookup_application_by_url(url) if rc == 0 else None
     if rc != 0 or app is None:
         reason = "timed out" if rc == 124 else (stderr.strip().splitlines()[-1] if stderr.strip() else f"rc={rc}")
-        logger.warning("%s %3ds  score failed  %s (%s)", V_FAIL, elapsed, url, reason)
+        logger.warning("%s %3ds  slack-apply failed  %s (%s)", V_FAIL, elapsed, url, reason)
         _post_message(
             web, channel=channel, thread_ts=thread_ts,
             text=(f":x: Couldn't score <{url}|this job> ({reason}). "
@@ -624,11 +625,18 @@ def _handle_score_triage_job(web: WebClient, job: dict) -> None:
     company = app.get("company", "?")
     position = app.get("position", "?")
     app_id = app.get("id")
-    logger.info("%s %3ds  %s @ %s → Fit:%s (%s)", V_DONE, elapsed, position, company, score, verdict)
+    resume_id = app.get("resume_id")
+    logger.info("%s %3ds  %s @ %s → Fit:%s (%s) resume=%s",
+                V_DONE, elapsed, position, company, score, verdict, resume_id)
 
     verdict_txt = f" ({verdict})" if verdict else ""
     dash = f"http://localhost:8000/prospects/{app_id}" if app_id else None
     text = f":white_check_mark: *{position}* @ *{company}* — Fit: *{score}*{verdict_txt}"
+    if resume_id:
+        doc_url = _lookup_resume_doc_url(resume_id)
+        text += "\n:page_facing_up: Resume staged" + (f" — <{doc_url}|Google Doc>" if doc_url else "")
+    elif score is not None and score < 65:
+        text += "\n_Below 65 threshold — no resume staged. Tap Stage resume to force one._"
     if dash:
         text += f"\n<{dash}|View details>"
 
@@ -686,7 +694,7 @@ def _handle_stage_resume_job(web: WebClient, job: dict) -> None:
 
 _JOB_HANDLERS = {
     "pipeline": _handle_pipeline_job,
-    "score_triage": _handle_score_triage_job,
+    "slack_apply": _handle_slack_apply_job,
     "stage_resume": _handle_stage_resume_job,
 }
 
@@ -1046,21 +1054,21 @@ def _on_slash_command(web: WebClient, req: SocketModeRequest, authorized_users: 
     logger.info("%s slash %s  %d url(s)", V_CLICK, command, len(urls))
     _slash_respond(
         response_url,
-        f":mag: Scoring {len(urls)} job{'s' if len(urls) != 1 else ''}… "
-        "I'll post the results in this channel.",
+        f":mag: Scoring {len(urls)} job{'s' if len(urls) != 1 else ''} "
+        "(+ staging a resume for strong fits)… I'll post the results in this channel.",
     )
     for url in urls:
         if channel:
             _post_message(web, channel=channel, thread_ts=None,
                           text=f":hourglass_flowing_sand: Scoring <{url}|this job>…")
         _job_queue.put({
-            "mode": "score_triage",
+            "mode": "slack_apply",
             "url": url,
             "channel": channel,
             "thread_ts": None,
             "user": user,
         })
-        logger.info("%s qsize=%d  score_triage %s", V_QUEUE, _job_queue.qsize(), url)
+        logger.info("%s qsize=%d  slack_apply %s", V_QUEUE, _job_queue.qsize(), url)
 
 
 def _make_listener(web: WebClient, authorized_users: list[str]):
