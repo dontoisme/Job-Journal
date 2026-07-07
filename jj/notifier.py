@@ -11,6 +11,41 @@ from jj.config import load_config
 
 logger = logging.getLogger("jj.notifier")
 
+# Action IDs for interactive buttons. Must match the dispatch in jj/slack_bot.py.
+SCORE_ACTION_ID = "score_job"          # [Go] — carries job URL
+MARK_APPLIED_ACTION_ID = "mark_applied"  # [Applied] — carries app_id or URL
+PASS_ACTION_ID = "pass_prospect"         # [Pass] — carries app_id or URL
+STAGE_RESUME_ACTION_ID = "stage_resume"  # [Stage resume] — carries app_id or URL
+
+
+def _status_button_elements(value: str, *, include_stage: bool = False) -> list[dict[str, Any]]:
+    """Build the [Stage resume?] [Applied] [Pass] button elements for an actions
+    block. `value` is str(app_id) when the row id is known, else the job URL —
+    the bot's _resolve_application() handles both. Stage-resume is only offered
+    on the /score result post (include_stage=True).
+    """
+    elements: list[dict[str, Any]] = []
+    if include_stage:
+        elements.append({
+            "type": "button",
+            "text": {"type": "plain_text", "text": "Stage resume"},
+            "action_id": STAGE_RESUME_ACTION_ID,
+            "value": value,
+        })
+    elements.append({
+        "type": "button",
+        "text": {"type": "plain_text", "text": "Applied"},
+        "action_id": MARK_APPLIED_ACTION_ID,
+        "value": value,
+    })
+    elements.append({
+        "type": "button",
+        "text": {"type": "plain_text", "text": "Pass"},
+        "action_id": PASS_ACTION_ID,
+        "value": value,
+    })
+    return elements
+
 
 def _score_label(score_type: str, threshold: int) -> str:
     """Return tier header text based on score_type and threshold."""
@@ -65,13 +100,15 @@ def _format_job_line(j: dict[str, Any], show_verdict: bool = False) -> str:
     )
 
 
-def _format_job_block(j: dict[str, Any], show_verdict: bool = False) -> dict:
-    """Format a single job as a Block Kit section with [Score] button accessory.
+def _format_job_block(j: dict[str, Any], show_verdict: bool = False) -> list[dict]:
+    """Format a single job as Block Kit blocks: a section with a [Go] button
+    accessory, followed by an actions row with [Applied] / [Pass] buttons.
 
-    The button carries the job URL in its `value` field; the Slack bot's
-    block_actions handler reads this to spawn `claude -p "/score <url>"`.
-    If the URL is missing or exceeds Slack's 2000-char value limit, the
-    button is omitted and the job still renders as a plain section.
+    Returns a LIST of blocks (callers extend, not append). The [Go] accessory
+    carries the job URL; the status buttons carry str(app_id) when the job dict
+    has an `id`, else the job URL — the bot resolves either. If the URL is
+    missing or exceeds Slack's 2000-char value limit, the [Go] button is omitted
+    and the job still renders as a plain section.
     """
     company = j.get("company", "?")
     title = j.get("title", "?")
@@ -101,10 +138,20 @@ def _format_job_block(j: dict[str, Any], show_verdict: bool = False) -> dict:
         block["accessory"] = {
             "type": "button",
             "text": {"type": "plain_text", "text": "Go", "emoji": True},
-            "action_id": "score_job",
+            "action_id": SCORE_ACTION_ID,
             "value": url,
         }
-    return block
+    blocks: list[dict[str, Any]] = [block]
+
+    # Status buttons carry the app id when known, else the URL (bot resolves both).
+    job_id = j.get("id")
+    status_value = str(job_id) if job_id is not None else (url if url and len(url) <= 2000 else "")
+    if status_value:
+        blocks.append({
+            "type": "actions",
+            "elements": _status_button_elements(status_value),
+        })
+    return blocks
 
 
 def _tier_jobs(new_jobs: list[dict[str, Any]]) -> tuple[str, bool, list, list, list, list]:
@@ -182,7 +229,7 @@ def _build_blocks_payload(
         for j in tier_jobs:
             if listed >= cap:
                 break
-            blocks.append(_format_job_block(j, show_verdict=verdict))
+            blocks.extend(_format_job_block(j, show_verdict=verdict))
             listed += 1
             appended += 1
         blocks.append({"type": "divider"})
@@ -500,6 +547,7 @@ def send_notification(new_jobs: list[dict[str, Any]], summary: dict[str, Any],
 def _prospect_to_job_dict(app: dict[str, Any]) -> dict[str, Any]:
     """Adapt an applications-table prospect row to _format_job_block input."""
     return {
+        "id": app.get("id"),
         "company": app.get("company", "?"),
         "title": app.get("position", "?"),
         "location": app.get("location") or "",
@@ -530,19 +578,19 @@ def format_digest_payload(
     if targets:
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "*Target companies — apply fast:*"}})
         for app in targets:
-            blocks.append(_format_job_block(_prospect_to_job_dict(app), show_verdict=True))
+            blocks.extend(_format_job_block(_prospect_to_job_dict(app), show_verdict=True))
         blocks.append({"type": "divider"})
 
     if fresh:
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "*New since yesterday:*"}})
         for app in fresh:
-            blocks.append(_format_job_block(_prospect_to_job_dict(app)))
+            blocks.extend(_format_job_block(_prospect_to_job_dict(app)))
         blocks.append({"type": "divider"})
 
     if backlog:
         blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": "*Worth a look from the backlog:*"}})
         for app in backlog:
-            blocks.append(_format_job_block(_prospect_to_job_dict(app)))
+            blocks.extend(_format_job_block(_prospect_to_job_dict(app)))
         blocks.append({"type": "divider"})
 
     blocks.append({
@@ -552,6 +600,9 @@ def format_digest_payload(
             "text": "_Tap *Go* to score + generate a resume, or browse everything at `jj serve` → /prospects_",
         }],
     })
+    # Slack hard limit: 50 blocks per message (each job now spans 2 blocks).
+    if len(blocks) > 50:
+        blocks = blocks[:49] + [blocks[-1]]
     return {"blocks": blocks}
 
 
@@ -706,6 +757,8 @@ def format_apply_ready_payload(items: list[dict[str, Any]]) -> dict:
                 "text": {"type": "plain_text", "text": "View JD"},
                 "url": url,
             })
+        if app_id is not None:
+            elements.extend(_status_button_elements(str(app_id)))
         if elements:
             blocks.append({"type": "actions", "elements": elements})
 

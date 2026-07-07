@@ -1270,6 +1270,31 @@ def transition_application_status(
     return True
 
 
+def mark_applied(app_id: int, source: str = 'manual', reason: Optional[str] = None) -> bool:
+    """Mark an application as applied and stamp the TWC activity fields.
+
+    Wraps transition_application_status('applied', ...) and additionally sets
+    applied_at / activity_date / twc_activity_type so the row is complete for
+    TWC compliance tracking (mirrors the /apply-assist "mark applied" step).
+    Returns False if the status transition fails (e.g. unknown app_id).
+    """
+    from datetime import datetime
+
+    ok = transition_application_status(
+        app_id, 'applied', reason=reason or 'Marked applied', source=source,
+    )
+    if not ok:
+        return False
+    now = datetime.now()
+    update_application(
+        app_id,
+        applied_at=now.isoformat(),
+        activity_date=now.strftime('%Y-%m-%d'),
+        twc_activity_type='applied',
+    )
+    return True
+
+
 def get_pipeline_stats() -> dict[str, Any]:
     """Get pipeline statistics: count and avg days per status."""
     with get_connection() as conn:
