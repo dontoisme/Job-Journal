@@ -130,10 +130,20 @@ def _post_message(
         return None
 
 
-def _post_ephemeral(web: WebClient, *, channel: str, user: str, text: str) -> None:
-    """Post a message only visible to `user`."""
+def _post_ephemeral(
+    web: WebClient,
+    *,
+    channel: str,
+    user: str,
+    text: str,
+    thread_ts: Optional[str] = None,
+) -> None:
+    """Post a message only visible to `user` (optionally inside a thread)."""
     try:
-        web.chat_postEphemeral(channel=channel, user=user, text=text)
+        kwargs: dict[str, Any] = {"channel": channel, "user": user, "text": text}
+        if thread_ts:
+            kwargs["thread_ts"] = thread_ts
+        web.chat_postEphemeral(**kwargs)
     except Exception as e:
         logger.error("chat.postEphemeral failed: %s", e)
 
@@ -663,6 +673,14 @@ def _handle_stage_resume_job(web: WebClient, job: dict) -> None:
     app_id = job["app_id"]
     channel = job["channel"]
     thread_ts = job.get("thread_ts")
+    user = job.get("user")
+
+    # Resume-staging output is for the clicker only — keep it out of the channel.
+    def _notify(text: str) -> None:
+        if user:
+            _post_ephemeral(web, channel=channel, user=user, text=text, thread_ts=thread_ts)
+        else:
+            _post_message(web, channel=channel, thread_ts=thread_ts, text=text)
 
     t0 = time.time()
     rc, stdout, stderr = run_stage_resume(app_id)
@@ -675,8 +693,7 @@ def _handle_stage_resume_job(web: WebClient, job: dict) -> None:
     if rc != 0:
         reason = "timed out" if rc == 124 else (stderr.strip().splitlines()[-1] if stderr.strip() else f"rc={rc}")
         logger.warning("%s %3ds  stage-resume failed app=%s (%s)", V_FAIL, elapsed, app_id, reason)
-        _post_message(web, channel=channel, thread_ts=thread_ts,
-                      text=f":x: Couldn't stage a resume for *{position}* @ *{company}* ({reason}).")
+        _notify(f":x: Couldn't stage a resume for *{position}* @ *{company}* ({reason}).")
         return
 
     logger.info("%s %3ds  staged resume app=%s (%s @ %s)", V_DONE, elapsed, app_id, position, company)
@@ -689,7 +706,7 @@ def _handle_stage_resume_job(web: WebClient, job: dict) -> None:
             line += f"\n<{doc_url}|Google Doc>"
     if staged:
         line += f"\n`{staged}`"
-    _post_message(web, channel=channel, thread_ts=thread_ts, text=line)
+    _notify(line)
 
 
 _JOB_HANDLERS = {
@@ -877,16 +894,14 @@ def _on_stage_resume(
         return
     app = _resolve_application(value)
     if not app:
-        _post_message(web, channel=channel, thread_ts=thread_ts,
-                      text=f":warning: Couldn't find that application ({value}).")
+        _post_ephemeral(web, channel=channel, user=user or "", thread_ts=thread_ts,
+                        text=f":warning: Couldn't find that application ({value}).")
         return
     app_id = app["id"]
     if user:
-        _post_ephemeral(web, channel=channel, user=user,
-                        text=":page_facing_up: Staging a resume…")
-    _post_message(web, channel=channel, thread_ts=thread_ts,
-                  text=f":hourglass_flowing_sand: Generating a resume for *{app.get('position','?')}* "
-                       f"@ *{app.get('company','?')}*…")
+        _post_ephemeral(web, channel=channel, user=user, thread_ts=thread_ts,
+                        text=f":hourglass_flowing_sand: Generating a resume for "
+                             f"*{app.get('position','?')}* @ *{app.get('company','?')}*…")
     _job_queue.put({
         "mode": "stage_resume",
         "app_id": app_id,
