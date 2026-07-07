@@ -29,6 +29,7 @@ import sys
 import threading
 import time
 from typing import Any, Optional
+from urllib.request import Request, urlopen
 
 try:
     from slack_sdk.socket_mode import SocketModeClient
@@ -43,7 +44,13 @@ except ImportError as e:
     raise
 
 from jj.config import load_config
-from jj.notifier import OPEN_APPLY_ACTION_ID
+from jj.notifier import (
+    MARK_APPLIED_ACTION_ID,
+    OPEN_APPLY_ACTION_ID,
+    PASS_ACTION_ID,
+    STAGE_RESUME_ACTION_ID,
+    _status_button_elements,
+)
 
 logger = logging.getLogger("jj.slack_bot")
 
@@ -106,10 +113,17 @@ def _post_message(
     channel: str,
     thread_ts: Optional[str],
     text: str,
+    blocks: Optional[list[dict]] = None,
 ) -> Optional[str]:
-    """Post a thread reply (or channel message if thread_ts is None)."""
+    """Post a thread reply (or channel message if thread_ts is None).
+
+    When `blocks` is given, `text` is used as the notification fallback.
+    """
     try:
-        resp = web.chat_postMessage(channel=channel, thread_ts=thread_ts, text=text)
+        kwargs: dict[str, Any] = {"channel": channel, "thread_ts": thread_ts, "text": text}
+        if blocks:
+            kwargs["blocks"] = blocks
+        resp = web.chat_postMessage(**kwargs)
         return resp.get("ts")
     except Exception as e:
         logger.error("chat.postMessage failed: %s", e)
@@ -172,6 +186,22 @@ def _verdict_from_score(score: Optional[int]) -> str:
     if score >= 50:
         return "Moderate"
     return "Stretch"
+
+
+def _resolve_application(value: str) -> Optional[dict[str, Any]]:
+    """Resolve a button `value` to an application row.
+
+    Status/stage buttons carry str(app_id) when the row id was known at post
+    time, else the job URL. Digits → get_application(int); otherwise treat as a
+    URL and look it up.
+    """
+    value = (value or "").strip()
+    if not value:
+        return None
+    if value.isdigit():
+        from jj.db import get_application
+        return get_application(int(value))
+    return _lookup_application_by_url(value)
 
 
 # =============================================================================
@@ -534,6 +564,133 @@ def _lookup_resume_doc_url(resume_id: int) -> Optional[str]:
 # Worker loop — single thread, drains the queue serially
 # =============================================================================
 
+def _handle_pipeline_job(web: WebClient, job: dict) -> None:
+    """Existing [Go] behavior: run the 4-phase pipeline and post the result."""
+    url = job["url"]
+    channel = job["channel"]
+    thread_ts = job.get("thread_ts")
+
+    t0 = time.time()
+    rc, stdout, stderr = _run_pipeline(url)
+    elapsed = int(time.time() - t0)
+
+    app = _lookup_application_by_url(url) if rc == 0 else None
+
+    if rc == 0 and app is not None:
+        score = app.get("fit_score")
+        verdict = _verdict_from_score(score)
+        company = app.get("company", "?")
+        position = app.get("position", "?")
+        pipeline = _lookup_pipeline_result(app.get("id")) if app.get("id") else None
+        p_status = pipeline.get("pipeline_status", "") if pipeline else ""
+        logger.info(
+            "%s %3ds  %s @ %s → Fit:%s (%s) pipeline=%s",
+            V_DONE, elapsed, position, company, score, verdict, p_status or "n/a",
+        )
+    elif rc == 124:
+        logger.warning("%s %3ds  timeout  %s", V_FAIL, elapsed, url)
+    else:
+        logger.warning("%s %3ds  rc=%d  %s", V_FAIL, elapsed, rc, url)
+
+    text = _format_result_message(url, app, rc, stderr)
+    _post_message(web, channel=channel, thread_ts=thread_ts, text=text)
+
+
+def _handle_score_triage_job(web: WebClient, job: dict) -> None:
+    """Slash-command /score: run headless triage scoring, then post the fit
+    result with [Stage resume] [Applied] [Pass] [View JD] buttons."""
+    url = job["url"]
+    channel = job["channel"]
+    thread_ts = job.get("thread_ts")
+
+    t0 = time.time()
+    rc, stdout, stderr = _run_score_subprocess(url)
+    elapsed = int(time.time() - t0)
+
+    app = _lookup_application_by_url(url) if rc == 0 else None
+    if rc != 0 or app is None:
+        reason = "timed out" if rc == 124 else (stderr.strip().splitlines()[-1] if stderr.strip() else f"rc={rc}")
+        logger.warning("%s %3ds  score failed  %s (%s)", V_FAIL, elapsed, url, reason)
+        _post_message(
+            web, channel=channel, thread_ts=thread_ts,
+            text=(f":x: Couldn't score <{url}|this job> ({reason}). "
+                  "JS-rendered pages (Ashby/Workday) can't be fetched headlessly — "
+                  "score it from the Mac with `/score`."),
+        )
+        return
+
+    score = app.get("fit_score")
+    verdict = _verdict_from_score(score)
+    company = app.get("company", "?")
+    position = app.get("position", "?")
+    app_id = app.get("id")
+    logger.info("%s %3ds  %s @ %s → Fit:%s (%s)", V_DONE, elapsed, position, company, score, verdict)
+
+    verdict_txt = f" ({verdict})" if verdict else ""
+    dash = f"http://localhost:8000/prospects/{app_id}" if app_id else None
+    text = f":white_check_mark: *{position}* @ *{company}* — Fit: *{score}*{verdict_txt}"
+    if dash:
+        text += f"\n<{dash}|View details>"
+
+    blocks: list[dict] = [{"type": "section", "text": {"type": "mrkdwn", "text": text}}]
+    if app_id is not None:
+        elements = _status_button_elements(str(app_id), include_stage=True)
+        if url and len(url) <= 2000:
+            elements.append({
+                "type": "button",
+                "text": {"type": "plain_text", "text": "View JD"},
+                "url": url,
+            })
+        blocks.append({"type": "actions", "elements": elements})
+
+    _post_message(web, channel=channel, thread_ts=thread_ts,
+                  text=f"Scored {position} @ {company}: {score}", blocks=blocks)
+
+
+def _handle_stage_resume_job(web: WebClient, job: dict) -> None:
+    """Stage-resume button: generate the archetype resume (no research brief)."""
+    from jj.db import get_application
+    from jj.scoring import run_stage_resume
+
+    app_id = job["app_id"]
+    channel = job["channel"]
+    thread_ts = job.get("thread_ts")
+
+    t0 = time.time()
+    rc, stdout, stderr = run_stage_resume(app_id)
+    elapsed = int(time.time() - t0)
+
+    app = get_application(app_id) or {}
+    company = app.get("company", "?")
+    position = app.get("position", "?")
+
+    if rc != 0:
+        reason = "timed out" if rc == 124 else (stderr.strip().splitlines()[-1] if stderr.strip() else f"rc={rc}")
+        logger.warning("%s %3ds  stage-resume failed app=%s (%s)", V_FAIL, elapsed, app_id, reason)
+        _post_message(web, channel=channel, thread_ts=thread_ts,
+                      text=f":x: Couldn't stage a resume for *{position}* @ *{company}* ({reason}).")
+        return
+
+    logger.info("%s %3ds  staged resume app=%s (%s @ %s)", V_DONE, elapsed, app_id, position, company)
+    line = f":page_facing_up: Resume staged for *{position}* @ *{company}*."
+    staged = (app.get("staged_resume_path") or "").strip()
+    resume_id = app.get("resume_id")
+    if resume_id:
+        doc_url = _lookup_resume_doc_url(resume_id)
+        if doc_url:
+            line += f"\n<{doc_url}|Google Doc>"
+    if staged:
+        line += f"\n`{staged}`"
+    _post_message(web, channel=channel, thread_ts=thread_ts, text=line)
+
+
+_JOB_HANDLERS = {
+    "pipeline": _handle_pipeline_job,
+    "score_triage": _handle_score_triage_job,
+    "stage_resume": _handle_stage_resume_job,
+}
+
+
 def _worker_loop(web: WebClient) -> None:
     logger.info("%s Score worker started", V_NOTE)
     while not _shutdown.is_set():
@@ -542,34 +699,11 @@ def _worker_loop(web: WebClient) -> None:
         except queue.Empty:
             continue
         try:
-            url = job["url"]
-            channel = job["channel"]
-            thread_ts = job.get("thread_ts")
-
-            t0 = time.time()
-            rc, stdout, stderr = _run_pipeline(url)
-            elapsed = int(time.time() - t0)
-
-            app = _lookup_application_by_url(url) if rc == 0 else None
-
-            if rc == 0 and app is not None:
-                score = app.get("fit_score")
-                verdict = _verdict_from_score(score)
-                company = app.get("company", "?")
-                position = app.get("position", "?")
-                pipeline = _lookup_pipeline_result(app.get("id")) if app.get("id") else None
-                p_status = pipeline.get("pipeline_status", "") if pipeline else ""
-                logger.info(
-                    "%s %3ds  %s @ %s → Fit:%s (%s) pipeline=%s",
-                    V_DONE, elapsed, position, company, score, verdict, p_status or "n/a",
-                )
-            elif rc == 124:
-                logger.warning("%s %3ds  timeout  %s", V_FAIL, elapsed, url)
+            handler = _JOB_HANDLERS.get(job.get("mode", "pipeline"))
+            if handler is None:
+                logger.warning("%s Unknown job mode: %r", V_WARN, job.get("mode"))
             else:
-                logger.warning("%s %3ds  rc=%d  %s", V_FAIL, elapsed, rc, url)
-
-            text = _format_result_message(url, app, rc, stderr)
-            _post_message(web, channel=channel, thread_ts=thread_ts, text=text)
+                handler(web, job)
         except Exception as e:
             logger.exception("Worker error processing job: %s", e)
             try:
@@ -577,7 +711,7 @@ def _worker_loop(web: WebClient) -> None:
                     web,
                     channel=job.get("channel", ""),
                     thread_ts=job.get("thread_ts"),
-                    text=f":x: Internal error scoring job: {e}",
+                    text=f":x: Internal error processing job: {e}",
                 )
             except Exception:
                 pass
@@ -664,6 +798,97 @@ def _on_open_apply(
     logger.info("%s open_apply app=%s opened=%s", V_CLICK, app_id, opened)
 
 
+def _authorized(web: WebClient, user: Optional[str], authorized_users: list[str],
+                channel: Optional[str]) -> bool:
+    """Shared allowlist gate. Posts a :lock: ephemeral and returns False if denied."""
+    if authorized_users and user not in authorized_users:
+        logger.info("%s user=%s not in allowlist", V_DENY, user)
+        if channel and user:
+            _post_ephemeral(web, channel=channel, user=user,
+                            text=":lock: Not authorized — this button is restricted.")
+        return False
+    return True
+
+
+def _on_set_status(
+    web: WebClient,
+    value: str,
+    new_status: str,
+    channel: Optional[str],
+    thread_ts: Optional[str],
+    user: Optional[str],
+    authorized_users: list[str],
+) -> None:
+    """Applied / Pass buttons: transition a prospect's status from Slack."""
+    if not channel:
+        return
+    if not _authorized(web, user, authorized_users, channel):
+        return
+    app = _resolve_application(value)
+    if not app:
+        _post_message(web, channel=channel, thread_ts=thread_ts,
+                      text=f":warning: Couldn't find that application ({value}).")
+        return
+
+    app_id = app["id"]
+    company = app.get("company", "?")
+    position = app.get("position", "?")
+
+    from jj.db import mark_applied, transition_application_status
+    if new_status == "applied":
+        ok = mark_applied(app_id, source="slack", reason="Slack button — already applied")
+        verb = "applied"
+    else:
+        ok = transition_application_status(
+            app_id, new_status, reason="Slack button — won't apply", source="slack",
+        )
+        verb = "skipped"
+
+    if not ok:
+        _post_message(web, channel=channel, thread_ts=thread_ts,
+                      text=f":warning: Couldn't update *{position}* @ *{company}*.")
+        return
+    logger.info("%s status app=%s → %s", V_CLICK, app_id, new_status)
+    icon = ":inbox_tray:" if new_status == "applied" else ":no_entry_sign:"
+    _post_message(web, channel=channel, thread_ts=thread_ts,
+                  text=f"{icon} Marked *{position}* @ *{company}* → *{verb}*.")
+
+
+def _on_stage_resume(
+    web: WebClient,
+    value: str,
+    channel: Optional[str],
+    thread_ts: Optional[str],
+    user: Optional[str],
+    authorized_users: list[str],
+) -> None:
+    """Stage-resume button: queue headless archetype resume generation (no brief)."""
+    if not channel:
+        return
+    if not _authorized(web, user, authorized_users, channel):
+        return
+    app = _resolve_application(value)
+    if not app:
+        _post_message(web, channel=channel, thread_ts=thread_ts,
+                      text=f":warning: Couldn't find that application ({value}).")
+        return
+    app_id = app["id"]
+    if user:
+        _post_ephemeral(web, channel=channel, user=user,
+                        text=":page_facing_up: Staging a resume…")
+    _post_message(web, channel=channel, thread_ts=thread_ts,
+                  text=f":hourglass_flowing_sand: Generating a resume for *{app.get('position','?')}* "
+                       f"@ *{app.get('company','?')}*…")
+    _job_queue.put({
+        "mode": "stage_resume",
+        "app_id": app_id,
+        "channel": channel,
+        "thread_ts": thread_ts,
+        "user": user,
+    })
+    logger.info("%s qsize=%d  stage_resume app=%s", V_QUEUE, _job_queue.qsize(), app_id)
+
+
 def _on_block_actions(web: WebClient, req: SocketModeRequest, authorized_users: list[str]) -> None:
     payload = req.payload
     actions = payload.get("actions", []) or []
@@ -678,6 +903,15 @@ def _on_block_actions(web: WebClient, req: SocketModeRequest, authorized_users: 
         action_id = action.get("action_id")
         if action_id == OPEN_APPLY_ACTION_ID:
             _on_open_apply(web, action.get("value", "") or "", channel, thread_ts, user, authorized_users)
+            continue
+        if action_id == MARK_APPLIED_ACTION_ID:
+            _on_set_status(web, action.get("value", "") or "", "applied", channel, thread_ts, user, authorized_users)
+            continue
+        if action_id == PASS_ACTION_ID:
+            _on_set_status(web, action.get("value", "") or "", "skipped", channel, thread_ts, user, authorized_users)
+            continue
+        if action_id == STAGE_RESUME_ACTION_ID:
+            _on_stage_resume(web, action.get("value", "") or "", channel, thread_ts, user, authorized_users)
             continue
         if action_id != ACTION_ID:
             continue
@@ -765,6 +999,70 @@ def _on_block_actions(web: WebClient, req: SocketModeRequest, authorized_users: 
 # Listener factory + main entrypoint
 # =============================================================================
 
+def _extract_urls(text: str) -> list[str]:
+    """Pull job URLs out of slash-command text. Slack may wrap them as
+    <http://...> or <http://...|label>; grab the raw URL either way."""
+    import re
+    return re.findall(r"https?://[^\s|>]+", text or "")
+
+
+def _slash_respond(response_url: str, text: str) -> None:
+    """Post an ephemeral reply to a slash command via its response_url (works
+    even in channels the bot isn't a member of)."""
+    if not response_url:
+        return
+    try:
+        data = json.dumps({"response_type": "ephemeral", "text": text}).encode("utf-8")
+        r = Request(response_url, data=data, headers={"Content-Type": "application/json"}, method="POST")
+        urlopen(r, timeout=5).close()
+    except Exception as e:  # noqa: BLE001
+        logger.debug("slash response_url post failed: %s", e)
+
+
+def _on_slash_command(web: WebClient, req: SocketModeRequest, authorized_users: list[str]) -> None:
+    """Handle the /score slash command: triage-score each URL headlessly and
+    save it as a prospect. Results are posted to the invoking channel."""
+    payload = req.payload or {}
+    command = payload.get("command", "") or "/score"
+    text = (payload.get("text") or "").strip()
+    user = payload.get("user_id")
+    channel = payload.get("channel_id")
+    response_url = payload.get("response_url", "")
+
+    if authorized_users and user not in authorized_users:
+        logger.info("%s slash user=%s not in allowlist", V_DENY, user)
+        _slash_respond(response_url, ":lock: Not authorized to run this command.")
+        return
+
+    urls = _extract_urls(text)
+    if not urls:
+        _slash_respond(
+            response_url,
+            f"Usage: `{command} <job url> [more urls]` — I score each against your "
+            "corpus and save it as a prospect.",
+        )
+        return
+
+    logger.info("%s slash %s  %d url(s)", V_CLICK, command, len(urls))
+    _slash_respond(
+        response_url,
+        f":mag: Scoring {len(urls)} job{'s' if len(urls) != 1 else ''}… "
+        "I'll post the results in this channel.",
+    )
+    for url in urls:
+        if channel:
+            _post_message(web, channel=channel, thread_ts=None,
+                          text=f":hourglass_flowing_sand: Scoring <{url}|this job>…")
+        _job_queue.put({
+            "mode": "score_triage",
+            "url": url,
+            "channel": channel,
+            "thread_ts": None,
+            "user": user,
+        })
+        logger.info("%s qsize=%d  score_triage %s", V_QUEUE, _job_queue.qsize(), url)
+
+
 def _make_listener(web: WebClient, authorized_users: list[str]):
     def _listener(client: SocketModeClient, req: SocketModeRequest) -> None:
         # Ack the envelope immediately so Slack's gateway doesn't retry
@@ -780,6 +1078,11 @@ def _make_listener(web: WebClient, authorized_users: list[str]):
                 _on_block_actions(web, req, authorized_users)
             except Exception:
                 logger.exception("Error handling block_actions")
+        elif req.type == "slash_commands":
+            try:
+                _on_slash_command(web, req, authorized_users)
+            except Exception:
+                logger.exception("Error handling slash_command")
 
     return _listener
 
@@ -893,7 +1196,7 @@ def run_bot() -> int:
     except Exception:
         logger.exception("Socket Mode connect failed")
         return 1
-    logger.info("%s Listening for [Go] button clicks", V_READY)
+    logger.info("%s Listening for button clicks + /score slash command", V_READY)
 
     # Block main thread; SocketModeClient runs its own internal threads
     while not _shutdown.is_set():
