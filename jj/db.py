@@ -1600,6 +1600,47 @@ def log_event(
         return cursor.lastrowid
 
 
+def _has_nonprospect_duplicate(cursor, row: dict[str, Any]) -> bool:
+    """True if another application in a non-prospect status (applied, skipped,
+    interview, ...) matches this prospect by exact job_url or by normalized
+    company + fuzzy title — same matching rules as find_duplicate_application.
+    Used to keep already-actioned roles out of the digest even when a duplicate
+    prospect row exists."""
+    job_url = row.get("job_url")
+    if job_url:
+        cursor.execute(
+            "SELECT 1 FROM applications WHERE job_url = ? AND id != ? AND status != 'prospect' LIMIT 1",
+            (job_url, row["id"]),
+        )
+        if cursor.fetchone():
+            return True
+
+    company = (row.get("company") or "").lower().strip()
+    norm_title = _normalize_title(row.get("position") or "")
+    if not company or not norm_title:
+        return False
+    cursor.execute(
+        "SELECT position FROM applications WHERE LOWER(TRIM(company)) = ? AND id != ? AND status != 'prospect'",
+        (company, row["id"]),
+    )
+    for other in cursor.fetchall():
+        other_norm = _normalize_title(other["position"] or "")
+        if not other_norm:
+            continue
+        if (norm_title == other_norm
+                or norm_title in other_norm
+                or other_norm in norm_title
+                or norm_title[:20] == other_norm[:20]):
+            return True
+    return False
+
+
+def has_nonprospect_duplicate(app: dict[str, Any]) -> bool:
+    """Public wrapper: does another non-prospect row duplicate this application?"""
+    with get_connection() as conn:
+        return _has_nonprospect_duplicate(conn.cursor(), app)
+
+
 def get_digest_prospects(
     fresh_limit: int = 5,
     backlog_limit: int = 5,
@@ -1650,8 +1691,11 @@ def get_digest_prospects(
             WHERE _rn <= ?
             ORDER BY COALESCE(fit_score, 0) DESC, created_at DESC
             LIMIT ?
-        """, (targets_per_company, targets_limit))
+        """, (targets_per_company, targets_limit * 3))
         targets = [dict(row) for row in cursor.fetchall()]
+        # Drop prospects already actioned under another row (applied/skipped/etc.).
+        targets = [a for a in targets
+                   if not _has_nonprospect_duplicate(cursor, a)][:targets_limit]
         target_ids = [a['id'] for a in targets] or [0]
         t_ph = ','.join('?' * len(target_ids))
 
@@ -1663,8 +1707,10 @@ def get_digest_prospects(
               AND created_at >= datetime('now', '-2 days')
             ORDER BY COALESCE(fit_score, 0) DESC, created_at DESC
             LIMIT ?
-        """, (*target_ids, fresh_limit))
+        """, (*target_ids, fresh_limit * 3))
         fresh = [dict(row) for row in cursor.fetchall()]
+        fresh = [a for a in fresh
+                 if not _has_nonprospect_duplicate(cursor, a)][:fresh_limit]
 
         exclude_ids = target_ids + [a['id'] for a in fresh]
         placeholders = ','.join('?' * len(exclude_ids))
@@ -1675,8 +1721,10 @@ def get_digest_prospects(
               AND COALESCE(fit_score, 0) >= ?
             ORDER BY fit_score DESC, created_at DESC
             LIMIT ?
-        """, (*exclude_ids, backlog_min_fit, backlog_limit))
+        """, (*exclude_ids, backlog_min_fit, backlog_limit * 3))
         backlog = [dict(row) for row in cursor.fetchall()]
+        backlog = [a for a in backlog
+                   if not _has_nonprospect_duplicate(cursor, a)][:backlog_limit]
 
     return {'targets': targets, 'fresh': fresh, 'backlog': backlog}
 

@@ -606,42 +606,43 @@ def _handle_pipeline_job(web: WebClient, job: dict) -> None:
     _post_message(web, channel=channel, thread_ts=thread_ts, text=text)
 
 
-def _handle_slack_apply_job(web: WebClient, job: dict) -> None:
-    """Slash-command /score: run the headless /slack-apply flow (score + stage an
-    archetype resume for strong fits), then post the fit result with
-    [Stage resume] [Applied] [Pass] [View JD] buttons."""
-    url = job["url"]
-    channel = job["channel"]
-    thread_ts = job.get("thread_ts")
+def _check_existing_before_spawn(url: str) -> tuple[Optional[dict], Optional[str]]:
+    """Programmatic dedup gate — decide from the DB alone whether a claude spawn
+    for this URL is needed. Returns (app, reason) where reason is:
+      'actioned'  — this URL (or a company+title duplicate) is already in a
+                    non-prospect status (applied/skipped/interview/...) — never spawn
+      'scored'    — an existing prospect already has a fit score — repost cached result
+      None        — proceed with the spawn (app may still be a known unscored prospect)
+    """
+    app = _lookup_application_by_url(url)
+    if not app:
+        return None, None
+    status = (app.get("status") or "").strip()
+    if status and status != "prospect":
+        return app, "actioned"
+    from jj.db import has_nonprospect_duplicate
+    if has_nonprospect_duplicate(app):
+        return app, "actioned"
+    if app.get("fit_score") is not None:
+        return app, "scored"
+    return app, None
 
-    t0 = time.time()
-    rc, stdout, stderr = _run_slack_apply_subprocess(url)
-    elapsed = int(time.time() - t0)
 
-    app = _lookup_application_by_url(url) if rc == 0 else None
-    if rc != 0 or app is None:
-        reason = "timed out" if rc == 124 else (stderr.strip().splitlines()[-1] if stderr.strip() else f"rc={rc}")
-        logger.warning("%s %3ds  slack-apply failed  %s (%s)", V_FAIL, elapsed, url, reason)
-        _post_message(
-            web, channel=channel, thread_ts=thread_ts,
-            text=(f":x: Couldn't score <{url}|this job> ({reason}). "
-                  "JS-rendered pages (Ashby/Workday) can't be fetched headlessly — "
-                  "score it from the Mac with `/score`."),
-        )
-        return
-
+def _post_score_result(web: WebClient, channel: str, thread_ts: Optional[str],
+                       app: dict, url: str, cached: bool = False) -> None:
+    """Post a fit-score result with [Stage resume] [Applied] [Pass] [View JD] buttons."""
     score = app.get("fit_score")
     verdict = _verdict_from_score(score)
     company = app.get("company", "?")
     position = app.get("position", "?")
     app_id = app.get("id")
     resume_id = app.get("resume_id")
-    logger.info("%s %3ds  %s @ %s → Fit:%s (%s) resume=%s",
-                V_DONE, elapsed, position, company, score, verdict, resume_id)
 
     verdict_txt = f" ({verdict})" if verdict else ""
     dash = f"http://localhost:8000/prospects/{app_id}" if app_id else None
-    text = f":white_check_mark: *{position}* @ *{company}* — Fit: *{score}*{verdict_txt}"
+    icon = ":repeat:" if cached else ":white_check_mark:"
+    prefix = "Already scored: " if cached else ""
+    text = f"{icon} {prefix}*{position}* @ *{company}* — Fit: *{score}*{verdict_txt}"
     if resume_id:
         doc_url = _lookup_resume_doc_url(resume_id)
         text += "\n:page_facing_up: Resume staged" + (f" — <{doc_url}|Google Doc>" if doc_url else "")
@@ -663,6 +664,69 @@ def _handle_slack_apply_job(web: WebClient, job: dict) -> None:
 
     _post_message(web, channel=channel, thread_ts=thread_ts,
                   text=f"Scored {position} @ {company}: {score}", blocks=blocks)
+
+
+def _mark_digested(app_id: Optional[int]) -> None:
+    """Log a digest_included event so the daily digest never re-surfaces a job
+    that was already delivered to Slack with buttons."""
+    if not app_id:
+        return
+    try:
+        from jj.db import log_event
+        log_event(event_type="digest_included", entity_type="application",
+                  entity_id=app_id, metadata={"source": "slack_apply"})
+    except Exception:
+        logger.exception("Failed to log digest_included for app %s", app_id)
+
+
+def _handle_slack_apply_job(web: WebClient, job: dict) -> None:
+    """Slash-command /score: run the headless /slack-apply flow (score + stage an
+    archetype resume for strong fits), then post the fit result with
+    [Stage resume] [Applied] [Pass] [View JD] buttons."""
+    url = job["url"]
+    channel = job["channel"]
+    thread_ts = job.get("thread_ts")
+
+    # Re-check at dequeue time — a duplicate may have been actioned/scored
+    # while this job sat in the queue.
+    existing, reason = _check_existing_before_spawn(url)
+    if reason == "actioned":
+        logger.info("%s already %s — no spawn  %s", V_SKIP, existing.get("status"), url)
+        _post_message(
+            web, channel=channel, thread_ts=thread_ts,
+            text=(f":no_entry_sign: Already *{existing.get('status', '?')}*: "
+                  f"*{existing.get('position', '?')}* @ *{existing.get('company', '?')}* "
+                  f"(app {existing.get('id')}) — not re-scoring."),
+        )
+        return
+    if reason == "scored":
+        logger.info("%s already scored — cached result, no spawn  %s", V_SKIP, url)
+        _post_score_result(web, channel, thread_ts, existing, url, cached=True)
+        return
+
+    t0 = time.time()
+    rc, stdout, stderr = _run_slack_apply_subprocess(url)
+    elapsed = int(time.time() - t0)
+
+    app = _lookup_application_by_url(url) if rc == 0 else None
+    if rc != 0 or app is None:
+        reason = "timed out" if rc == 124 else (stderr.strip().splitlines()[-1] if stderr.strip() else f"rc={rc}")
+        logger.warning("%s %3ds  slack-apply failed  %s (%s)", V_FAIL, elapsed, url, reason)
+        _post_message(
+            web, channel=channel, thread_ts=thread_ts,
+            text=(f":x: Couldn't score <{url}|this job> ({reason}). "
+                  "JS-rendered pages (Ashby/Workday) can't be fetched headlessly — "
+                  "score it from the Mac with `/score`."),
+        )
+        return
+
+    logger.info("%s %3ds  %s @ %s → Fit:%s (%s) resume=%s",
+                V_DONE, elapsed, app.get("position", "?"), app.get("company", "?"),
+                app.get("fit_score"), _verdict_from_score(app.get("fit_score")),
+                app.get("resume_id"))
+    _post_score_result(web, channel, thread_ts, app, url)
+    # Already delivered to Slack with buttons — keep it out of future digests.
+    _mark_digested(app.get("id"))
 
 
 def _handle_stage_resume_job(web: WebClient, job: dict) -> None:
@@ -961,6 +1025,20 @@ def _on_block_actions(web: WebClient, req: SocketModeRequest, authorized_users: 
         #    pipeline exists, or score is below threshold. Old single-pass
         #    results (resume_id but no pipeline) are allowed to re-run.
         existing = _lookup_application_by_url(url)
+        # Status-aware gate: never re-run for a role already actioned
+        # (applied/skipped/interview/...), here or under a duplicate row.
+        if existing:
+            status = (existing.get("status") or "").strip()
+            from jj.db import has_nonprospect_duplicate
+            if (status and status != "prospect") or has_nonprospect_duplicate(existing):
+                logger.info("%s already %s — no spawn  %s", V_SKIP, status or "actioned", url)
+                _post_message(
+                    web, channel=channel, thread_ts=thread_ts,
+                    text=(f":no_entry_sign: Already *{status or 'actioned'}*: "
+                          f"*{existing.get('position', '?')}* @ *{existing.get('company', '?')}* "
+                          f"(app {existing.get('id')}) — not re-running."),
+                )
+                continue
         if existing and existing.get("has_full_score"):
             score = existing.get("fit_score")
             app_id = existing.get("id")
@@ -1073,6 +1151,24 @@ def _on_slash_command(web: WebClient, req: SocketModeRequest, authorized_users: 
         "(+ staging a resume for strong fits)… I'll post the results in this channel.",
     )
     for url in urls:
+        # Programmatic dedup — answer from the DB, no claude spawn.
+        app, reason = _check_existing_before_spawn(url)
+        if reason == "actioned":
+            status = app.get("status", "?")
+            logger.info("%s already %s — no spawn  %s", V_SKIP, status, url)
+            if channel:
+                _post_message(
+                    web, channel=channel, thread_ts=None,
+                    text=(f":no_entry_sign: Already *{status}*: "
+                          f"*{app.get('position', '?')}* @ *{app.get('company', '?')}* "
+                          f"(app {app.get('id')}) — not re-scoring."),
+                )
+            continue
+        if reason == "scored":
+            logger.info("%s already scored — cached result, no spawn  %s", V_SKIP, url)
+            if channel:
+                _post_score_result(web, channel, None, app, url, cached=True)
+            continue
         if channel:
             _post_message(web, channel=channel, thread_ts=None,
                           text=f":hourglass_flowing_sand: Scoring <{url}|this job>…")
