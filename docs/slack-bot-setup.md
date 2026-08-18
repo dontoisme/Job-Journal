@@ -68,10 +68,16 @@ Restart the daemon so the new handlers load:
 jj monitor bot-run
 
 # or reload the LaunchAgent
-launchctl unload ~/Library/LaunchAgents/com.jj.slack-bot.plist
-launchctl load  ~/Library/LaunchAgents/com.jj.slack-bot.plist
+launchctl bootout   gui/501/com.jj.slack-bot
+launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.jj.slack-bot.plist
 jj monitor bot-log -f   # tail ~/.job-journal/logs/slack-bot.log
 ```
+
+> **The bot is currently OFF** (booted out and `launchctl disable`d on
+> 2026-08-18, along with every other jj service — see `docs/services.md`).
+> `bootstrap` will not take effect until the label is re-enabled first:
+> `launchctl enable gui/501/com.jj.slack-bot`. While it is off, the `/score`
+> slash command and the message buttons do not respond.
 
 ## Known limitation
 
