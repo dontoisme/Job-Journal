@@ -1,54 +1,74 @@
 # Background Services (LaunchAgents)
 
-Status snapshot as of **2026-08-18**. **All services are OFF.** Every plist is
-booted out of launchd *and* disabled, so nothing restarts at login or reboot.
-The plists remain on disk in `~/Library/LaunchAgents/` — turning a service back
-on is a two-command operation (see Toggling).
+Status as of **2026-08-18**: **everything is off, intentionally and for the long
+term.** Don is not actively job searching, so every automated process that
+supported the search has been stopped.
 
-| Service | Plist | What it does | Schedule | Status |
-|---|---|---|---|---|
-| Slack bot | `com.jj.slack-bot` | Socket Mode listener for the `/score` slash command and message buttons (score worker + `/slack-apply` spawns). Responds only — sends no proactive pings. | Always on (`KeepAlive` on crash) | **OFF** — 2026-08-18 |
-| Dashboard | `com.jj.dashboard` | Local FastAPI web dashboard (`jj serve`) | Always on | **OFF** — 2026-08-18 |
-| Email sync | `com.jj.email-sync` | `jj email pair` — Gmail classification/pairing. No Slack pings. | Every 2h | **OFF** — 2026-08-18 |
-| Job monitor | `com.jj.monitor` | Discovers + scores new roles, stages apply-ready ones (`monitor-launcher.sh`) | 9:00 / 12:00 / 15:00 daily | **OFF** — 2026-08-18 |
-| Daily digest | `com.jj.daily-digest` | `jj monitor digest` — Slack ping with top new + backlog prospects | 8:00 daily | **OFF** — 2026-08-18 |
+The shutdown is belt-and-suspenders, because a single `bootout` only lasts until
+the next login:
 
-## What still works with everything off
+1. **Booted out** of launchd — `launchctl bootout gui/501/com.jj.<name>`
+2. **Disabled** — `launchctl disable gui/501/com.jj.<name>`, which survives
+   reboot and is sticky until explicitly re-enabled
+3. **Plists archived** out of `~/Library/LaunchAgents/` to
+   `~/.job-journal/launchagents-archive/`, so nothing at login or a stray
+   `launchctl load` can pick them back up
 
-Nothing runs on its own anymore — no Slack pings, no Gmail sync, no scheduled
-discovery, no dashboard on localhost. Every CLI command and every Claude Code
-skill (`/score`, `/apply`, `/hunt`, `/twc`, …) still works on demand; they just
-have to be invoked manually. The Slack `/score` slash command and the message
-buttons will **not** respond while `com.jj.slack-bot` is off, since there is no
-listener attached to the socket.
+| Service | Plist | What it did | Schedule when on |
+|---|---|---|---|
+| Slack bot | `com.jj.slack-bot` | Socket Mode listener for the `/score` slash command and message buttons (score worker + `/slack-apply` spawns). Responded only — sent no proactive pings. | Always on (`KeepAlive` on crash) |
+| Dashboard | `com.jj.dashboard` | Local FastAPI web dashboard (`jj serve`) | Always on |
+| Email sync | `com.jj.email-sync` | `jj email pair` — Gmail classification/pairing | Every 2h |
+| Job monitor | `com.jj.monitor` | Discovered + scored new roles, staged apply-ready ones | 9:00 / 12:00 / 15:00 daily |
+| Daily digest | `com.jj.daily-digest` | `jj monitor digest` — Slack ping with top new + backlog prospects | 8:00 daily |
 
-## Notes
+## What this means day to day
 
-- `bootout` alone only stops the current schedule — the plist reloads at next
-  login. `disable` is what makes the shutdown survive a reboot, and it is sticky
-  per-label until explicitly re-enabled.
-- The monitor and the digest are independent: with the monitor off, the digest
-  re-sends the same stale prospect list every morning, so they should be turned
-  back on together or not at all.
-- The "apply to new roles" Slack pings came from the **daily digest**, not the
-  monitor.
-- Email sync is the one worth restarting first if the search picks back up —
-  it backfills application status from Gmail and feeds `jj funnel`.
+Nothing runs on its own: no Slack pings, no Gmail sync, no scheduled discovery,
+no dashboard on localhost. The Slack `/score` command and the message buttons do
+not respond — there is no listener on the socket.
 
-## Toggling
+Every CLI command and Claude Code skill (`/score`, `/apply`, `/hunt`, `/twc`, …)
+still works fine on demand. The system is manual-only, not dismantled.
+
+**Not affected:** the shared Dolt server at `~/.beads/shared-server` (port 3308)
+is still running. It is the `bd` issue-tracker backend for *all* of Don's repos,
+not a job-search service — killing it would break `bd` in agent-commerce,
+squabble-react-native, and seven other workspaces.
+
+## Turning a service back on
+
+Two paths. Either way, **`launchctl enable` is required first** — the disable is
+sticky, and `bootstrap` silently no-ops while it is set.
 
 ```bash
-# Turn a service ON (both steps needed — disable is sticky)
+# Path A — restore the archived plist (keeps the exact old config)
+cp ~/.job-journal/launchagents-archive/com.jj.<name>.plist ~/Library/LaunchAgents/
 launchctl enable gui/501/com.jj.<name>
 launchctl bootstrap gui/501 ~/Library/LaunchAgents/com.jj.<name>.plist
 
-# Turn a service OFF (both steps needed to survive a reboot)
-launchctl bootout gui/501/com.jj.<name>
-launchctl disable gui/501/com.jj.<name>
-
-# See what's loaded / what's disabled
-launchctl list | grep com.jj
-launchctl print-disabled gui/501 | grep com.jj
+# Path B — regenerate from the CLI (writes a fresh plist, then loads it)
+jj monitor install               # com.jj.monitor
+jj monitor install-digest        # com.jj.daily-digest
+jj monitor install-email-sync    # com.jj.email-sync
+jj monitor install-bot           # com.jj.slack-bot
+jj monitor install-dashboard     # com.jj.dashboard
 ```
 
-Logs: `~/.job-journal/logs/<name>.log`
+Path B still needs the `launchctl enable` first: those commands use the legacy
+`launchctl load`, which will not override a disabled label.
+
+If the search restarts, **email sync is the one to bring back first** — it
+backfills application status from Gmail and feeds `jj funnel`. Monitor and
+digest should come back together or not at all: with the monitor off, the digest
+re-sends the same stale prospect list every morning.
+
+## Checking state
+
+```bash
+launchctl list | grep com.jj                  # what is loaded (expect nothing)
+launchctl print-disabled gui/501 | grep com.jj  # expect all five => disabled
+ls ~/Library/LaunchAgents | grep jj           # expect nothing
+```
+
+Logs (historical): `~/.job-journal/logs/<name>.log`
