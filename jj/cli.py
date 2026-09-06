@@ -2096,7 +2096,6 @@ def app_status(
     ghosted: bool = typer.Option(False, "--ghosted", "-g", help="Show only ghosted applications"),
     pending: bool = typer.Option(False, "--pending", "-p", help="Show only pending/confirmed applications"),
     all_apps: bool = typer.Option(False, "--all", "-a", help="Show all applications including resolved"),
-    as_json: bool = typer.Option(False, "--json", help="Print one JSON object holding the rows instead of a table"),
 ):
     """Show application status with email pairing info.
 
@@ -2135,10 +2134,6 @@ def app_status(
     else:
         applications = get_applications_with_pairing_status(include_resolved=False)
         title = "Applications (excluding resolved)"
-
-    if as_json:
-        _emit_json({"rows": applications, "title": title})
-        return
 
     if not applications:
         console.print("[yellow]No applications found matching criteria.[/yellow]")
@@ -3849,10 +3844,7 @@ def monitor_quick_screen(
     since: Optional[str] = typer.Option(None, "--since", help="Only listings first seen at/after this ISO timestamp"),
     keep: str = typer.Option("fair", "--keep", help="Verdict at or above which a listing becomes a prospect"),
     preview: bool = typer.Option(False, "--preview", help="Say what would be sent (count, batches, documents); call nothing"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Call the model but store nothing"),
     model: Optional[str] = typer.Option(None, "--model", help="Model for the screen (default: config monitor.quick_screen.model or haiku)"),
-    batch_size: Optional[int] = typer.Option(None, "--batch-size", help="Listings per model call (max 100)"),
-    no_prospects: bool = typer.Option(False, "--no-prospects", help="Store verdicts only; create no prospects"),
     as_json: bool = typer.Option(False, "--json", help="Print one JSON object instead of readable lines"),
 ):
     """Batch-screen new listings on their plain facts (Stage 1.5).
@@ -3880,10 +3872,7 @@ def monitor_quick_screen(
         raise typer.Exit(2)
 
     init_database()
-    q = quick_screen_new_listings(
-        limit=limit, since=since, keep=keep, preview=preview, dry_run=dry_run,
-        model=model, batch_size=batch_size, create_prospects=not no_prospects,
-    )
+    q = quick_screen_new_listings(limit=limit, since=since, keep=keep, preview=preview, model=model)
     if as_json:
         _emit_json(q)
         return
@@ -3906,8 +3895,6 @@ def monitor_quick_screen(
         return
 
     _print_quick_screen_summary(q)
-    if dry_run:
-        console.print("[dim]Dry run: verdicts were not stored.[/dim]")
 
 
 @monitor_app.command("apply-ready")
@@ -4604,29 +4591,6 @@ def judgments_list(
             console.print(f"    {_plain(r['reasoning'])}")
 
 
-@judgments_app.command("get")
-def judgments_get(
-    url: str = typer.Argument(..., help="The posting url"),
-    as_json: bool = typer.Option(False, "--json", help="Print one JSON object holding every verdict for the url"),
-):
-    """Show every stored verdict for one posting, the one that stands first."""
-    from jj.db import get_judgments_for_url, init_database
-
-    init_database()
-    rows = get_judgments_for_url(url)
-    if as_json:
-        _emit_json({"rows": rows})
-        return
-    if not rows:
-        console.print("[yellow]No stored verdict for that url.[/yellow]")
-        return
-    for i, r in enumerate(rows):
-        marker = "stands" if i == 0 else "overridden"
-        console.print(f"[bold]{r['verdict']}[/bold] by {r['judged_by']} ({marker}), model {r.get('model') or '-'}, prompt {r.get('prompt_version') or '-'}")
-        if r.get("reasoning"):
-            console.print(f"    {_plain(r['reasoning'])}")
-
-
 @judgments_app.command("put")
 def judgments_put(
     url: str = typer.Argument(..., help="The posting url"),
@@ -4659,63 +4623,3 @@ def judgments_put(
         _emit_json({"id": jid, "url": url, "verdict": verdict, "judged_by": "user", "application_id": app_id})
         return
     console.print(f"[green]stored[/green] {verdict} for {url} (judged by you)")
-
-
-@judgments_app.command("delete")
-def judgments_delete(
-    url: str = typer.Argument(..., help="The posting url"),
-    judged_by: Optional[str] = typer.Option(None, "--judged-by", help="Remove only this source's verdict"),
-    as_json: bool = typer.Option(False, "--json", help="Print what was removed as JSON"),
-):
-    """Remove stored verdicts for a posting so it can be judged fresh."""
-    from jj.db import delete_judgments, init_database
-
-    init_database()
-    n = delete_judgments(url, judged_by=judged_by)
-    if as_json:
-        _emit_json({"url": url, "removed": n})
-        return
-    console.print(f"removed {n} verdict(s) for {url}")
-
-
-# =============================================================================
-# Prompts: the rubric and screening instructions, printed from one place
-# =============================================================================
-
-prompts_app = typer.Typer(
-    name="prompts",
-    help="Print the rubric, verdict bands and screening instructions jj uses.",
-    no_args_is_help=True,
-)
-app.add_typer(prompts_app, name="prompts")
-
-
-@prompts_app.command("list")
-def prompts_list():
-    """Name every prompt `jj prompts show` can print."""
-    from jj.prompts import PROMPT_NAMES, PROMPT_VERSION
-
-    console.print(f"[dim]prompt version {PROMPT_VERSION}[/dim]")
-    for name, what in PROMPT_NAMES.items():
-        console.print(f"[bold]{name:13}[/bold] {what}")
-
-
-@prompts_app.command("show")
-def prompts_show(
-    name: str = typer.Argument(..., help="quick-screen, fit-rubric or documents"),
-):
-    """Print one prompt or rubric exactly as jj uses it."""
-    import sys
-
-    from jj.prompts import PROMPT_NAMES, render_prompt
-
-    try:
-        text = render_prompt(name)
-    except KeyError:
-        err_console.print(f"[red]unknown prompt {name!r}; one of: {', '.join(PROMPT_NAMES)}[/red]")
-        raise typer.Exit(2) from None
-    sys.stdout.write(text.rstrip("\n") + "\n")
-
-
-if __name__ == "__main__":
-    app()

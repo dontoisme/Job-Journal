@@ -1,9 +1,8 @@
 """Rubrics, verdicts, and prompts, defined once.
 
-Everything that decides how a posting is judged lives here so it can be
-versioned, printed (``jj prompts show``), and overridden from a file rather
-than restated in each skill. Skills should print these with ``jj prompts show``
-instead of carrying their own copy.
+Everything that decides how the quick screen judges a posting lives here so
+it can be versioned and overridden from a file rather than restated in each
+skill.
 
 Adapted from the Pinloop CLI's approach (see docs/comparison-pinloop-cli.md):
 a four-word verdict scale that is the model's own answer, a shipped prompt the
@@ -12,7 +11,7 @@ documents with reserved names whose absence is reported rather than hidden.
 """
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from jj.config import JJ_HOME
 
@@ -28,10 +27,6 @@ PROMPT_VERSION = "2026-09-06.1"
 #: told to keep only postings at or above one of them.
 VERDICTS: tuple[str, ...] = ("no", "weak", "fair", "strong")
 
-
-def is_verdict(word: Any) -> bool:
-    """True when ``word`` is one of the four verdict words."""
-    return isinstance(word, str) and word.strip().lower() in VERDICTS
 
 
 def rank_of(verdict: str) -> int:
@@ -50,64 +45,6 @@ def at_or_above(verdict: str, keep: str) -> bool:
 def drop_reason(verdict: str, keep: str) -> str:
     """Why a keep rule left a posting out, in the words a person reads."""
     return f"judged {verdict}, below {keep}"
-
-
-# ---------------------------------------------------------------------------
-# The fit rubric (full LLM score), as data
-# ---------------------------------------------------------------------------
-
-#: (key, label, max points). The order is the order categories are reported.
-FIT_RUBRIC_CATEGORIES: tuple[tuple[str, str, int], ...] = (
-    ("skills", "Skills Match", 35),
-    ("experience", "Experience Level", 25),
-    ("domain", "Domain Fit", 25),
-    ("location", "Location / Remote", 15),
-)
-
-#: (floor, band label, verdict word). Highest floor first.
-FIT_BANDS: tuple[tuple[int, str, str], ...] = (
-    (80, "Strong Fit", "strong"),
-    (65, "Good Fit", "fair"),
-    (50, "Moderate Fit", "weak"),
-    (0, "Stretch", "no"),
-)
-
-
-def band_for_score(score: Optional[float]) -> tuple[int, str, str]:
-    """The (floor, label, verdict) band a 0-100 fit score falls in."""
-    try:
-        value = float(score or 0)
-    except (TypeError, ValueError):
-        value = 0.0
-    for floor, label, verdict in FIT_BANDS:
-        if value >= floor:
-            return floor, label, verdict
-    return FIT_BANDS[-1]
-
-
-def verdict_from_score(score: Optional[float]) -> str:
-    """Map a 0-100 fit score onto the four-word scale."""
-    return band_for_score(score)[2]
-
-
-def band_label(score: Optional[float]) -> str:
-    """The band label ("Strong Fit", ...) for a 0-100 fit score."""
-    return band_for_score(score)[1]
-
-
-def fit_rubric_text() -> str:
-    """The full fit rubric as prose, built from the data above."""
-    total = sum(points for _, _, points in FIT_RUBRIC_CATEGORIES)
-    lines = [f"Fit rubric ({total} points). Score each category, then sum.", ""]
-    for _key, label, points in FIT_RUBRIC_CATEGORIES:
-        lines.append(f"- {label}: 0-{points}")
-    lines.append("")
-    lines.append("Bands:")
-    for floor, label, verdict in FIT_BANDS:
-        lines.append(f"- {floor}+: {label} (verdict: {verdict})")
-    lines.append("")
-    lines.append(f"Prompt version: {PROMPT_VERSION}")
-    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -219,28 +156,3 @@ def load_quick_screen_prompt() -> tuple[str, str]:
         if text.strip():
             return text, str(QUICK_SCREEN_PROMPT_OVERRIDE)
     return DEFAULT_QUICK_SCREEN_PROMPT, "shipped"
-
-
-#: Names ``jj prompts show`` accepts, and what each prints.
-PROMPT_NAMES: dict[str, str] = {
-    "quick-screen": "the instructions the batched quick screen sends the model",
-    "fit-rubric": "the four-category fit rubric and its verdict bands",
-    "documents": "the reserved profile document names and their meaning",
-}
-
-
-def render_prompt(name: str) -> str:
-    """Text for ``jj prompts show <name>``; raises KeyError for an unknown name."""
-    if name == "quick-screen":
-        text, source = load_quick_screen_prompt()
-        return f"# source: {source}\n# version: {PROMPT_VERSION}\n\n{text}"
-    if name == "fit-rubric":
-        return fit_rubric_text()
-    if name == "documents":
-        lines = ["Reserved profile documents (stored as ~/.job-journal/<name>.md):", ""]
-        for doc_name, meaning in PROFILE_DOCUMENTS.items():
-            lines.append(f"- {doc_name}: {meaning}")
-        lines.append("")
-        lines.append(f"Quick screen prompt override: {QUICK_SCREEN_PROMPT_OVERRIDE}")
-        return "\n".join(lines)
-    raise KeyError(name)

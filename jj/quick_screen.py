@@ -28,10 +28,11 @@ from typing import Any, Optional
 from jj.prompts import (
     PROMPT_VERSION,
     VERDICTS,
+    at_or_above,
     describe_missing_documents,
+    drop_reason,
     load_profile_documents,
     load_quick_screen_prompt,
-    rank_of,
 )
 
 logger = logging.getLogger("jj.quick_screen")
@@ -372,18 +373,15 @@ def quick_screen_new_listings(
     since: Optional[str] = None,
     keep: str = DEFAULT_KEEP,
     preview: bool = False,
-    dry_run: bool = False,
     model: Optional[str] = None,
     batch_size: Optional[int] = None,
-    create_prospects: bool = True,
     runner=run_claude,
 ) -> dict[str, Any]:
     """Screen the highest-ranked unscreened listings and store the verdicts.
 
-    ``preview`` prints nothing and calls nothing: it returns what a run would
-    do (how many listings, how many batches, which documents are missing) so
-    the person can be asked before anything is spent. ``dry_run`` calls the
-    model but stores nothing.
+    ``preview`` calls nothing: it returns what a run would do (how many
+    listings, how many batches, which documents are missing) so the person
+    can be asked before anything is spent.
     """
     from jj.db import get_unscreened_listings, record_judgment
 
@@ -413,7 +411,6 @@ def quick_screen_new_listings(
             [m for m in documents["missing"] if m != "corpus"]
         ),
         "preview": preview,
-        "dry_run": dry_run,
         "coverage": {"covered": 0, "total": len(candidates)},
         "screened": 0,
         "batches": 0,
@@ -458,28 +455,22 @@ def quick_screen_new_listings(
         summary["screened"] += 1
         summary["verdict_counts"][verdict] += 1
         item.update({"verdict": verdict, "reasoning": reasoning})
-        if not dry_run:
-            record_judgment(
-                url, verdict, reasoning, judged_by="model-quick", model=model,
-                prompt_version=PROMPT_VERSION, listing_id=listing.get("id"),
-                title=listing.get("title"), company=listing.get("company_name"),
-            )
-        if rank_of(verdict) >= rank_of(keep):
+        record_judgment(
+            url, verdict, reasoning, judged_by="model-quick", model=model,
+            prompt_version=PROMPT_VERSION, listing_id=listing.get("id"),
+            title=listing.get("title"), company=listing.get("company_name"),
+        )
+        if at_or_above(verdict, keep):
             summary["kept"] += 1
-            if create_prospects and not dry_run:
-                outcome = _upsert_prospect(listing, verdict, reasoning)
-                summary["prospects"][outcome] = summary["prospects"].get(outcome, 0) + 1
-                item["prospect"] = outcome
+            outcome = _upsert_prospect(listing, verdict, reasoning)
+            summary["prospects"][outcome] = summary["prospects"].get(outcome, 0) + 1
+            item["prospect"] = outcome
             item["status"] = "kept"
         else:
             item["status"] = "dropped"
-            summary["dropped"].append({"url": url, "reason": f"judged {verdict}, below {keep}"})
+            summary["dropped"].append({"url": url, "reason": drop_reason(verdict, keep)})
         summary["items"].append(item)
 
     summary["coverage"] = {"covered": summary["screened"], "total": len(candidates)}
     return summary
 
-
-def coverage_line(covered: int, total: int, what: str) -> str:
-    """'996/1,000 <what>' with thousands separators, unreduced. '0/0' when empty."""
-    return f"{covered:,}/{total:,} {what}"

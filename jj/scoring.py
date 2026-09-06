@@ -355,37 +355,6 @@ def _is_full_scored(app_id: int) -> bool:
     return notes.startswith("Fit:")
 
 
-def _record_full_judgment(app_id: int) -> Optional[str]:
-    """Mirror a fresh full score into the judgments table as a model-full verdict.
-
-    The full score is written by the /slack-apply skill (prose), so this is the
-    bridge: read back fit_score and the 'Fit:' note, map the score onto the
-    four-word scale, and store it with the note as reasoning. Returns the
-    verdict word, or None when nothing usable was written.
-    """
-    from jj.db import get_connection, record_judgment
-    from jj.prompts import PROMPT_VERSION, verdict_from_score
-
-    with get_connection() as conn:
-        row = conn.execute(
-            "SELECT job_url, fit_score, notes, position, company FROM applications WHERE id = ?",
-            (app_id,),
-        ).fetchone()
-    if not row or not row["job_url"] or not (row["notes"] or "").startswith("Fit:"):
-        return None
-    verdict = verdict_from_score(row["fit_score"])
-    try:
-        record_judgment(
-            row["job_url"], verdict, reasoning=(row["notes"] or "")[:1000],
-            judged_by="model-full", model="slack-apply", prompt_version=PROMPT_VERSION,
-            application_id=app_id, title=row["position"], company=row["company"],
-        )
-    except ValueError:
-        logger.exception("could not record full judgment for app %s", app_id)
-        return None
-    return verdict
-
-
 def score_budget() -> dict[str, Any]:
     """Today's full-score spend against the daily ceiling, for previews."""
     today = date.today().isoformat()
@@ -500,10 +469,9 @@ def score_new_prospects(
             summary["items"].append({"app": label, "status": f"fail_rc{rc}", "err": (err or "")[-200:]})
         elif app_id and _is_full_scored(app_id):
             summary["scored"] += 1
-            verdict = _record_full_judgment(app_id)
             summary["items"].append({
                 "app": label, "status": "scored", "selected_by": selected_by,
-                "quick_verdict": quick, "verdict": verdict,
+                "quick_verdict": quick,
             })
         else:
             # Clean exit but no full score written — typically a dead/stale JD URL.

@@ -323,12 +323,12 @@ An experimental first cut of the adoption list landed on this branch. See [quick
 | Item | Status | Where |
 |------|--------|-------|
 | 6.1 Pinloop as a discovery source | **Not built.** Held pending a read of Pinloop's terms; see the note below. | |
-| 6.2 `--json` CLI contract | Partial: `app status`, `monitor score-new`, `monitor quick-screen`, all `judgments` commands | `jj/cli.py` (`_emit_json`, `err_console`) |
-| 6.3 Verdict scale + `judgments` table | Done | `jj/prompts.py`, `jj/db.py` (`record_judgment`, `get_best_judgment`, ...), `jj judgments` |
+| 6.2 `--json` CLI contract | Partial: the new commands only (`monitor score-new`, `monitor quick-screen`, `judgments`) | `jj/cli.py` (`_emit_json`, `err_console`) |
+| 6.3 Verdict scale + `judgments` table | Done for quick and user verdicts; full scores still live in the notes prefix | `jj/prompts.py`, `jj/db.py` (`record_judgment`, `get_best_judgment`, ...), `jj judgments list|put` |
 | 6.4 Batched quick-screen tier | Done | `jj/quick_screen.py`, `jj monitor quick-screen`, `scan-apis --quick-screen`, `score_new_prospects` reads quick verdicts first |
 | 6.5 `constraints.md` / `preferences.md` | Done (plus `background.md`); missing documents reported | `jj/prompts.py` (`PROFILE_DOCUMENTS`) |
 | 6.6 Coverage fractions + named drops | Done for API scans and the screen | `scan_all_api_companies` summary, `quick_screen_new_listings` |
-| 6.7 One rubric in code, versioned, overridable | Done for the quick screen and the fit bands; skills still carry their prose copies | `jj prompts show`, `PROMPT_VERSION`, `~/.job-journal/quick-screen-prompt.md` |
+| 6.7 One rubric in code, versioned, overridable | Done for the quick-screen prompt only; the fit rubric still lives in skill prose | `PROMPT_VERSION`, `~/.job-journal/quick-screen-prompt.md` |
 | 6.8 Spend preview | Done | `score-new --preview`, `quick-screen --preview` |
 | 6.9 Generated guide + SKILL.md | Not built | |
 | 6.10 Routines as data | Not built | |
