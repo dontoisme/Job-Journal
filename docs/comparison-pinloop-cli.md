@@ -316,7 +316,28 @@ Steps 2-4 are optional; step 1 alone captures most of the value at no cost.
 
 ---
 
-## 10. Summary
+## 10. Implementation status (2026-09-06)
+
+An experimental first cut of the adoption list landed on this branch. See [quick-screen.md](quick-screen.md) for usage.
+
+| Item | Status | Where |
+|------|--------|-------|
+| 6.1 Pinloop as a discovery source | **Not built.** Held pending a read of Pinloop's terms; see the note below. | |
+| 6.2 `--json` CLI contract | Partial: `app status`, `monitor score-new`, `monitor quick-screen`, all `judgments` commands | `jj/cli.py` (`_emit_json`, `err_console`) |
+| 6.3 Verdict scale + `judgments` table | Done | `jj/prompts.py`, `jj/db.py` (`record_judgment`, `get_best_judgment`, ...), `jj judgments` |
+| 6.4 Batched quick-screen tier | Done | `jj/quick_screen.py`, `jj monitor quick-screen`, `scan-apis --quick-screen`, `score_new_prospects` reads quick verdicts first |
+| 6.5 `constraints.md` / `preferences.md` | Done (plus `background.md`); missing documents reported | `jj/prompts.py` (`PROFILE_DOCUMENTS`) |
+| 6.6 Coverage fractions + named drops | Done for API scans and the screen | `scan_all_api_companies` summary, `quick_screen_new_listings` |
+| 6.7 One rubric in code, versioned, overridable | Done for the quick screen and the fit bands; skills still carry their prose copies | `jj prompts show`, `PROMPT_VERSION`, `~/.job-journal/quick-screen-prompt.md` |
+| 6.8 Spend preview | Done | `score-new --preview`, `quick-screen --preview` |
+| 6.9 Generated guide + SKILL.md | Not built | |
+| 6.10 Routines as data | Not built | |
+
+**On using Pinloop's free tier as a source.** Pinloop's README and its own agent guide say keyword search, `list`, `fetch`, `filter`, tabs and routines are free and unmetered, and the guide explicitly tells agents to use them as "the free way" instead of paying for judgments. A daily `pinloop list --posted-after <yesterday> --json` for a handful of queries is inside that design and well under the stated limits (120 requests a minute, 5,000 postings per command). What would cross a line is mirroring the corpus, redistributing it, or routing around the metered judge and semantic search. The remaining question is the terms of service at pinloop.ai/terms, which this comparison did not read, and the dependency on a one-person service. Building our own wider net instead means more ATS adapters (Workday, SmartRecruiters, iCIMS, Rippling), which is independent work and worth doing either way.
+
+---
+
+## 11. Summary
 
 **Pinloop** is a narrow, well-built service: search a big corpus, judge postings against a profile, keep lists, run it on a schedule. Its published client is small because the product lives on the server, and its real contribution to Job Journal is a set of design rules for agent-driven CLIs that were clearly earned the hard way and are written down in the source: one output shape, prose on stderr, verdicts as words with reasoning kept, cheap screening before expensive judging, fractions before excuses, consent before spend, and instructions that cannot go stale.
 

@@ -559,6 +559,8 @@ def migrate_database() -> None:
         ("resumes", "generation_mode", "TEXT"),
         ("resumes", "pipeline_run_id", "INTEGER"),
         ("resumes", "is_archetype", "BOOLEAN DEFAULT 0"),
+        # Quick-screen tier: the deterministic title score becomes a ranking, not a gate
+        ("job_listings", "title_score", "INTEGER"),
     ]
 
     with get_connection() as conn:
@@ -696,11 +698,33 @@ def migrate_database() -> None:
             last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
             scored_at TEXT,
             application_id INTEGER REFERENCES applications(id),
+            title_score INTEGER,
             UNIQUE(company_id, url)
         );
         CREATE INDEX IF NOT EXISTS idx_job_listings_company ON job_listings(company_id, is_active);
         CREATE INDEX IF NOT EXISTS idx_job_listings_url ON job_listings(url);
         CREATE INDEX IF NOT EXISTS idx_job_listings_first_seen ON job_listings(first_seen_at);
+
+        -- Verdicts on postings: one row per (url, judged_by). judged_by is one of
+        -- 'user', 'model-full', 'model-quick'. verdict is one of jj.prompts.VERDICTS.
+        CREATE TABLE IF NOT EXISTS judgments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            url TEXT NOT NULL,
+            verdict TEXT NOT NULL,
+            reasoning TEXT,
+            judged_by TEXT NOT NULL,
+            model TEXT,
+            prompt_version TEXT,
+            listing_id INTEGER REFERENCES job_listings(id),
+            application_id INTEGER REFERENCES applications(id),
+            title TEXT,
+            company TEXT,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(url, judged_by)
+        );
+        CREATE INDEX IF NOT EXISTS idx_judgments_url ON judgments(url);
+        CREATE INDEX IF NOT EXISTS idx_judgments_verdict ON judgments(verdict, judged_by);
 
         -- Investor/VC job boards (aggregators listing jobs across portfolio companies)
         CREATE TABLE IF NOT EXISTS investor_boards (
@@ -3756,17 +3780,20 @@ def score_title_fit(title: str, location: str = None) -> dict[str, Any]:
 
 def record_job_listing(company_id: int, url: str, title: str = None,
                        location: str = None, salary: str = None,
-                       ats_type: str = None) -> tuple[int, bool]:
+                       ats_type: str = None, title_score: int = None) -> tuple[int, bool]:
     """Record a job listing. Returns (listing_id, is_new).
-    Uses INSERT OR IGNORE + UPDATE for upsert behavior."""
+    Uses INSERT OR IGNORE + UPDATE for upsert behavior. ``title_score`` is the
+    deterministic score_title_fit total, kept so the quick screen can rank
+    listings rather than gate them."""
     with get_connection() as conn:
         cursor = conn.cursor()
 
         # Try insert first (will be ignored if url+company_id already exists)
         cursor.execute("""
-            INSERT OR IGNORE INTO job_listings (company_id, url, title, location, salary, ats_type)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (company_id, url, title, location, salary, ats_type))
+            INSERT OR IGNORE INTO job_listings
+                (company_id, url, title, location, salary, ats_type, title_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (company_id, url, title, location, salary, ats_type, title_score))
 
         is_new = cursor.rowcount > 0
 
@@ -3779,9 +3806,10 @@ def record_job_listing(company_id: int, url: str, title: str = None,
                     title = COALESCE(?, title),
                     location = COALESCE(?, location),
                     salary = COALESCE(?, salary),
-                    ats_type = COALESCE(?, ats_type)
+                    ats_type = COALESCE(?, ats_type),
+                    title_score = COALESCE(?, title_score)
                 WHERE company_id = ? AND url = ?
-            """, (title, location, salary, ats_type, company_id, url))
+            """, (title, location, salary, ats_type, title_score, company_id, url))
 
         conn.commit()
 
@@ -4804,3 +4832,222 @@ def get_pipeline_run_by_app(application_id: int) -> Optional[dict[str, Any]]:
                 result["eval_improvements"] = json.loads(result["eval_improvements"])
             return result
     return None
+
+
+# ---------------------------------------------------------------------------
+# Judgments (verdict scale with stored reasoning)
+# ---------------------------------------------------------------------------
+
+#: Who made a verdict. Precedence when several exist for one url: a person's
+#: verdict wins, then a full read of the description, then a quick screen.
+JUDGED_BY = ("user", "model-full", "model-quick")
+_JUDGED_BY_PRECEDENCE = {name: i for i, name in enumerate(JUDGED_BY)}
+
+
+def record_judgment(
+    url: str,
+    verdict: str,
+    reasoning: str = "",
+    judged_by: str = "user",
+    model: Optional[str] = None,
+    prompt_version: Optional[str] = None,
+    listing_id: Optional[int] = None,
+    application_id: Optional[int] = None,
+    title: Optional[str] = None,
+    company: Optional[str] = None,
+) -> int:
+    """Store a verdict for a posting url, replacing any earlier one by the same
+    judged_by. Returns the judgment id. Raises ValueError on a bad verdict or
+    judged_by so a typo is loud rather than stored."""
+    from jj.prompts import VERDICTS
+
+    word = (verdict or "").strip().lower()
+    if word not in VERDICTS:
+        raise ValueError(f"verdict must be one of {', '.join(VERDICTS)}; got {verdict!r}")
+    if judged_by not in JUDGED_BY:
+        raise ValueError(f"judged_by must be one of {', '.join(JUDGED_BY)}; got {judged_by!r}")
+    if not url:
+        raise ValueError("url is required")
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO judgments
+                (url, verdict, reasoning, judged_by, model, prompt_version,
+                 listing_id, application_id, title, company)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(url, judged_by) DO UPDATE SET
+                verdict = excluded.verdict,
+                reasoning = excluded.reasoning,
+                model = excluded.model,
+                prompt_version = excluded.prompt_version,
+                listing_id = COALESCE(excluded.listing_id, judgments.listing_id),
+                application_id = COALESCE(excluded.application_id, judgments.application_id),
+                title = COALESCE(excluded.title, judgments.title),
+                company = COALESCE(excluded.company, judgments.company),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (url, word, reasoning or "", judged_by, model, prompt_version,
+             listing_id, application_id, title, company),
+        )
+        conn.commit()
+        row = cursor.execute(
+            "SELECT id FROM judgments WHERE url = ? AND judged_by = ?", (url, judged_by)
+        ).fetchone()
+        return int(row["id"])
+
+
+def get_judgments_for_url(url: str) -> list[dict[str, Any]]:
+    """Every stored verdict for a url, best-precedence first."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM judgments WHERE url = ?", (url,)
+        ).fetchall()
+    items = [dict(r) for r in rows]
+    items.sort(key=lambda j: _JUDGED_BY_PRECEDENCE.get(j["judged_by"], 99))
+    return items
+
+
+def get_best_judgment(url: str) -> Optional[dict[str, Any]]:
+    """The verdict that stands for a url: user > model-full > model-quick."""
+    items = get_judgments_for_url(url)
+    return items[0] if items else None
+
+
+def list_judgments(
+    verdict: Optional[str] = None,
+    judged_by: Optional[str] = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Stored verdicts, newest first, optionally narrowed by word or source."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    if verdict:
+        clauses.append("verdict = ?")
+        params.append(verdict.strip().lower())
+    if judged_by:
+        clauses.append("judged_by = ?")
+        params.append(judged_by)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.append(limit)
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM judgments {where} ORDER BY updated_at DESC, id DESC LIMIT ?",
+            tuple(params),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def delete_judgments(url: str, judged_by: Optional[str] = None) -> int:
+    """Remove stored verdicts for a url (all sources, or one). Returns count removed."""
+    with get_connection() as conn:
+        if judged_by:
+            cur = conn.execute(
+                "DELETE FROM judgments WHERE url = ? AND judged_by = ?", (url, judged_by)
+            )
+        else:
+            cur = conn.execute("DELETE FROM judgments WHERE url = ?", (url,))
+        conn.commit()
+        return cur.rowcount
+
+
+def get_unscreened_listings(
+    limit: int = 100,
+    since: Optional[str] = None,
+    min_title_score: Optional[int] = None,
+) -> list[dict[str, Any]]:
+    """Active job listings with no quick-screen verdict and no user verdict.
+
+    Ranked by title_score (highest first, unknown last) then by recency, so the
+    deterministic title score orders what gets screened rather than deciding it.
+    ``since`` (ISO timestamp) restricts to listings first seen at/after it.
+    Returns listing dicts with the company name joined in.
+    """
+    clauses = [
+        "l.is_active = 1",
+        "l.url NOT IN (SELECT url FROM judgments WHERE judged_by IN ('model-quick', 'user'))",
+    ]
+    params: list[Any] = []
+    if since:
+        clauses.append("l.first_seen_at >= ?")
+        params.append(since)
+    if min_title_score is not None:
+        clauses.append("COALESCE(l.title_score, 0) >= ?")
+        params.append(min_title_score)
+    params.append(limit)
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT l.*, c.name AS company_name, c.is_target, c.target_priority
+            FROM job_listings l
+            LEFT JOIN companies c ON c.id = l.company_id
+            WHERE {' AND '.join(clauses)}
+            ORDER BY
+              CASE WHEN l.title_score IS NULL THEN 1 ELSE 0 END,
+              COALESCE(l.title_score, 0) DESC,
+              l.first_seen_at DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_quick_screened_prospects(
+    min_verdict: str = "fair",
+    limit: int = 10,
+    since: Optional[str] = None,
+) -> list[dict[str, Any]]:
+    """Prospects whose quick-screen verdict is at or above ``min_verdict`` and
+    that have not been read in full yet (no model-full judgment, still a
+    title-only note). Strong before fair, targets first, then title score."""
+    from jj.prompts import VERDICTS, rank_of
+
+    floor = rank_of(min_verdict)
+    keep = [v for v in VERDICTS if rank_of(v) >= floor >= 0]
+    if not keep:
+        return []
+    placeholders = ", ".join("?" * len(keep))
+    since_clause = "AND a.created_at >= ?" if since else ""
+    params: list[Any] = list(keep)
+    if since:
+        params.append(since)
+    params.append(limit)
+    with get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT a.*, j.verdict AS quick_verdict, j.reasoning AS quick_reasoning
+            FROM applications a
+            JOIN judgments j ON j.url = a.job_url AND j.judged_by = 'model-quick'
+            WHERE a.status = 'prospect'
+              AND a.notes LIKE 'Title Fit:%'
+              AND j.verdict IN ({placeholders})
+              AND a.job_url NOT IN (
+                  SELECT url FROM judgments WHERE judged_by IN ('model-full', 'user')
+              )
+              {since_clause}
+            ORDER BY
+              CASE j.verdict WHEN 'strong' THEN 0 ELSE 1 END,
+              CASE WHEN LOWER(a.company) IN (
+                  SELECT LOWER(name) FROM companies WHERE is_target = 1 AND target_priority >= 1
+              ) THEN 0 ELSE 1 END,
+              COALESCE(a.fit_score, 0) DESC,
+              a.created_at DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_judgment_counts() -> dict[str, dict[str, int]]:
+    """{judged_by: {verdict: count}} across every stored verdict."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT judged_by, verdict, COUNT(*) AS n FROM judgments GROUP BY judged_by, verdict"
+        ).fetchall()
+    out: dict[str, dict[str, int]] = {}
+    for r in rows:
+        out.setdefault(r["judged_by"], {})[r["verdict"]] = int(r["n"])
+    return out

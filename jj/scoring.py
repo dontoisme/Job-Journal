@@ -355,32 +355,113 @@ def _is_full_scored(app_id: int) -> bool:
     return notes.startswith("Fit:")
 
 
+def _record_full_judgment(app_id: int) -> Optional[str]:
+    """Mirror a fresh full score into the judgments table as a model-full verdict.
+
+    The full score is written by the /slack-apply skill (prose), so this is the
+    bridge: read back fit_score and the 'Fit:' note, map the score onto the
+    four-word scale, and store it with the note as reasoning. Returns the
+    verdict word, or None when nothing usable was written.
+    """
+    from jj.db import get_connection, record_judgment
+    from jj.prompts import PROMPT_VERSION, verdict_from_score
+
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT job_url, fit_score, notes, position, company FROM applications WHERE id = ?",
+            (app_id,),
+        ).fetchone()
+    if not row or not row["job_url"] or not (row["notes"] or "").startswith("Fit:"):
+        return None
+    verdict = verdict_from_score(row["fit_score"])
+    try:
+        record_judgment(
+            row["job_url"], verdict, reasoning=(row["notes"] or "")[:1000],
+            judged_by="model-full", model="slack-apply", prompt_version=PROMPT_VERSION,
+            application_id=app_id, title=row["position"], company=row["company"],
+        )
+    except ValueError:
+        logger.exception("could not record full judgment for app %s", app_id)
+        return None
+    return verdict
+
+
+def score_budget() -> dict[str, Any]:
+    """Today's full-score spend against the daily ceiling, for previews."""
+    today = date.today().isoformat()
+    limit = _score_daily_limit()
+    used = _read_daily_count(today)
+    return {"date": today, "daily_limit": limit, "used": used, "remaining": max(0, limit - used)}
+
+
+def select_prospects_to_score(
+    limit: int = 10,
+    since: Optional[str] = None,
+    min_verdict: str = "fair",
+    quick_only: bool = False,
+) -> list[dict[str, Any]]:
+    """Which prospects a full-score run would read, in order.
+
+    Quick-screened prospects at or above ``min_verdict`` come first (strong
+    before fair, targets first). Remaining slots fall back to the legacy
+    title-only selection unless ``quick_only``. Each pick carries a
+    ``selected_by`` of 'quick-screen' or 'title-rule'.
+    """
+    from jj.db import get_quick_screened_prospects, get_unscored_selected_prospects
+
+    picks: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for p in get_quick_screened_prospects(min_verdict=min_verdict, limit=limit, since=since):
+        p["selected_by"] = "quick-screen"
+        picks.append(p)
+        seen.add(p["id"])
+    if not quick_only and len(picks) < limit:
+        for p in get_unscored_selected_prospects(limit=limit, since=since):
+            if p["id"] in seen:
+                continue
+            p["selected_by"] = "title-rule"
+            picks.append(p)
+            seen.add(p["id"])
+            if len(picks) >= limit:
+                break
+    return picks[:limit]
+
+
 def score_new_prospects(
     limit: int = 10,
     dry_run: bool = False,
     since: Optional[str] = None,
+    min_verdict: str = "fair",
+    quick_only: bool = False,
 ) -> dict[str, Any]:
     """Full-score the top-N unscored selected prospects (net-new by default).
 
+    Prospects with a quick-screen verdict at or above ``min_verdict`` are read
+    first; ``quick_only`` refuses to fall back to the title-only selection.
     ``since`` defaults to config monitor.score_new_since (the net-new cutoff);
     pass since="" to override and consider the full backlog. Returns a summary
-    dict: selected, scored, no_change (e.g. stale/dead URL), failed, skipped.
+    dict: selected, scored, no_change (e.g. stale/dead URL), failed, skipped,
+    plus the daily budget so a dry run doubles as a spend preview.
     """
     from jj.config import load_config
-    from jj.db import get_unscored_selected_prospects
 
     if since is None:
         since = (load_config().get("monitor", {}) or {}).get("score_new_since") or None
     elif since == "":
         since = None
 
-    picks = get_unscored_selected_prospects(limit=limit, since=since)
+    picks = select_prospects_to_score(
+        limit=limit, since=since, min_verdict=min_verdict, quick_only=quick_only,
+    )
+    budget = score_budget()
     summary: dict[str, Any] = {
         "selected": len(picks),
         "scored": 0,
         "no_change": 0,
         "failed": 0,
         "skipped": 0,
+        "budget": budget,
+        "would_spend": min(len([p for p in picks if p.get("job_url")]), budget["remaining"]),
         "items": [],
     }
 
@@ -396,8 +477,13 @@ def score_new_prospects(
             summary["skipped"] += 1
             summary["items"].append({"app": label, "status": "skip_no_url"})
             continue
+        selected_by = p.get("selected_by", "title-rule")
+        quick = p.get("quick_verdict")
         if dry_run:
-            summary["items"].append({"app": label, "status": "would_score", "url": url})
+            summary["items"].append({
+                "app": label, "status": "would_score", "url": url,
+                "selected_by": selected_by, "quick_verdict": quick,
+            })
             continue
         if daily_count >= daily_limit:
             logger.warning(
@@ -414,7 +500,11 @@ def score_new_prospects(
             summary["items"].append({"app": label, "status": f"fail_rc{rc}", "err": (err or "")[-200:]})
         elif app_id and _is_full_scored(app_id):
             summary["scored"] += 1
-            summary["items"].append({"app": label, "status": "scored"})
+            verdict = _record_full_judgment(app_id)
+            summary["items"].append({
+                "app": label, "status": "scored", "selected_by": selected_by,
+                "quick_verdict": quick, "verdict": verdict,
+            })
         else:
             # Clean exit but no full score written — typically a dead/stale JD URL.
             summary["no_change"] += 1
