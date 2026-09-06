@@ -16,11 +16,14 @@ The LaunchAgent wrapper (`scripts/monitor-launcher.sh`) handles this automatical
 
 ## Architecture
 
-- **Entry point:** `jj/cli.py` — Typer app with 11 sub-apps (corpus, resume, email, greenhouse, app, interests, gdocs, worker, investors, monitor, notify)
-- **Database:** `jj/db.py` — SQLite with 16 tables, context-manager connections, `sqlite3.Row` factory
+- **Entry point:** `jj/cli.py` — Typer app with 12 sub-apps (corpus, resume, email, greenhouse, app, interests, gdocs, worker, investors, monitor, notify, judgments)
+- **Database:** `jj/db.py` — SQLite with 25 tables, context-manager connections, `sqlite3.Row` factory
 - **Config:** YAML-based (`~/.job-journal/profile.yaml`, `config.yaml`), loaded via `jj/config.py`
 - **Data path:** `~/.job-journal/` (DB, config, credentials, corpus)
-- **Skills:** `.claude/commands/*.md` — 9 skill files defining `/interview`, `/apply`, `/jobs`, `/twc`, etc.
+- **Skills:** `.claude/commands/*.md` — 22 skill files defining `/interview`, `/apply`, `/jobs`, `/twc`, etc.
+- **Judging tiers:** `score_title_fit` (deterministic rule, free) -> `jj/quick_screen.py` (one cheap batched model call per 50-100 listings, plain facts only) -> full score (`jj/scoring.py` spawning `/slack-apply`). Verdicts are the four words in `jj/prompts.py` (`no`, `weak`, `fair`, `strong`) stored in `judgments` with reasoning and `judged_by`; a person's verdict outranks the model's. See `docs/quick-screen.md`.
+- **Prompts:** `jj/prompts.py` holds the verdict scale, the reserved profile document names and the quick-screen instructions (`PROMPT_VERSION` is bumped by hand when text changes). `~/.job-journal/quick-screen-prompt.md` replaces the shipped screen prompt whole.
+- **Profile documents:** `~/.job-journal/constraints.md`, `preferences.md`, `background.md` are read by the quick screen (constraints are a hard veto). Missing ones are reported in the run summary, never silently skipped.
 
 ## Core Conventions
 
@@ -39,6 +42,9 @@ Resume bullets come verbatim from the corpus. Never generate or rewrite bullets 
 - Status lifecycle: prospect -> applied -> screening -> interview -> offer/rejected/withdrawn
 - `ACTIVE_STATUSES` and `TERMINAL_STATUSES` constants define pipeline stages
 - TWC fields on applications: `twc_activity_type`, `twc_result`, `activity_date`
+- Verdicts: `record_judgment(url, verdict, reasoning, judged_by=...)` upserts per (url, judged_by); `get_best_judgment(url)` applies precedence user > model-quick. Raises `ValueError` on a bad word so typos are loud.
+- Report coverage before exclusions: "148/175 companies returned a board", then the list of what was left out and why (`scan_all_api_companies` summary `coverage` + `zero_yield`; quick screen `coverage` + `dropped`).
+- New commands that return rows take `--json` (one object on stdout, prose to `err_console`); prefer `jj ... --json` over inline `from jj.db import ...` in new skills.
 
 ### Gmail / TWC / Resume conventions
 Moved to `docs/conventions.md` (Gmail OAuth + auth pitfalls, TWC compliance + adding TWC applications, resume generation/conventions/archetypes). Load that file when working on those features.

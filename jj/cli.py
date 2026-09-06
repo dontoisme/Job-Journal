@@ -26,6 +26,25 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+# Anything a person reads but a following command must not swallow goes here
+# when --json is in play: stdout then carries one JSON object and nothing else.
+err_console = Console(stderr=True)
+
+
+def _plain(text) -> str:
+    """Escape model- or user-written text so Rich does not read it as markup."""
+    from rich.markup import escape
+
+    return escape(str(text or ""))
+
+
+def _emit_json(payload) -> None:
+    """Print one JSON object to stdout and nothing else."""
+    import json
+    import sys
+
+    sys.stdout.write(json.dumps(payload, indent=2, default=str) + "\n")
+    sys.stdout.flush()
 
 
 def version_callback(value: bool):
@@ -3343,12 +3362,19 @@ def monitor_scan_apis(
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Show all jobs found, not just new"),
     score_new: bool = typer.Option(False, "--score-new/--no-score-new", help="Full-score selected new prospects after the scan (Stage 2)"),
     score_limit: int = typer.Option(10, "--score-limit", help="Max prospects to full-score this run"),
+    quick_screen: bool = typer.Option(False, "--quick-screen/--no-quick-screen", help="Batch-screen new listings with the model before full scoring (Stage 1.5)"),
+    screen_limit: int = typer.Option(100, "--screen-limit", help="Max new listings to quick-screen this run"),
+    quick_only: bool = typer.Option(False, "--quick-only", help="With --score-new: only full-score prospects the quick screen kept"),
 ):
     """Quick scan of ATS APIs (Greenhouse, Lever, Ashby) for new listings.
 
     Hits public JSON APIs directly — no browser, no scraping. Runs dedup
     against the job_listings table and title-filters new jobs. Much faster
     than a full /monitor run (~30-60 seconds for 48 companies).
+
+    With --quick-screen, every new listing (title-gate pass or fail) is ranked
+    by title score and sent to the model in batches of plain facts; fair and
+    strong verdicts become prospects. With --score-new those go first.
     """
     import time
     from datetime import datetime
@@ -3420,6 +3446,7 @@ def monitor_scan_apis(
                     skipped_known += 1
                     continue
 
+                title_result = score_title_fit(job.get("title", ""), job.get("location"))
                 if not dry_run:
                     record_job_listing(
                         company_id=company_id,
@@ -3427,9 +3454,9 @@ def monitor_scan_apis(
                         title=job.get("title"),
                         location=job.get("location"),
                         ats_type=job.get("ats_type"),
+                        title_score=title_result.get("total", 0),
                     )
 
-                title_result = score_title_fit(job.get("title", ""), job.get("location"))
                 if not title_result.get("pass", False):
                     skipped_title += 1
                     continue
@@ -3556,6 +3583,21 @@ def monitor_scan_apis(
         f"{board_summary.get('total_jobs_found', 0)} board jobs"
     )
 
+    # Coverage first, as an unreduced fraction, then what was left out and why.
+    coverage = company_summary.get("coverage") or {}
+    zero_yield = company_summary.get("zero_yield") or []
+    if coverage:
+        console.print(
+            f"{coverage.get('covered', 0):,}/{coverage.get('total', 0):,} companies returned at least one job"
+        )
+    suspect = [z for z in zero_yield if not str(z.get("reason", "")).startswith("empty board")]
+    if suspect:
+        console.print(f"[yellow]{len(suspect)} companies returned nothing for a reason worth a look:[/yellow]")
+        for z in suspect[:25]:
+            console.print(f"  [dim]-[/dim] {z.get('name')} ({z.get('ats_type')}): {z.get('reason')}")
+        if len(suspect) > 25:
+            console.print(f"  [dim]... and {len(suspect) - 25} more (see monitor run summary)[/dim]")
+
     # Present results
     console.print()
     if new_jobs:
@@ -3612,14 +3654,23 @@ def monitor_scan_apis(
                 "skipped_known": skipped_known,
                 "skipped_title": skipped_title,
                 "new_prospects": len(new_jobs),
+                "company_coverage": coverage,
+                "zero_yield": zero_yield,
             }),
         )
+
+    # Stage 1.5: batch quick screen over new listings, ranked by title score.
+    if quick_screen and not dry_run:
+        from jj.quick_screen import quick_screen_new_listings
+        console.print(f"\nQuick-screening up to {screen_limit} new listing(s)...")
+        q = quick_screen_new_listings(limit=screen_limit)
+        _print_quick_screen_summary(q)
 
     # Stage 2: full-score the highest-value new prospects inline (capped).
     if score_new and not dry_run:
         from jj.scoring import score_new_prospects
         console.print(f"\nFull-scoring up to {score_limit} selected prospect(s)...")
-        s = score_new_prospects(limit=score_limit)
+        s = score_new_prospects(limit=score_limit, quick_only=quick_only)
         console.print(
             f"[green]Full-scored {s['scored']}[/green] | no change {s['no_change']} | "
             f"failed {s['failed']} | skipped {s['skipped']} (of {s['selected']} selected)."
@@ -3697,40 +3748,153 @@ def monitor_digest(
 def monitor_score_new(
     limit: int = typer.Option(10, "--limit", "-n", help="Max prospects to full-score this run"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be scored, spawn nothing"),
+    preview: bool = typer.Option(False, "--preview", help="Same as --dry-run, plus the daily budget this run would spend"),
+    quick_only: bool = typer.Option(False, "--quick-only", help="Only prospects the quick screen kept; no title-rule fallback"),
+    min_verdict: str = typer.Option("fair", "--min-verdict", help="Lowest quick-screen verdict to full-score: weak, fair or strong"),
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON object instead of a table"),
 ):
     """Full-score the highest-value unscored prospects (Stage 2).
 
-    Runs the headless /slack-apply fit-score + archetype link on target-company
-    postings and non-targets clearing the title gate, capped per run. Drains the
-    title-only backlog into trustworthy fit scores over successive runs.
+    Runs the headless /slack-apply fit-score + archetype link on prospects the
+    quick screen kept (strong first), then on target-company postings and
+    non-targets clearing the title gate, capped per run. Drains the title-only
+    backlog into trustworthy fit scores over successive runs.
     """
     if not JJ_HOME.exists():
-        console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        err_console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
         raise typer.Exit(1)
 
     from rich.table import Table
 
+    from jj.prompts import VERDICTS
     from jj.scoring import score_new_prospects
 
-    summary = score_new_prospects(limit=limit, dry_run=dry_run)
+    if min_verdict not in VERDICTS:
+        err_console.print(f"[red]--min-verdict must be one of {', '.join(VERDICTS)}[/red]")
+        raise typer.Exit(2)
+
+    dry_run = dry_run or preview
+    summary = score_new_prospects(
+        limit=limit, dry_run=dry_run, min_verdict=min_verdict, quick_only=quick_only,
+    )
+    if as_json:
+        _emit_json(summary)
+        return
+
+    budget = summary["budget"]
     if summary["selected"] == 0:
         console.print("[yellow]No unscored selected prospects to score.[/yellow]")
+        console.print(f"[dim]{budget['remaining']} of {budget['daily_limit']} full scores left today.[/dim]")
         return
 
     table = Table(title=f"Score-new ({summary['selected']} selected, limit {limit})")
     table.add_column("Status")
+    table.add_column("Via")
+    table.add_column("Quick")
     table.add_column("Prospect")
     for it in summary["items"]:
-        table.add_row(it["status"], it["app"])
+        table.add_row(it["status"], it.get("selected_by") or "", it.get("quick_verdict") or "", it["app"])
     console.print(table)
 
     if dry_run:
-        console.print("[dim]Dry run: nothing scored.[/dim]")
+        console.print(
+            f"This run would spend [bold]{summary['would_spend']}[/bold] of the "
+            f"[bold]{budget['remaining']}[/bold] full scores left today "
+            f"(daily limit {budget['daily_limit']}, {budget['used']} used)."
+        )
+        console.print("[dim]Preview: nothing scored.[/dim]")
         return
     console.print(
         f"[green]Scored {summary['scored']}[/green] | no change {summary['no_change']} | "
         f"failed {summary['failed']} | skipped {summary['skipped']}."
     )
+
+
+def _print_quick_screen_summary(q: dict) -> None:
+    """Coverage first, then verdict counts, then what was missing and why."""
+    cov = q.get("coverage") or {}
+    console.print(
+        f"{cov.get('covered', 0):,}/{cov.get('total', 0):,} candidate listings were screened "
+        f"({q.get('batches', 0)} batch(es), {q.get('failed_batches', 0)} failed, model {q.get('model')})"
+    )
+    counts = q.get("verdict_counts") or {}
+    if q.get("screened"):
+        console.print(
+            "verdicts: " + ", ".join(f"{k} {counts.get(k, 0)}" for k in ("strong", "fair", "weak", "no"))
+            + f"; kept {q.get('kept', 0)} at or above '{q.get('keep')}'"
+        )
+    pr = q.get("prospects") or {}
+    if any(pr.values()):
+        console.print(
+            f"prospects: created {pr.get('created', 0)}, annotated {pr.get('annotated', 0)}, "
+            f"already full-scored {pr.get('already_full_scored', 0)}"
+        )
+    docs = q.get("documents") or {}
+    present = docs.get("present") or []
+    console.print(f"{len(present)} profile document(s) were sent: {', '.join(present) or 'none'}")
+    for line in q.get("missing_notes") or []:
+        console.print(f"  [yellow]{line}[/yellow]")
+    for line in (q.get("problems") or [])[:10]:
+        console.print(f"  [red]{_plain(line)}[/red]")
+
+
+@monitor_app.command("quick-screen")
+def monitor_quick_screen(
+    limit: int = typer.Option(100, "--limit", "-n", help="Max unscreened listings to send, ranked by title score"),
+    since: Optional[str] = typer.Option(None, "--since", help="Only listings first seen at/after this ISO timestamp"),
+    keep: str = typer.Option("fair", "--keep", help="Verdict at or above which a listing becomes a prospect"),
+    preview: bool = typer.Option(False, "--preview", help="Say what would be sent (count, batches, documents); call nothing"),
+    model: Optional[str] = typer.Option(None, "--model", help="Model for the screen (default: config monitor.quick_screen.model or haiku)"),
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON object instead of readable lines"),
+):
+    """Batch-screen new listings on their plain facts (Stage 1.5).
+
+    Sends up to a hundred listings per model call with title, company,
+    location, pay and first-seen date plus your profile documents
+    (~/.job-journal/constraints.md, preferences.md, background.md) and the
+    corpus excerpt. Each comes back as no, weak, fair or strong with a
+    sentence of reasoning, stored in the judgments table. Listings at or above
+    --keep become prospects that `jj monitor score-new` reads first.
+
+    Run with --preview first: it prints what a run would send and spend, and
+    calls nothing.
+    """
+    if not JJ_HOME.exists():
+        err_console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+
+    from jj.db import init_database
+    from jj.prompts import VERDICTS
+    from jj.quick_screen import quick_screen_new_listings
+
+    if keep not in VERDICTS:
+        err_console.print(f"[red]--keep must be one of {', '.join(VERDICTS)}[/red]")
+        raise typer.Exit(2)
+
+    init_database()
+    q = quick_screen_new_listings(limit=limit, since=since, keep=keep, preview=preview, model=model)
+    if as_json:
+        _emit_json(q)
+        return
+
+    if preview:
+        console.print(
+            f"Would send [bold]{q['candidates']}[/bold] listing(s) in "
+            f"[bold]{q['batches_planned']}[/bold] batch(es) of up to {q['batch_size']} "
+            f"to model [bold]{q['model']}[/bold] (prompt {q['prompt_version']})."
+        )
+        docs = q.get("documents") or {}
+        console.print(f"Documents that would be sent: {', '.join(docs.get('present') or []) or 'none'}")
+        for line in q.get("missing_notes") or []:
+            console.print(f"  [yellow]{line}[/yellow]")
+        console.print("[dim]Preview: nothing sent, nothing stored.[/dim]")
+        return
+
+    if q["candidates"] == 0:
+        console.print("[yellow]No unscreened active listings.[/yellow]")
+        return
+
+    _print_quick_screen_summary(q)
 
 
 @monitor_app.command("apply-ready")
@@ -4384,5 +4548,78 @@ def monitor_log(
         console.print(line)
 
 
-if __name__ == "__main__":
-    app()
+# =============================================================================
+# Judgments: the verdict scale with stored reasoning
+# =============================================================================
+
+judgments_app = typer.Typer(
+    name="judgments",
+    help="Read, store and remove verdicts on postings (no, weak, fair, strong).",
+    no_args_is_help=True,
+)
+app.add_typer(judgments_app, name="judgments")
+
+
+@judgments_app.command("list")
+def judgments_list(
+    verdict: Optional[str] = typer.Option(None, "--verdict", help="Only this word: no, weak, fair or strong"),
+    judged_by: Optional[str] = typer.Option(None, "--judged-by", help="Only this source: user, model-full or model-quick"),
+    limit: int = typer.Option(50, "--limit", "-n", help="How many to show"),
+    reasoning: bool = typer.Option(False, "--reasoning", help="Print each verdict's reasoning under its line"),
+    as_json: bool = typer.Option(False, "--json", help="Print one JSON object holding the rows"),
+):
+    """Show stored verdicts, newest first, each ending with who made it."""
+    if not JJ_HOME.exists():
+        err_console.print("[red]Job Journal not initialized. Run 'jj init' first.[/red]")
+        raise typer.Exit(1)
+    from jj.db import get_judgment_counts, init_database, list_judgments
+
+    init_database()
+    rows = list_judgments(verdict=verdict, judged_by=judged_by, limit=limit)
+    if as_json:
+        _emit_json({"rows": rows, "counts": get_judgment_counts()})
+        return
+    if not rows:
+        console.print("[yellow]No stored verdicts match.[/yellow]")
+        return
+    for r in rows:
+        console.print(
+            f"[bold]{r['verdict']:6}[/bold] {_plain(r.get('company'))} — {_plain(r.get('title'))} "
+            f"[dim]{_plain(r['url'])}[/dim]  [dim]({r['judged_by']}, {str(r.get('updated_at') or '')[:10]})[/dim]"
+        )
+        if reasoning and r.get("reasoning"):
+            console.print(f"    {_plain(r['reasoning'])}")
+
+
+@judgments_app.command("put")
+def judgments_put(
+    url: str = typer.Argument(..., help="The posting url"),
+    verdict: str = typer.Option(..., "--verdict", help="no, weak, fair or strong"),
+    reasoning: str = typer.Option("", "--reasoning", help="Why you judged it that way"),
+    as_json: bool = typer.Option(False, "--json", help="Print what was stored as JSON"),
+):
+    """Store a verdict you made yourself. It outranks any model verdict and
+    keeps the posting out of later screening and scoring runs."""
+    from jj.db import get_connection, init_database, record_judgment
+
+    init_database()
+    app_id = None
+    title = company = None
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT id, position, company FROM applications WHERE job_url = ?", (url,)
+        ).fetchone()
+        if row:
+            app_id, title, company = row["id"], row["position"], row["company"]
+    try:
+        jid = record_judgment(
+            url, verdict, reasoning, judged_by="user", application_id=app_id,
+            title=title, company=company,
+        )
+    except ValueError as e:
+        err_console.print(f"[red]{e}[/red]")
+        raise typer.Exit(2) from None
+    if as_json:
+        _emit_json({"id": jid, "url": url, "verdict": verdict, "judged_by": "user", "application_id": app_id})
+        return
+    console.print(f"[green]stored[/green] {verdict} for {url} (judged by you)")

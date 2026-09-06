@@ -61,13 +61,27 @@ def extract_ats_slug(careers_url: str, ats_type: str) -> Optional[str]:
     return None
 
 
+#: The last reason a fetch returned nothing, so a company scan that came back
+#: empty can say whether the board was empty, the slug was wrong (HTTP 404), or
+#: the request failed. Reset by scan_company before each company. Scanning is
+#: sequential, which is what lets one module-level slot stand in for a return
+#: value the many scanner signatures never carried.
+_last_fetch_error: Optional[str] = None
+
+
 def _fetch_json(url: str) -> Any:
     """Fetch JSON from a URL. Returns parsed JSON or None on error."""
+    global _last_fetch_error
     req = Request(url, headers={"Accept": "application/json", "User-Agent": "jj-scanner/1.0"})
     try:
         with urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
             return json.loads(resp.read().decode("utf-8"))
-    except (HTTPError, URLError, json.JSONDecodeError, TimeoutError) as e:
+    except HTTPError as e:
+        _last_fetch_error = f"HTTP {e.code}"
+        logger.debug("API request failed: %s — %s", url, e)
+        return None
+    except (URLError, json.JSONDecodeError, TimeoutError) as e:
+        _last_fetch_error = type(e).__name__
         logger.debug("API request failed: %s — %s", url, e)
         return None
 
@@ -323,9 +337,14 @@ def scan_company(company: dict[str, Any]) -> list[dict[str, Any]]:
     Returns:
         List of normalized job dicts with company_id and company_name added.
     """
+    global _last_fetch_error
+    _last_fetch_error = None
+    company["_scan_status"] = "ok"
+
     ats_type = (company.get("ats_type") or "").lower()
     scanner = _SCANNERS.get(ats_type)
     if not scanner:
+        company["_scan_status"] = f"no scanner for ats_type {ats_type or '(blank)'}"
         return []
 
     if ats_type in _SLUGLESS_ATS:
@@ -336,10 +355,18 @@ def scan_company(company: dict[str, Any]) -> list[dict[str, Any]]:
         if not slug:
             logger.warning("Could not extract slug for %s (%s): %s",
                             company.get("name"), ats_type, company.get("careers_url"))
+            company["_scan_status"] = "no slug in careers_url"
             return []
         logger.info("Scanning %s via %s API (slug: %s)", company.get("name"), ats_type, slug)
 
     jobs = scanner(slug)
+    if not jobs:
+        if _last_fetch_error == "HTTP 404":
+            company["_scan_status"] = "HTTP 404: slug likely wrong"
+        elif _last_fetch_error:
+            company["_scan_status"] = f"request failed: {_last_fetch_error}"
+        else:
+            company["_scan_status"] = "empty board"
 
     # Optional per-company US + senior+ post-filter for high-volume target
     # boards (e.g. Snowflake, Palantir, xAI), mirroring the Amazon adapter.
@@ -371,6 +398,10 @@ def scan_all_api_companies(companies: list[dict[str, Any]]) -> dict[int, list[di
     total_jobs = 0
     scanned = 0
     errors = 0
+    with_jobs = 0
+    # Every company that returned nothing, with the reason, so the report can
+    # say "148/175 companies returned a board" and name the other 27.
+    zero_yield: list[dict[str, Any]] = []
 
     for company in companies:
         company_id = company.get("id")
@@ -382,15 +413,32 @@ def scan_all_api_companies(companies: list[dict[str, Any]]) -> dict[int, list[di
             if jobs:
                 results[company_id] = jobs
                 total_jobs += len(jobs)
+                with_jobs += 1
+            else:
+                zero_yield.append({
+                    "id": company_id,
+                    "name": company.get("name", ""),
+                    "ats_type": company.get("ats_type", ""),
+                    "reason": company.get("_scan_status") or "empty board",
+                })
             scanned += 1
         except Exception as e:
             logger.error("Error scanning %s: %s", company.get("name"), e)
             errors += 1
+            zero_yield.append({
+                "id": company_id,
+                "name": company.get("name", ""),
+                "ats_type": company.get("ats_type", ""),
+                "reason": f"error: {type(e).__name__}: {e}",
+            })
 
     results["_summary"] = {
         "companies_scanned": scanned,
         "companies_with_errors": errors,
+        "companies_with_jobs": with_jobs,
         "total_jobs_found": total_jobs,
+        "coverage": {"covered": with_jobs, "total": len([c for c in companies if c.get("id")])},
+        "zero_yield": zero_yield,
     }
     return results
 

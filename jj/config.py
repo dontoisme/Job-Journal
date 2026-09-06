@@ -94,6 +94,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "slack_app_token": "",          # xapp-... App-Level Token (connections:write)
         "slack_default_channel": "",    # C0123... channel where notifications post
         "slack_authorized_users": [],   # Slack user IDs allowed to click buttons; empty = no restriction
+        # Stage 1.5: batched quick screen (jj monitor quick-screen). Plain facts
+        # only, up to 100 listings per model call; verdicts land in `judgments`.
+        "quick_screen": {
+            "model": "haiku",           # cheap tier; the full score still runs on the default model
+            "batch_size": 50,           # listings per call (max 100)
+        },
     },
 }
 

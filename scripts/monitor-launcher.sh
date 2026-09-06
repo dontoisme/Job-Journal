@@ -52,10 +52,16 @@ echo "jj: $JJ_PATH"
 # This hits Greenhouse, Lever, Ashby + custom (Amazon/Netflix) APIs for quick
 # discovery, then full-scores net-new selected prospects (Stage 2). The
 # net-new cutoff (config monitor.score_new_since) keeps this off the existing
-# backlog; --score-limit caps cost per run.
+# backlog; --score-limit caps cost per run. --quick-screen batch-screens every
+# new listing on its plain facts first (Stage 1.5, ~1 cheap call per 50
+# listings) so Stage 2 reads the fair/strong ones before the title-rule picks.
+# Set JJ_QUICK_SCREEN=0 to skip the screen.
 cd "$PROJECT_DIR"
-echo "Running quick API scan + net-new full-scoring..."
-jj monitor scan-apis --score-new --score-limit "${JJ_SCORE_LIMIT:-3}" 2>&1
+QUICK_SCREEN_FLAG="--quick-screen"
+if [ "${JJ_QUICK_SCREEN:-1}" = "0" ]; then QUICK_SCREEN_FLAG="--no-quick-screen"; fi
+echo "Running quick API scan + quick screen + net-new full-scoring..."
+jj monitor scan-apis $QUICK_SCREEN_FLAG --screen-limit "${JJ_SCREEN_LIMIT:-100}" \
+    --score-new --score-limit "${JJ_SCORE_LIMIT:-3}" 2>&1
 API_EXIT=$?
 echo "API scan exit: $API_EXIT"
 
