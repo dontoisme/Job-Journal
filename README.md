@@ -10,8 +10,8 @@ Built for [Claude Code](https://claude.ai/claude-code) as a first-class interfac
 
 ```bash
 # Clone and install
-git clone https://github.com/donhogan/job-journal
-cd job-journal
+git clone https://github.com/dontoisme/Job-Journal
+cd Job-Journal
 pip install -e .
 
 # Initialize

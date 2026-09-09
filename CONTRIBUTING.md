@@ -6,8 +6,8 @@ Thanks for your interest in contributing! Here's how to get started.
 
 ```bash
 # Clone the repo
-git clone https://github.com/donhogan/job-journal
-cd job-journal
+git clone https://github.com/dontoisme/Job-Journal
+cd Job-Journal
 
 # Create and activate a virtual environment
 python -m venv .venv

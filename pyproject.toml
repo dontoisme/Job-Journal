@@ -59,8 +59,8 @@ dev = [
 jj = "jj.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/donhogan/job-journal"
-Repository = "https://github.com/donhogan/job-journal"
+Homepage = "https://github.com/dontoisme/Job-Journal"
+Repository = "https://github.com/dontoisme/Job-Journal"
 
 [tool.hatch.build.targets.wheel]
 packages = ["jj"]
